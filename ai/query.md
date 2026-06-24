@@ -142,3 +142,12 @@
 > ```
 > 
 
+❯ Task Notification:
+> - Task `ab6de458243294bee` <kbd>completed</kbd>
+> - Tool `toolu_014Uh8L8NLzkpuSwQZEYEmgn`
+> - > Agent "Explore base AI tooling and project conventions" finished
+> - [Query (`486` chars, `491 B`)](output/agents/001.ab6de458243294bee/prompt.md)
+> - [Answer (`3821` chars, `3.76 KB`)](output/agents/001.ab6de458243294bee/result.md)
+> - [Raw log (`159152` chars, `156 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/1a30a91c-bbb6-4fb8-984d-44a7fb2958c5/tasks/ab6de458243294bee.output)
+> - `22` tools, `27476` tokens, `0.793917 s`
+
