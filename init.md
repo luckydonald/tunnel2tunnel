@@ -166,6 +166,4 @@ Here's what the user should be able to do:
 
 ???-1. the user logs out in the UI via the logout button.
 
-# SSH flow
-0. The user/admin has now configured his server(s) and his client(s) in the UI
-1. The user opens 
+1. with the ssh code from the website, w
