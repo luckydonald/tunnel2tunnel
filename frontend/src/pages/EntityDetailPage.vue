@@ -7,6 +7,7 @@ import PubkeyInput, { type ParsedKey } from '@/components/PubkeyInput.vue'
 import SshCommandDisplay from '@/components/SshCommandDisplay.vue'
 import { entitiesApi, type EntityDetail, type EntityPort } from '@/api/entities'
 import { friendsApi, type AccessRule } from '@/api/friends'
+import { adminApi, type ConnLog } from '@/api/admin'
 
 const route = useRoute()
 const router = useRouter()
@@ -160,6 +161,24 @@ async function handleDeleteAccess(ruleId: string): Promise<void> {
     accessRules.value = accessRules.value.filter(r => r.id !== ruleId)
   } catch (e) {
     alert(e instanceof Error ? e.message : 'Failed to delete rule')
+  }
+}
+
+// Connection log
+const connLogs = ref<ConnLog[]>([])
+const logsLoaded = ref(false)
+const logsLoading = ref(false)
+
+async function loadConnLogs(): Promise<void> {
+  if (logsLoaded.value) return
+  logsLoading.value = true
+  try {
+    connLogs.value = await adminApi.listConnectionLogs(entityId)
+    logsLoaded.value = true
+  } catch (e) {
+    alert(e instanceof Error ? e.message : 'Failed to load logs')
+  } finally {
+    logsLoading.value = false
   }
 }
 
@@ -376,10 +395,39 @@ async function handleDeleteEntity(): Promise<void> {
         <p v-else class="empty">Click "Add rule" to manage access.</p>
       </section>
 
-      <!-- Connection log placeholder -->
+      <!-- Connection log -->
       <section class="section">
-        <h2>Connection Log</h2>
-        <p class="empty">Connection logging available in Phase 4.</p>
+        <div class="section-header">
+          <h2>Connection Log</h2>
+          <button class="btn-secondary" @click="loadConnLogs">Refresh</button>
+        </div>
+        <div v-if="logsLoading" class="loading">Loading…</div>
+        <table v-else-if="logsLoaded && connLogs.length" class="data-table">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Peer IP</th>
+              <th>Fingerprint</th>
+              <th>Result</th>
+              <th>Reason</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="l in connLogs" :key="l.id">
+              <td class="td-ts">{{ new Date(l.started_at).toLocaleString() }}</td>
+              <td>{{ l.peer_ip ?? '—' }}</td>
+              <td><code v-if="l.key_fingerprint" class="fp">{{ l.key_fingerprint }}</code><span v-else>—</span></td>
+              <td>
+                <span :class="['badge-result', l.login_succeeded ? 'ok' : 'fail']">
+                  {{ l.login_succeeded ? 'ok' : 'fail' }}
+                </span>
+              </td>
+              <td class="td-desc">{{ l.failure_reason ?? '—' }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <p v-else-if="logsLoaded" class="empty">No connection logs.</p>
+        <p v-else class="empty">Click Refresh to load logs.</p>
       </section>
 
     </template>
@@ -496,6 +544,15 @@ async function handleDeleteEntity(): Promise<void> {
   padding: 0.25rem 0.5rem; background: #0f1117; border: 1px solid #2d3248;
   border-radius: 4px; color: #e2e8f0; font-size: 0.875rem;
   &:focus { outline: none; border-color: #4f6ef7; }
+}
+
+.td-ts { font-size: 0.8125rem; color: #94a3b8; white-space: nowrap; }
+
+.badge-result {
+  display: inline-block; padding: 0.1em 0.45em; border-radius: 4px;
+  font-size: 0.75rem; font-weight: 600; text-transform: uppercase;
+  &.ok   { background: rgba(52,211,153,.15); color: #6ee7b7; }
+  &.fail { background: rgba(239,68,68,.15);  color: #fca5a5; }
 }
 
 .input-sm {

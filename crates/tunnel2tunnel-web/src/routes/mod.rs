@@ -1,4 +1,6 @@
 pub mod access;
+pub mod admin;
 pub mod auth;
 pub mod entities;
 pub mod friends;
+pub mod settings;

@@ -5,6 +5,10 @@ import DashboardPage from '@/pages/DashboardPage.vue'
 import EntitiesPage from '@/pages/EntitiesPage.vue'
 import EntityDetailPage from '@/pages/EntityDetailPage.vue'
 import FriendsPage from '@/pages/FriendsPage.vue'
+import AdminUsersPage from '@/pages/AdminUsersPage.vue'
+import SettingsPage from '@/pages/SettingsPage.vue'
+import PurgeKeysPage from '@/pages/PurgeKeysPage.vue'
+import PurgeAccessPage from '@/pages/PurgeAccessPage.vue'
 
 const routes: RouteRecordRaw[] = [
   { path: '/login', name: 'login', component: LoginPage },
@@ -45,6 +49,30 @@ const routes: RouteRecordRaw[] = [
     path: '/friends',
     name: 'friends',
     component: FriendsPage,
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/admin/users',
+    name: 'admin-users',
+    component: AdminUsersPage,
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/settings',
+    name: 'settings',
+    component: SettingsPage,
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/settings/purge-keys',
+    name: 'purge-keys',
+    component: PurgeKeysPage,
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/settings/purge-access',
+    name: 'purge-access',
+    component: PurgeAccessPage,
     meta: { requiresAuth: true },
   },
 ]

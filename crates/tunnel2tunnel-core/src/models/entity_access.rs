@@ -19,6 +19,22 @@ pub struct EntityAccess {
 }
 
 impl EntityAccess {
+    pub async fn list_for_user(
+        pool: &PgPool,
+        user_id: Uuid,
+    ) -> Result<Vec<Self>, CoreError> {
+        sqlx::query_as::<_, EntityAccess>(
+            "SELECT ea.* FROM entity_access ea \
+             JOIN entities e ON e.id = ea.owner_entity_id \
+             WHERE e.user_id = $1 AND e.deleted_at IS NULL \
+             ORDER BY ea.created_at DESC",
+        )
+        .bind(user_id)
+        .fetch_all(pool)
+        .await
+        .map_err(CoreError::Sqlx)
+    }
+
     pub async fn list_for_entity(
         pool: &PgPool,
         owner_entity_id: Uuid,

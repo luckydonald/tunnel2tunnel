@@ -20,6 +20,9 @@ pub enum WebError {
     #[error("{0}")]
     BadRequest(String),
 
+    #[error("{0}")]
+    Conflict(String),
+
     #[error("internal error")]
     Internal(String),
 
@@ -34,6 +37,7 @@ impl IntoResponse for WebError {
             WebError::Forbidden      => (StatusCode::FORBIDDEN,               "forbidden".into()),
             WebError::NotFound       => (StatusCode::NOT_FOUND,               "not found".into()),
             WebError::BadRequest(m)  => (StatusCode::BAD_REQUEST,             m.clone()),
+            WebError::Conflict(m)    => (StatusCode::CONFLICT,                m.clone()),
             WebError::Internal(m)    => (StatusCode::INTERNAL_SERVER_ERROR,   m.clone()),
             WebError::Core(_)        => (StatusCode::INTERNAL_SERVER_ERROR,   "internal server error".into()),
         };

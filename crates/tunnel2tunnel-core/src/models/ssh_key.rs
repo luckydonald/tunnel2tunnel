@@ -35,6 +35,19 @@ impl SshKey {
         .map_err(CoreError::Sqlx)
     }
 
+    pub async fn list_for_user(pool: &PgPool, user_id: Uuid) -> Result<Vec<Self>, CoreError> {
+        sqlx::query_as::<_, SshKey>(
+            "SELECT sk.* FROM ssh_keys sk \
+             JOIN entities e ON e.id = sk.entity_id \
+             WHERE e.user_id = $1 AND sk.deleted_at IS NULL AND e.deleted_at IS NULL \
+             ORDER BY sk.created_at DESC",
+        )
+        .bind(user_id)
+        .fetch_all(pool)
+        .await
+        .map_err(CoreError::Sqlx)
+    }
+
     pub async fn list_for_entity(pool: &PgPool, entity_id: Uuid) -> Result<Vec<Self>, CoreError> {
         sqlx::query_as::<_, SshKey>(
             "SELECT * FROM ssh_keys WHERE entity_id = $1 AND deleted_at IS NULL ORDER BY created_at",

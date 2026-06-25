@@ -77,4 +77,76 @@ impl User {
         .map_err(CoreError::Sqlx)?;
         Ok(count > 0)
     }
+
+    pub async fn list_all(pool: &PgPool) -> Result<Vec<Self>, CoreError> {
+        sqlx::query_as::<_, User>(
+            "SELECT * FROM users WHERE deleted_at IS NULL ORDER BY created_at",
+        )
+        .fetch_all(pool)
+        .await
+        .map_err(CoreError::Sqlx)
+    }
+
+    pub async fn update(
+        pool: &PgPool,
+        id: Uuid,
+        email: Option<&str>,
+        is_admin: bool,
+        is_locked: bool,
+        description: Option<&str>,
+    ) -> Result<Option<Self>, CoreError> {
+        sqlx::query_as::<_, User>(
+            "UPDATE users \
+             SET email = $2, is_admin = $3, is_locked = $4, description = $5 \
+             WHERE id = $1 AND deleted_at IS NULL RETURNING *",
+        )
+        .bind(id)
+        .bind(email)
+        .bind(is_admin)
+        .bind(is_locked)
+        .bind(description)
+        .fetch_optional(pool)
+        .await
+        .map_err(CoreError::Sqlx)
+    }
+
+    pub async fn update_password(
+        pool: &PgPool,
+        id: Uuid,
+        new_password: &str,
+    ) -> Result<bool, CoreError> {
+        let hash = crate::auth::hash_password(new_password)?;
+        let r = sqlx::query(
+            "UPDATE users SET password_hash = $2 WHERE id = $1 AND deleted_at IS NULL",
+        )
+        .bind(id)
+        .bind(&hash)
+        .execute(pool)
+        .await
+        .map_err(CoreError::Sqlx)?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    pub async fn soft_delete(pool: &PgPool, id: Uuid) -> Result<bool, CoreError> {
+        let r = sqlx::query(
+            "UPDATE users SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL",
+        )
+        .bind(id)
+        .execute(pool)
+        .await
+        .map_err(CoreError::Sqlx)?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    pub async fn count_admins_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    ) -> Result<i64, CoreError> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM users WHERE is_admin = true AND deleted_at IS NULL FOR UPDATE",
+        )
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(CoreError::Sqlx)?;
+        Ok(count)
+    }
 }

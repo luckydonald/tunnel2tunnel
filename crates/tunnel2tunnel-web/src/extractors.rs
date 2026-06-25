@@ -8,6 +8,7 @@ use tunnel2tunnel_core::models::user::User;
 use crate::{AppState, WebError};
 
 pub struct AuthUser(pub User);
+pub struct AdminUser(pub User);
 
 impl FromRequestParts<AppState> for AuthUser {
     type Rejection = WebError;
@@ -34,5 +35,17 @@ impl FromRequestParts<AppState> for AuthUser {
         }
 
         Ok(AuthUser(user))
+    }
+}
+
+impl FromRequestParts<AppState> for AdminUser {
+    type Rejection = WebError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, Self::Rejection> {
+        let AuthUser(user) = AuthUser::from_request_parts(parts, state).await?;
+        if !user.is_admin {
+            return Err(WebError::Forbidden);
+        }
+        Ok(AdminUser(user))
     }
 }

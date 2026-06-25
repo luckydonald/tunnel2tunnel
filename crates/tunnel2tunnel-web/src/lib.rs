@@ -75,6 +75,26 @@ pub async fn start(config: WebConfig, pool: PgPool) -> anyhow::Result<()> {
             .post(routes::friends::add_grant))
         .route("/api/friends/:id/grants/:entity_id",
             delete(routes::friends::remove_grant))
+        // entity connection logs
+        .route("/api/entities/:id/logs",
+            get(routes::entities::list_connection_logs))
+        // admin
+        .route("/api/admin/users",
+            get(routes::admin::list_users)
+            .post(routes::admin::create_user))
+        .route("/api/admin/users/:id",
+            put(routes::admin::update_user))
+        // user settings
+        .route("/api/me/password",
+            put(routes::settings::change_password))
+        .route("/api/me/ssh-keys",
+            get(routes::settings::list_my_keys))
+        .route("/api/me/purge-keys",
+            post(routes::settings::purge_keys))
+        .route("/api/me/access-rules",
+            get(routes::settings::list_my_access))
+        .route("/api/me/purge-access",
+            post(routes::settings::purge_access))
         .layer(session_layer)
         .with_state(state);
 

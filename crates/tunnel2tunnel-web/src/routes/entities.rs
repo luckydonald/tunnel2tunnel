@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use uuid::Uuid;
 use tunnel2tunnel_core::models::{
+    connection_log::ConnectionLog,
     entity::Entity,
     entity_port::EntityPort,
     ssh_key::SshKey,
@@ -375,4 +376,44 @@ pub async fn delete_port(
     } else {
         Err(WebError::NotFound)
     }
+}
+
+// ── Connection log ────────────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct ConnLogResponse {
+    pub id: Uuid,
+    pub peer_ip: Option<String>,
+    pub key_fingerprint: Option<String>,
+    pub login_succeeded: bool,
+    pub failure_reason: Option<String>,
+    pub started_at: String,
+    pub ended_at: Option<String>,
+}
+
+impl From<tunnel2tunnel_core::models::connection_log::ConnectionLog> for ConnLogResponse {
+    fn from(l: tunnel2tunnel_core::models::connection_log::ConnectionLog) -> Self {
+        use time::format_description::well_known::Rfc3339;
+        Self {
+            id: l.id,
+            peer_ip: l.peer_ip,
+            key_fingerprint: l.key_fingerprint,
+            login_succeeded: l.login_succeeded,
+            failure_reason: l.failure_reason,
+            started_at: l.started_at.format(&Rfc3339).unwrap_or_default(),
+            ended_at: l.ended_at.map(|t| t.format(&Rfc3339).unwrap_or_default()),
+        }
+    }
+}
+
+pub async fn list_connection_logs(
+    AuthUser(user): AuthUser,
+    State(state): State<AppState>,
+    Path(entity_id): Path<Uuid>,
+) -> Result<Json<Vec<ConnLogResponse>>, WebError> {
+    require_owner(&state.db, entity_id, user.id).await?;
+    let logs = ConnectionLog::list_for_entity(&state.db, entity_id, 50)
+        .await
+        .map_err(WebError::Core)?;
+    Ok(Json(logs.into_iter().map(ConnLogResponse::from).collect()))
 }

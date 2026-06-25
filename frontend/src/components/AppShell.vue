@@ -22,6 +22,9 @@ async function handleLogout(): Promise<void> {
         <li><RouterLink to="/clients">Clients</RouterLink></li>
         <li class="nav-group-label">Social</li>
         <li><RouterLink to="/friends">Friends</RouterLink></li>
+        <li class="nav-group-label">Account</li>
+        <li><RouterLink to="/settings">Settings</RouterLink></li>
+        <li v-if="auth.user?.is_admin"><RouterLink to="/admin/users">Admin: Users</RouterLink></li>
       </ul>
       <div class="sidebar-footer">
         <span class="username">{{ auth.user?.username }}</span>
