@@ -146,24 +146,70 @@ Here's what the user should be able to do:
         - last edit at
         - last 10 connections with timestamps (start + end)
           - merges multiple event types/tables:
-            - ssh connection (-attempts), including the following data:
-              - if login succeeded
-              - which ssh key was used,
-              - ssh flags attempted,
-              - what ports where shared/requeted to tunnel,
-              - local/remote "ip/address" used
-              - headers? is that a thing with ssh? Idk? env vars?
-              - ...
-            - navigation to server details (including api access)
-              - timestamp of requesting data
-              - if within 5 minutes (env var), extend the end date of an previous log.
-              - user
-            - frontend login attempts
-              - including the wrong passwords
-                - hidden by default
+            1. ssh connection (-attempts), including the following data:
+               - if login succeeded
+               - which ssh key was used,
+               - ssh flags attempted,
+               - what ports where shared/requeted to tunnel,
+               - local/remote "ip/address" used
+               - headers? is that a thing with ssh? Idk? env vars?
+               - ...
+            2. navigation to server details (including api access)
+               - timestamp of requesting data
+               - if within 5 minutes (env var), extend the end date of an previous log.
+               - user
+            3. frontend login attempts
+               - including the wrong passwords
+               - passwords hidden by default (5 dots)
           - client/server access (= establishing connection, with routing allowed to that server/client)
 
 
-???-1. the user logs out in the UI via the logout button.
+???. the user logs out in the UI via the logout button.
 
-1. with the ssh code from the website, w
+
+---
+
+# Changes/Additions Round 1
+
+- use the full name `tunnel2tunnel` everywhere. Only the binary may be called `t2t`.
+- use `UUIDv7` everywhere
+- Vue means Vue 3 script setup, fully typed TS (no any, no unknown), SCSS. 
+- all dates in db shall be timezoned
+- server shall be in UTC.
+- every table shall have `created_at`, `updated_at`, automated db side.
+  - can we D.R.Y. that? In python I'd use a mixin, I don't know about rust.
+- Frontend is SPA with sane chunk splitting
+- why no `CHECK` for `friendships.status`?
+- if an entity's name is not set, UI etc. shall display the UUID as `<code>…<code>`
+  - probably best to have a small component with slot for consistent styling of an entity across the app?
+- "pubkey upload" is just vue parsing the file, have textarea with file input, also filling the textarea.
+  - check for plausibility of it being a textfile and not too long before dumping it into the textarea.
+- server/clients can have type icon, too, so it's just different filters, otherwise same page component.
+- `friendships`: not sure about `can_see_clients BOOL, can_see_servers BOOL, can_see_all BOOL`:
+  - like clients + servers = all would be redundant
+  - I don't see the case covered where I would allpow someone access to only one of my servers?
+  - Maybe I confused myself with `friendship ` vs `access`?
+    - try to explain clearly with your words.
+- I would like to separate SSH Key from `entity`
+- logins (success/failure) are not hidden, only the passwords are (6 dots)
+- always record if it's successful authorization or failure, so we can impose `fail2ban` like blocking.
+  - to actually integrate real `fail2ban`, allow setting an env var for a file to write to.
+    - at least for ssh, you can imitate SSH authentication log, example could point to `/var/log/auth.log`.
+  - for the other services, either reuse some good standard format, or provide a filter definition. (i.e. for placing at `/etc/fail2ban/filter.d/….conf`)
+- `target-hostname` may also be the `entity`s UUIDv7, the user still needs to have access in some way though.
+- A server shall have a way to define its ports.
+  - if multiple, the `-L` part needs to be repeated.
+  - the command generator shall be interactive, hovering the ports would highlight the entry in the ports table, and vice versa.
+  - they shall be editable in the table, and so they would change in the ssh prompt.
+  - table would be
+    - `| **enabled** | **local port** | **proxy port** | **name** | **description** | |`
+    - `| quick way to turn a forwarded port on or off | the port on the server machine | the port internal to <code>tunnel2tunnel</code> | short | free text for your notes | |`
+    - then the rows: 
+    - `| checkbox | numeric | numeric | text | textarea |`
+  - put the SSH command generation earlier, as I need it to test the SSH connection sharing.
+  - the first (zeroth?) phase should be a very simple ssh-to-ssh tunnel test server. 
+    - This is to test feasibility.
+    - No auth, just passwordless ssh tunnel.
+    - One "host" in the connection command will be `client`, one `server`
+      - Assume only 1 connection per slot
+      - connect those two.
