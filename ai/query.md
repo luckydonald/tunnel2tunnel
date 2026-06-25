@@ -151,3 +151,82 @@
 > - [Raw log (`159152` chars, `156 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/1a30a91c-bbb6-4fb8-984d-44a7fb2958c5/tasks/ab6de458243294bee.output)
 > - `22` tools, `27476` tokens, `0.793917 s`
 
+❯ # Changes/Additions Round 1
+
+- use the full name `tunnel2tunnel` everywhere. Only the binary may be called `t2t`.
+- use `UUIDv7` everywhere
+- Vue means Vue 3 script setup, fully typed TS (no any, no unknown), SCSS. 
+- all dates in db shall be timezoned
+- server shall be in UTC.
+- every table shall have `created_at`, `updated_at`, automated db side.
+  - can we D.R.Y. that? In python I'd use a mixin, I don't know about rust.
+- Frontend is SPA with sane chunk splitting
+- why no `CHECK` for `friendships.status`?
+- if an entity's name is not set, UI etc. shall display the UUID as `<code>…<code>`
+  - probably best to have a small component with slot for consistent styling of an entity across the app?
+- "pubkey upload" is just vue parsing the file, have textarea with file input, also filling the textarea.
+  - check for plausibility of it being a textfile and not too long before dumping it into the textarea.
+- server/clients can have type icon, too, so it's just different filters, otherwise same page component.
+- `friendships`: not sure about `can_see_clients BOOL, can_see_servers BOOL, can_see_all BOOL`:
+  - like clients + servers = all would be redundant
+  - I don't see the case covered where I would allpow someone access to only one of my servers?
+  - Maybe I confused myself with `friendship ` vs `access`?
+    - try to explain clearly with your words.
+- I would like to separate SSH Key from `entity`
+- logins (success/failure) are not hidden, only the passwords are (6 dots)
+- always record if it's successful authorization or failure, so we can impose `fail2ban` like blocking.
+  - to actually integrate real `fail2ban`, allow setting an env var for a file to write to.
+    - at least for ssh, you can imitate SSH authentication log, example could point to `/var/log/auth.log`.
+  - for the other services, either reuse some good standard format, or provide a filter definition. (i.e. for placing at `/etc/fail2ban/filter.d/….conf`)
+- `target-hostname` may also be the `entity`s UUIDv7, the user still needs to have access in some way though.
+- A server shall have a way to define its ports.
+  - if multiple, the `-L` part needs to be repeated.
+  - the command generator shall be interactive, hovering the ports would highlight the entry in the ports table, and vice versa.
+  - they shall be editable in the table, and so they would change in the ssh prompt.
+  - table would be
+    - `| **enabled** | **local port** | **proxy port** | **name** | **description** | |`
+    - `| quick way to turn a forwarded port on or off | the port on the server machine | the port internal to <code>tunnel2tunnel</code> | short | free text for your notes | |`
+    - then the rows: 
+    - `| checkbox | numeric | numeric | text | textarea |`
+  - put the SSH command generation earlier, as I need it to test the SSH connection sharing.
+  - the first (zeroth?) phase should be a very simple ssh-to-ssh tunnel test server. 
+    - This is to test feasibility.
+    - No auth, just passwordless ssh tunnel.
+    - One "host" in the connection command will be `client`, one `server`
+      - Assume only 1 connection per slot
+      - connect those two.
+
+❯ # Changes round 2
+
+- Write unit tests
+- Friendship shall also be for only specific entities, i.e. just a single server, or two of my clients.
+- Shouldn't `SoftTimestamps` extend `Timestamps`?
+- Can we have `Softdelete` as it's own mixin?
+- Can we have a combining mixing `TimestampsSoftdelete` (instead of `SoftTimestamps`)?
+- `created_at` shall have a default - now
+
+
+❯ - use UUIDv7 support for postgres, too.
+
+❯ - isn't uuid v7 natively supported by postgres recently? I think pg 8.0+?
+
+❯ yes, check. I guess v 18 perhaps?
+
+❯ Task Notification:
+> - Task `ad246ab1b620312ed` <kbd>completed</kbd>
+> - Tool `toolu_01Uq4rGLyUdFHH2erYTjzzbh`
+> - > Agent "Check PostgreSQL native UUIDv7 support version" finished
+> - [Query (`286` chars, `286 B`)](output/agents/002.ad246ab1b620312ed/prompt.md)
+> - [Answer (`967` chars, `967 B`)](output/agents/002.ad246ab1b620312ed/result.md)
+> - [Raw log (`21835` chars, `21.4 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/994f3182-cf54-4bab-b502-21d858b1e2d9/tasks/ad246ab1b620312ed.output)
+> - `2` tools, `10049` tokens, `0.224733 s`
+
+❯ Task Notification:
+> - Task `a0d5ba80c5c332c80` <kbd>completed</kbd>
+> - Tool `toolu_01KLJD6zzk7mRLc5wB2qzpR1`
+> - > Agent "Check russh 0.44+ server Handler API signatures" finished
+> - [Query (`893` chars, `899 B`)](output/agents/003.a0d5ba80c5c332c80/prompt.md)
+> - [Answer (`5964` chars, `5.84 KB`)](output/agents/003.a0d5ba80c5c332c80/result.md)
+> - [Raw log (`131179` chars, `128 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/994f3182-cf54-4bab-b502-21d858b1e2d9/tasks/a0d5ba80c5c332c80.output)
+> - `27` tools, `19059` tokens, `1.55688 s`
+

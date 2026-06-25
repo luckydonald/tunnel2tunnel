@@ -1,0 +1,16 @@
+[package]
+name = "t2t-feasibility"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "t2t-feasibility"
+path = "src/main.rs"
+
+[dependencies]
+russh = "0.61"
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+getrandom = "0.4"

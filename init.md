@@ -213,3 +213,15 @@ Here's what the user should be able to do:
     - One "host" in the connection command will be `client`, one `server`
       - Assume only 1 connection per slot
       - connect those two.
+
+---
+
+# Changes round 2
+
+- Write unit tests
+- Friendship shall also be for only specific entities, i.e. just a single server, or two of my clients.
+- Shouldn't `SoftTimestamps` extend `Timestamps`?
+- Can we have `Softdelete` as it's own mixin?
+- Can we have a combining mixing `TimestampsSoftdelete` (instead of `SoftTimestamps`)?
+- `created_at` shall have a default - now
+- 

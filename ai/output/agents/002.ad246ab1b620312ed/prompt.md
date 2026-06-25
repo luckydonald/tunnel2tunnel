@@ -1,0 +1,1 @@
+Search the web to find out: which version of PostgreSQL first added native UUIDv7 support (i.e. a built-in function like `uuidv7()` or similar, without needing the `pg_uuidv7` extension)? Report the exact function name, the PostgreSQL version it landed in, and a source URL. Be concise.
