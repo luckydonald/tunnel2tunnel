@@ -6,6 +6,7 @@ import EntityName from '@/components/EntityName.vue'
 import PubkeyInput, { type ParsedKey } from '@/components/PubkeyInput.vue'
 import SshCommandDisplay from '@/components/SshCommandDisplay.vue'
 import { entitiesApi, type EntityDetail, type EntityPort } from '@/api/entities'
+import { friendsApi, type AccessRule } from '@/api/friends'
 
 const route = useRoute()
 const router = useRouter()
@@ -115,6 +116,50 @@ async function handleDeletePort(portId: string): Promise<void> {
     if (entity.value) entity.value.ports = entity.value.ports.filter(p => p.id !== portId)
   } catch (e) {
     alert(e instanceof Error ? e.message : 'Failed to delete port')
+  }
+}
+
+// Access rules
+const accessRules = ref<AccessRule[]>([])
+const accessLoaded = ref(false)
+const showAddAccess = ref(false)
+const newAccess = ref({ subject_type: 'public_lite', hostname: '' })
+const addingAccess = ref(false)
+
+async function loadAccess(): Promise<void> {
+  if (accessLoaded.value) return
+  try {
+    accessRules.value = await friendsApi.listAccess(entityId)
+    accessLoaded.value = true
+  } catch (e) {
+    alert(e instanceof Error ? e.message : 'Failed to load access rules')
+  }
+}
+
+async function handleAddAccess(): Promise<void> {
+  addingAccess.value = true
+  try {
+    const rule = await friendsApi.createAccess(entityId, {
+      subject_type: newAccess.value.subject_type,
+      hostname: newAccess.value.hostname || null,
+    })
+    accessRules.value.push(rule)
+    showAddAccess.value = false
+    newAccess.value = { subject_type: 'public_lite', hostname: '' }
+  } catch (e) {
+    alert(e instanceof Error ? e.message : 'Failed to add access rule')
+  } finally {
+    addingAccess.value = false
+  }
+}
+
+async function handleDeleteAccess(ruleId: string): Promise<void> {
+  if (!confirm('Delete this access rule?')) return
+  try {
+    await friendsApi.deleteAccess(entityId, ruleId)
+    accessRules.value = accessRules.value.filter(r => r.id !== ruleId)
+  } catch (e) {
+    alert(e instanceof Error ? e.message : 'Failed to delete rule')
   }
 }
 
@@ -276,6 +321,61 @@ async function handleDeleteEntity(): Promise<void> {
         <p v-else class="empty">No SSH keys.</p>
       </section>
 
+      <!-- Access rules -->
+      <section class="section">
+        <div class="section-header">
+          <h2>Access Rules</h2>
+          <button class="btn-secondary" @click="showAddAccess = !showAddAccess; loadAccess()">
+            {{ showAddAccess ? 'Cancel' : 'Add rule' }}
+          </button>
+        </div>
+
+        <!-- lazy-load on first open -->
+        <template v-if="accessLoaded">
+          <div v-if="showAddAccess" class="add-access-form">
+            <label class="field-label">Subject type</label>
+            <select v-model="newAccess.subject_type" class="select-sm">
+              <option value="public_lite">public_lite (anyone)</option>
+              <option value="all_mine">all_mine (all my entities)</option>
+              <option value="all_user_entities">all_user_entities</option>
+              <option value="entity">entity (specific)</option>
+            </select>
+            <input
+              v-model="newAccess.hostname"
+              type="text"
+              class="input-sm"
+              placeholder="Hostname alias (optional)"
+            />
+            <button class="btn-primary" :disabled="addingAccess" @click="handleAddAccess">
+              {{ addingAccess ? 'Adding…' : 'Add' }}
+            </button>
+          </div>
+
+          <table v-if="accessRules.length" class="data-table">
+            <thead>
+              <tr>
+                <th>Subject type</th>
+                <th>Subject entity</th>
+                <th>Subject user</th>
+                <th>Hostname alias</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="rule in accessRules" :key="rule.id">
+                <td><code>{{ rule.subject_type }}</code></td>
+                <td><code v-if="rule.subject_entity_id" class="fp">{{ rule.subject_entity_id }}</code><span v-else>—</span></td>
+                <td><code v-if="rule.subject_user_id" class="fp">{{ rule.subject_user_id }}</code><span v-else>—</span></td>
+                <td>{{ rule.hostname ?? '—' }}</td>
+                <td><button class="btn-del-sm" @click="handleDeleteAccess(rule.id)">×</button></td>
+              </tr>
+            </tbody>
+          </table>
+          <p v-else-if="!showAddAccess" class="empty">No access rules.</p>
+        </template>
+        <p v-else class="empty">Click "Add rule" to manage access.</p>
+      </section>
+
       <!-- Connection log placeholder -->
       <section class="section">
         <h2>Connection Log</h2>
@@ -383,5 +483,24 @@ async function handleDeleteEntity(): Promise<void> {
   padding: .375rem .875rem; background: none; border: 1px solid #3f1e1e; border-radius: 4px;
   color: #f87171; font-size: .875rem; cursor: pointer;
   &:hover { background: rgba(239,68,68,.1); }
+}
+
+.add-access-form {
+  display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
+  padding: 0.75rem; background: #1a1d27; border-radius: 6px; margin-bottom: 0.75rem;
+}
+
+.field-label { font-size: 0.8125rem; color: #94a3b8; white-space: nowrap; }
+
+.select-sm {
+  padding: 0.25rem 0.5rem; background: #0f1117; border: 1px solid #2d3248;
+  border-radius: 4px; color: #e2e8f0; font-size: 0.875rem;
+  &:focus { outline: none; border-color: #4f6ef7; }
+}
+
+.input-sm {
+  padding: 0.25rem 0.5rem; background: #0f1117; border: 1px solid #2d3248;
+  border-radius: 4px; color: #e2e8f0; font-size: 0.875rem; min-width: 180px;
+  &:focus { outline: none; border-color: #4f6ef7; }
 }
 </style>

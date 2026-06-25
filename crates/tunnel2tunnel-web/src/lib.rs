@@ -58,6 +58,23 @@ pub async fn start(config: WebConfig, pool: PgPool) -> anyhow::Result<()> {
         .route("/api/entities/:entity_id/ports/:port_id",
             put(routes::entities::update_port)
             .delete(routes::entities::delete_port))
+        // entity access rules
+        .route("/api/entities/:entity_id/access",
+            get(routes::access::list_access)
+            .post(routes::access::create_access))
+        .route("/api/entities/:entity_id/access/:rule_id",
+            delete(routes::access::delete_access))
+        // friends
+        .route("/api/friends",
+            get(routes::friends::list_friends)
+            .post(routes::friends::send_request))
+        .route("/api/friends/:id",
+            put(routes::friends::update_friendship))
+        .route("/api/friends/:id/grants",
+            get(routes::friends::list_grants)
+            .post(routes::friends::add_grant))
+        .route("/api/friends/:id/grants/:entity_id",
+            delete(routes::friends::remove_grant))
         .layer(session_layer)
         .with_state(state);
 

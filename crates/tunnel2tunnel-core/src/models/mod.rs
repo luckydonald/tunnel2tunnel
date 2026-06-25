@@ -1,5 +1,7 @@
 pub mod entity;
+pub mod entity_access;
 pub mod entity_port;
+pub mod friendship;
 pub mod settings;
 pub mod ssh_key;
 pub mod user;

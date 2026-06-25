@@ -4,6 +4,7 @@ import LoginPage from '@/pages/LoginPage.vue'
 import DashboardPage from '@/pages/DashboardPage.vue'
 import EntitiesPage from '@/pages/EntitiesPage.vue'
 import EntityDetailPage from '@/pages/EntityDetailPage.vue'
+import FriendsPage from '@/pages/FriendsPage.vue'
 
 const routes: RouteRecordRaw[] = [
   { path: '/login', name: 'login', component: LoginPage },
@@ -38,6 +39,12 @@ const routes: RouteRecordRaw[] = [
     path: '/entities/:id',
     name: 'entity-detail',
     component: EntityDetailPage,
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/friends',
+    name: 'friends',
+    component: FriendsPage,
     meta: { requiresAuth: true },
   },
 ]

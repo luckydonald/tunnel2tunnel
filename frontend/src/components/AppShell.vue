@@ -20,6 +20,8 @@ async function handleLogout(): Promise<void> {
         <li class="nav-group-label">Entities</li>
         <li><RouterLink to="/servers">Servers</RouterLink></li>
         <li><RouterLink to="/clients">Clients</RouterLink></li>
+        <li class="nav-group-label">Social</li>
+        <li><RouterLink to="/friends">Friends</RouterLink></li>
       </ul>
       <div class="sidebar-footer">
         <span class="username">{{ auth.user?.username }}</span>

@@ -1,0 +1,77 @@
+use serde::Serialize;
+use sqlx::PgPool;
+use uuid::Uuid;
+
+use crate::error::CoreError;
+use crate::timestamps::Timestamps;
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+pub struct EntityAccess {
+    pub id: Uuid,
+    pub owner_entity_id: Uuid,
+    pub subject_type: String,
+    pub subject_entity_id: Option<Uuid>,
+    pub subject_user_id: Option<Uuid>,
+    pub hostname: Option<String>,
+    #[sqlx(flatten)]
+    #[serde(flatten)]
+    pub ts: Timestamps,
+}
+
+impl EntityAccess {
+    pub async fn list_for_entity(
+        pool: &PgPool,
+        owner_entity_id: Uuid,
+    ) -> Result<Vec<Self>, CoreError> {
+        sqlx::query_as::<_, EntityAccess>(
+            "SELECT * FROM entity_access \
+             WHERE owner_entity_id = $1 ORDER BY created_at DESC",
+        )
+        .bind(owner_entity_id)
+        .fetch_all(pool)
+        .await
+        .map_err(CoreError::Sqlx)
+    }
+
+    pub async fn create(
+        pool: &PgPool,
+        owner_entity_id: Uuid,
+        subject_type: &str,
+        subject_entity_id: Option<Uuid>,
+        subject_user_id: Option<Uuid>,
+        hostname: Option<&str>,
+    ) -> Result<Self, CoreError> {
+        let id = Uuid::now_v7();
+        sqlx::query_as::<_, EntityAccess>(
+            "INSERT INTO entity_access \
+               (id, owner_entity_id, subject_type, subject_entity_id, subject_user_id, hostname) \
+             VALUES ($1, $2, $3, $4, $5, $6) \
+             RETURNING *",
+        )
+        .bind(id)
+        .bind(owner_entity_id)
+        .bind(subject_type)
+        .bind(subject_entity_id)
+        .bind(subject_user_id)
+        .bind(hostname)
+        .fetch_one(pool)
+        .await
+        .map_err(CoreError::Sqlx)
+    }
+
+    pub async fn delete(
+        pool: &PgPool,
+        id: Uuid,
+        owner_entity_id: Uuid,
+    ) -> Result<bool, CoreError> {
+        let r = sqlx::query(
+            "DELETE FROM entity_access WHERE id = $1 AND owner_entity_id = $2",
+        )
+        .bind(id)
+        .bind(owner_entity_id)
+        .execute(pool)
+        .await
+        .map_err(CoreError::Sqlx)?;
+        Ok(r.rows_affected() > 0)
+    }
+}
