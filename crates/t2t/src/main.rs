@@ -1,7 +1,8 @@
 use anyhow::{Context, Result};
 use tracing_subscriber::EnvFilter;
 use tunnel2tunnel_core::db;
-use tunnel2tunnel_web::{start, bootstrap_admin, WebConfig};
+use tunnel2tunnel_ssh::{start as start_ssh, SshConfig};
+use tunnel2tunnel_web::{start as start_http, bootstrap_admin, WebConfig};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -15,8 +16,13 @@ async fn main() -> Result<()> {
         .unwrap_or_else(|_| "3000".to_string())
         .parse()
         .context("HTTP_PORT must be a valid port number")?;
+    let ssh_port: u16 = std::env::var("SSH_PORT")
+        .unwrap_or_else(|_| "2222".to_string())
+        .parse()
+        .context("SSH_PORT must be a valid port number")?;
     let admin_username = std::env::var("ADMIN_USERNAME").ok();
     let admin_password = std::env::var("ADMIN_PASSWORD").ok();
+    let fail2ban_log_path = std::env::var("FAIL2BAN_LOG_PATH").ok();
 
     let pool = db::connect(&database_url).await
         .context("failed to connect to database")?;
@@ -34,6 +40,24 @@ async fn main() -> Result<()> {
             .context("failed to bootstrap admin user")?;
     }
 
-    start(WebConfig { http_port }, pool).await?;
+    let http_pool = pool.clone();
+    let ssh_pool = pool;
+
+    let http = tokio::spawn(async move {
+        start_http(WebConfig { http_port }, http_pool)
+            .await
+            .expect("HTTP server failed")
+    });
+
+    let ssh = tokio::spawn(async move {
+        start_ssh(SshConfig { ssh_port, fail2ban_log_path }, ssh_pool)
+            .await
+            .expect("SSH server failed")
+    });
+
+    tokio::try_join!(
+        async { http.await.map_err(|e| anyhow::anyhow!("HTTP join: {e}")) },
+        async { ssh.await.map_err(|e| anyhow::anyhow!("SSH join: {e}")) },
+    )?;
     Ok(())
 }

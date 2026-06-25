@@ -22,6 +22,19 @@ pub struct SshKey {
 }
 
 impl SshKey {
+    pub async fn find_by_fingerprint(
+        pool: &PgPool,
+        fingerprint: &str,
+    ) -> Result<Option<Self>, CoreError> {
+        sqlx::query_as::<_, SshKey>(
+            "SELECT * FROM ssh_keys WHERE fingerprint = $1 AND deleted_at IS NULL",
+        )
+        .bind(fingerprint)
+        .fetch_optional(pool)
+        .await
+        .map_err(CoreError::Sqlx)
+    }
+
     pub async fn list_for_entity(pool: &PgPool, entity_id: Uuid) -> Result<Vec<Self>, CoreError> {
         sqlx::query_as::<_, SshKey>(
             "SELECT * FROM ssh_keys WHERE entity_id = $1 AND deleted_at IS NULL ORDER BY created_at",

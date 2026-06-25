@@ -1,3 +1,4 @@
+pub mod connection_log;
 pub mod entity;
 pub mod entity_access;
 pub mod entity_port;

@@ -74,4 +74,50 @@ impl EntityAccess {
         .map_err(CoreError::Sqlx)?;
         Ok(r.rows_affected() > 0)
     }
+
+    /// Returns true if `client_entity_id` (owned by `client_user_id`) has an
+    /// access rule on `target_entity_id` (owned by `target_user_id`).
+    pub async fn check_access(
+        pool: &PgPool,
+        target_entity_id: Uuid,
+        client_entity_id: Uuid,
+        client_user_id: Uuid,
+        target_user_id: Uuid,
+    ) -> Result<bool, CoreError> {
+        let exists = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS (
+               SELECT 1 FROM entity_access
+               WHERE owner_entity_id = $1
+                 AND (
+                   subject_type = 'public_lite'
+                   OR (subject_type = 'all_mine'            AND $3 = $4)
+                   OR (subject_type = 'all_user_entities'   AND subject_user_id = $3)
+                   OR (subject_type = 'entity'              AND subject_entity_id = $2)
+                 )
+             )",
+        )
+        .bind(target_entity_id)
+        .bind(client_entity_id)
+        .bind(client_user_id)
+        .bind(target_user_id)
+        .fetch_one(pool)
+        .await
+        .map_err(CoreError::Sqlx)?;
+        Ok(exists)
+    }
+
+    /// Resolve a hostname alias to an entity ID.
+    pub async fn find_entity_by_hostname(
+        pool: &PgPool,
+        hostname: &str,
+    ) -> Result<Option<Uuid>, CoreError> {
+        sqlx::query_scalar::<_, Uuid>(
+            "SELECT owner_entity_id FROM entity_access \
+             WHERE hostname = $1 LIMIT 1",
+        )
+        .bind(hostname)
+        .fetch_optional(pool)
+        .await
+        .map_err(CoreError::Sqlx)
+    }
 }
