@@ -8,6 +8,7 @@ use axum::{
     Router,
 };
 use sqlx::PgPool;
+use tower_http::services::{ServeDir, ServeFile};
 use tower_sessions::{cookie::time::Duration, Expiry, SessionManagerLayer};
 use tower_sessions_sqlx_store::PostgresStore;
 
@@ -21,6 +22,9 @@ pub struct AppState {
 
 pub struct WebConfig {
     pub http_port: u16,
+    /// Path to the compiled frontend dist/ directory (e.g. "frontend/dist").
+    /// If None (or path doesn't exist), the SPA fallback is skipped.
+    pub static_dir: Option<String>,
 }
 
 pub async fn start(config: WebConfig, pool: PgPool) -> anyhow::Result<()> {
@@ -97,6 +101,21 @@ pub async fn start(config: WebConfig, pool: PgPool) -> anyhow::Result<()> {
             post(routes::settings::purge_access))
         .layer(session_layer)
         .with_state(state);
+
+    // Serve the compiled Vue SPA for all non-API routes
+    let app = if let Some(ref dir) = config.static_dir {
+        if std::path::Path::new(dir).exists() {
+            let index = format!("{dir}/index.html");
+            app.fallback_service(
+                ServeDir::new(dir).fallback(ServeFile::new(index)),
+            )
+        } else {
+            tracing::warn!(dir, "static dir not found; SPA not served");
+            app
+        }
+    } else {
+        app
+    };
 
     let addr = format!("0.0.0.0:{}", config.http_port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;

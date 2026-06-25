@@ -1,10 +1,8 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { useRouter } from 'vue-router'
 import AppShell from '@/components/AppShell.vue'
 import { adminApi } from '@/api/admin'
 
-const router = useRouter()
 const oldPw = ref('')
 const newPw = ref('')
 const confirmPw = ref('')

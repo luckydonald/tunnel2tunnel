@@ -1,10 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
 import AppShell from '@/components/AppShell.vue'
 import { adminApi } from '@/api/admin'
-
-const router = useRouter()
 
 interface KeyRow {
   id: string

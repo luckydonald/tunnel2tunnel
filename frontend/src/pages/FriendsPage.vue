@@ -86,10 +86,6 @@ async function handleRemoveGrant(entity_id: string): Promise<void> {
   }
 }
 
-function friendName(f: Friendship): string {
-  return f.from_user_id === auth.user?.id ? `→ ${f.to_user_id}` : `← ${f.from_user_id}`
-}
-
 function isOutgoing(f: Friendship): boolean {
   return f.from_user_id === auth.user?.id
 }

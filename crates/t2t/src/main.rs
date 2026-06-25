@@ -23,6 +23,13 @@ async fn main() -> Result<()> {
     let admin_username = std::env::var("ADMIN_USERNAME").ok();
     let admin_password = std::env::var("ADMIN_PASSWORD").ok();
     let fail2ban_log_path = std::env::var("FAIL2BAN_LOG_PATH").ok();
+    let static_dir = std::env::var("STATIC_DIR")
+        .unwrap_or_else(|_| "frontend/dist".to_string());
+    let static_dir = if std::path::Path::new(&static_dir).exists() {
+        Some(static_dir)
+    } else {
+        None
+    };
 
     let pool = db::connect(&database_url).await
         .context("failed to connect to database")?;
@@ -44,7 +51,7 @@ async fn main() -> Result<()> {
     let ssh_pool = pool;
 
     let http = tokio::spawn(async move {
-        start_http(WebConfig { http_port }, http_pool)
+        start_http(WebConfig { http_port, static_dir }, http_pool)
             .await
             .expect("HTTP server failed")
     });
