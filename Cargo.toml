@@ -18,7 +18,9 @@ tracing     = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 sqlx        = { version = "0.8",  features = ["postgres", "uuid", "time", "runtime-tokio"] }
 uuid        = { version = "1",    features = ["v7", "serde"] }
-time        = { version = "0.3",  features = ["serde"] }
+time        = { version = "0.3",  features = ["serde", "serde-well-known"] }
+sha2        = "0.10"
+base64      = "0.22"
 axum        = { version = "0.8" }
 tower-sessions = "0.14"
 tower-sessions-sqlx-store = { version = "0.15", features = ["postgres"] }

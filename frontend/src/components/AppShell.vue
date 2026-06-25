@@ -17,6 +17,9 @@ async function handleLogout(): Promise<void> {
       <div class="sidebar-brand">t2t</div>
       <ul class="sidebar-nav">
         <li><RouterLink to="/dashboard">Dashboard</RouterLink></li>
+        <li class="nav-group-label">Entities</li>
+        <li><RouterLink to="/servers">Servers</RouterLink></li>
+        <li><RouterLink to="/clients">Clients</RouterLink></li>
       </ul>
       <div class="sidebar-footer">
         <span class="username">{{ auth.user?.username }}</span>
@@ -76,6 +79,15 @@ async function handleLogout(): Promise<void> {
       background: #2d3248;
     }
   }
+}
+
+.nav-group-label {
+  padding: 0.875rem 1rem 0.25rem;
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: #4b5563;
+  font-weight: 600;
 }
 
 .sidebar-footer {

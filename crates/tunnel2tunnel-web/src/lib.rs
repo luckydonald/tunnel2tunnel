@@ -3,7 +3,10 @@ mod error;
 mod extractors;
 pub mod routes;
 
-use axum::{routing::{get, post}, Router};
+use axum::{
+    routing::{delete, get, post, put},
+    Router,
+};
 use sqlx::PgPool;
 use tower_sessions::{cookie::time::Duration, Expiry, SessionManagerLayer};
 use tower_sessions_sqlx_store::PostgresStore;
@@ -31,9 +34,30 @@ pub async fn start(config: WebConfig, pool: PgPool) -> anyhow::Result<()> {
         .with_expiry(Expiry::OnInactivity(Duration::hours(24)));
 
     let app = Router::new()
-        .route("/api/auth/login", post(routes::auth::login))
+        // auth
+        .route("/api/auth/login",  post(routes::auth::login))
         .route("/api/auth/logout", post(routes::auth::logout))
         .route("/api/auth/me",     get(routes::auth::me))
+        // entities
+        .route("/api/entities",
+            get(routes::entities::list_entities)
+            .post(routes::entities::create_entity))
+        .route("/api/entities/:id",
+            get(routes::entities::get_entity)
+            .put(routes::entities::update_entity)
+            .delete(routes::entities::delete_entity))
+        // SSH keys
+        .route("/api/entities/:entity_id/keys",
+            post(routes::entities::add_key))
+        .route("/api/entities/:entity_id/keys/:key_id",
+            delete(routes::entities::delete_key))
+        // ports
+        .route("/api/entities/:entity_id/ports",
+            get(routes::entities::list_ports)
+            .post(routes::entities::create_port))
+        .route("/api/entities/:entity_id/ports/:port_id",
+            put(routes::entities::update_port)
+            .delete(routes::entities::delete_port))
         .layer(session_layer)
         .with_state(state);
 

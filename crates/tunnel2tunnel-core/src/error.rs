@@ -6,6 +6,12 @@ pub enum CoreError {
     #[error("password hash error: {0}")]
     PasswordHash(String),
 
+    #[error("invalid key format")]
+    InvalidKeyFormat,
+
+    #[error("invalid key data (not valid base64)")]
+    InvalidKeyData,
+
     #[error("user not found")]
     UserNotFound,
 }
