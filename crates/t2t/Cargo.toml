@@ -1,0 +1,18 @@
+[package]
+name = "t2t"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "t2t"
+path = "src/main.rs"
+
+[dependencies]
+tunnel2tunnel-core  = { path = "../tunnel2tunnel-core" }
+tunnel2tunnel-web   = { path = "../tunnel2tunnel-web" }
+tunnel2tunnel-ssh   = { path = "../tunnel2tunnel-ssh" }
+tokio               = { workspace = true }
+tracing             = { workspace = true }
+tracing-subscriber  = { workspace = true }
+anyhow              = { workspace = true }
+sqlx                = { workspace = true }

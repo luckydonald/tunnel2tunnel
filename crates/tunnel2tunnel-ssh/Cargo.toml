@@ -1,0 +1,12 @@
+[package]
+name = "tunnel2tunnel-ssh"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tunnel2tunnel-core = { path = "../tunnel2tunnel-core" }
+russh              = { workspace = true }
+tokio              = { workspace = true }
+tracing            = { workspace = true }
+anyhow             = { workspace = true }
+getrandom          = { workspace = true }
