@@ -46,47 +46,47 @@ pub async fn start(config: WebConfig, pool: PgPool) -> anyhow::Result<()> {
         .route("/api/entities",
             get(routes::entities::list_entities)
             .post(routes::entities::create_entity))
-        .route("/api/entities/:id",
+        .route("/api/entities/{id}",
             get(routes::entities::get_entity)
             .put(routes::entities::update_entity)
             .delete(routes::entities::delete_entity))
         // SSH keys
-        .route("/api/entities/:entity_id/keys",
+        .route("/api/entities/{entity_id}/keys",
             post(routes::entities::add_key))
-        .route("/api/entities/:entity_id/keys/:key_id",
+        .route("/api/entities/{entity_id}/keys/{key_id}",
             delete(routes::entities::delete_key))
         // ports
-        .route("/api/entities/:entity_id/ports",
+        .route("/api/entities/{entity_id}/ports",
             get(routes::entities::list_ports)
             .post(routes::entities::create_port))
-        .route("/api/entities/:entity_id/ports/:port_id",
+        .route("/api/entities/{entity_id}/ports/{port_id}",
             put(routes::entities::update_port)
             .delete(routes::entities::delete_port))
         // entity access rules
-        .route("/api/entities/:entity_id/access",
+        .route("/api/entities/{entity_id}/access",
             get(routes::access::list_access)
             .post(routes::access::create_access))
-        .route("/api/entities/:entity_id/access/:rule_id",
+        .route("/api/entities/{entity_id}/access/{rule_id}",
             delete(routes::access::delete_access))
         // friends
         .route("/api/friends",
             get(routes::friends::list_friends)
             .post(routes::friends::send_request))
-        .route("/api/friends/:id",
+        .route("/api/friends/{id}",
             put(routes::friends::update_friendship))
-        .route("/api/friends/:id/grants",
+        .route("/api/friends/{id}/grants",
             get(routes::friends::list_grants)
             .post(routes::friends::add_grant))
-        .route("/api/friends/:id/grants/:entity_id",
+        .route("/api/friends/{id}/grants/{entity_id}",
             delete(routes::friends::remove_grant))
         // entity connection logs
-        .route("/api/entities/:id/logs",
+        .route("/api/entities/{id}/logs",
             get(routes::entities::list_connection_logs))
         // admin
         .route("/api/admin/users",
             get(routes::admin::list_users)
             .post(routes::admin::create_user))
-        .route("/api/admin/users/:id",
+        .route("/api/admin/users/{id}",
             put(routes::admin::update_user))
         // user settings
         .route("/api/me/password",
