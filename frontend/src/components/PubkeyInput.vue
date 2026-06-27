@@ -1,6 +1,15 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 
+const copied = ref(false)
+const GEN_CMD = 'ssh-keygen -t ed25519 -C "tunnel2tunnel" -f ~/.ssh/t2t_key'
+
+async function copyCmd(): Promise<void> {
+  await navigator.clipboard.writeText(GEN_CMD)
+  copied.value = true
+  setTimeout(() => { copied.value = false }, 2000)
+}
+
 export interface ParsedKey {
   algorithm: string
   key_data: string
@@ -69,6 +78,14 @@ async function handleFileChange(e: Event): Promise<void> {
 
 <template>
   <div class="pubkey-input">
+    <div class="gen-hint">
+      <span class="gen-label">Generate a key:</span>
+      <code class="gen-cmd">{{ GEN_CMD }}</code>
+      <button type="button" class="btn-copy" :class="{ copied }" @click="copyCmd">
+        {{ copied ? 'Copied!' : 'Copy' }}
+      </button>
+    </div>
+    <p class="gen-note">Then paste the contents of <code>~/.ssh/t2t_key.pub</code> below.</p>
     <textarea
       :value="rawText"
       placeholder="Paste public key (authorized_keys format)&#10;ssh-ed25519 AAAA... user@host"
@@ -98,6 +115,52 @@ async function handleFileChange(e: Event): Promise<void> {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
+}
+
+.gen-hint {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  background: #0f1117;
+  border: 1px solid #2d3248;
+  border-radius: 4px;
+  padding: 0.5rem 0.75rem;
+}
+
+.gen-label {
+  font-size: 0.75rem;
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.gen-cmd {
+  flex: 1;
+  font-size: 0.75rem;
+  color: #a5f3fc;
+  word-break: break-all;
+}
+
+.btn-copy {
+  padding: 0.2rem 0.6rem;
+  background: none;
+  border: 1px solid #2d3248;
+  border-radius: 3px;
+  color: #94a3b8;
+  font-size: 0.75rem;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.15s, border-color 0.15s;
+
+  &:hover { color: #e2e8f0; border-color: #4f6ef7; }
+  &.copied { color: #6ee7b7; border-color: #34d399; }
+}
+
+.gen-note {
+  margin: 0;
+  font-size: 0.75rem;
+  color: #64748b;
+  code { color: #94a3b8; }
 }
 
 textarea {

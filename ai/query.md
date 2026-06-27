@@ -244,3 +244,5 @@
 > - [Answer (`1042` chars, `1.02 KB`)](output/agents/004.bnkdsxtjs/result.md)
 > - [Raw log (`1042` chars, `1.02 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/994f3182-cf54-4bab-b502-21d858b1e2d9/tasks/bnkdsxtjs.output)
 
+❯ add the command to generate an ssh key for the add page(s)
+
