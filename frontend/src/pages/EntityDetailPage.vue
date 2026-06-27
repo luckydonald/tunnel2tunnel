@@ -8,6 +8,7 @@ import SshCommandDisplay from '@/components/SshCommandDisplay.vue'
 import { entitiesApi, type EntityDetail, type EntityPort } from '@/api/entities'
 import { friendsApi, type AccessRule } from '@/api/friends'
 import { adminApi, type ConnLog } from '@/api/admin'
+import { subjectTypeLabel, subjectTypeOptions } from '@/labels'
 
 const route = useRoute()
 const router = useRouter()
@@ -354,10 +355,9 @@ async function handleDeleteEntity(): Promise<void> {
           <div v-if="showAddAccess" class="add-access-form">
             <label class="field-label">Subject type</label>
             <select v-model="newAccess.subject_type" class="select-sm">
-              <option value="public_lite">public_lite (anyone)</option>
-              <option value="all_mine">all_mine (all my entities)</option>
-              <option value="all_user_entities">all_user_entities</option>
-              <option value="entity">entity (specific)</option>
+              <option v-for="opt in subjectTypeOptions" :key="opt.value" :value="opt.value">
+                {{ opt.label }}
+              </option>
             </select>
             <input
               v-model="newAccess.hostname"
@@ -382,7 +382,7 @@ async function handleDeleteEntity(): Promise<void> {
             </thead>
             <tbody>
               <tr v-for="rule in accessRules" :key="rule.id">
-                <td><code>{{ rule.subject_type }}</code></td>
+                <td>{{ subjectTypeLabel[rule.subject_type] }}</td>
                 <td><code v-if="rule.subject_entity_id" class="fp">{{ rule.subject_entity_id }}</code><span v-else>—</span></td>
                 <td><code v-if="rule.subject_user_id" class="fp">{{ rule.subject_user_id }}</code><span v-else>—</span></td>
                 <td>{{ rule.hostname ?? '—' }}</td>

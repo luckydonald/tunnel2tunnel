@@ -6,6 +6,7 @@ import { useFriendsStore } from '@/stores/friends'
 import { friendsApi, type EntityGrant } from '@/api/friends'
 import { useEntitiesStore } from '@/stores/entities'
 import type { Friendship } from '@/api/friends'
+import { visibilityGrantOptions, friendshipStatusLabel } from '@/labels'
 
 const auth = useAuthStore()
 const store = useFriendsStore()
@@ -125,7 +126,7 @@ const myEntities = computed(() => entitiesStore.entities)
             <div class="friend-info">
               <span class="friend-direction">{{ isOutgoing(f) ? 'To' : 'From' }}</span>
               <span class="friend-user">{{ isOutgoing(f) ? f.to_user_id : f.from_user_id }}</span>
-              <span :class="['badge-status', f.status]">{{ f.status }}</span>
+              <span :class="['badge-status', f.status]">{{ friendshipStatusLabel[f.status] }}</span>
             </div>
             <div class="friend-actions">
               <!-- accept/decline for incoming pending -->
@@ -141,10 +142,9 @@ const myEntities = computed(() => entitiesStore.entities)
                   class="select-sm"
                   @change="handleUpdate(f, { visibility_grant: ($event.target as HTMLSelectElement).value })"
                 >
-                  <option value="none">None</option>
-                  <option value="clients">Clients</option>
-                  <option value="servers">Servers</option>
-                  <option value="all">All</option>
+                  <option v-for="opt in visibilityGrantOptions" :key="opt.value" :value="opt.value">
+                    {{ opt.label }}
+                  </option>
                 </select>
                 <button class="btn-secondary btn-sm" @click="toggleExpand(f.id)">
                   {{ expandedId === f.id ? 'Hide grants' : 'Per-entity grants' }}

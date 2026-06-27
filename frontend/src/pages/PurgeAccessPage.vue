@@ -2,11 +2,13 @@
 import { ref, computed, onMounted } from 'vue'
 import AppShell from '@/components/AppShell.vue'
 import { adminApi } from '@/api/admin'
+import { subjectTypeLabel } from '@/labels'
+import type { AccessRule } from '@/api/friends'
 
 interface RuleRow {
   id: string
   owner_entity_id: string
-  subject_type: string
+  subject_type: AccessRule['subject_type']
   hostname: string | null
   selected: boolean
 }
@@ -20,7 +22,7 @@ const confirming = ref(false)
 onMounted(async () => {
   try {
     const raw = await adminApi.listMyAccess()
-    rules.value = raw.map(r => ({ ...r, selected: false }))
+    rules.value = raw.map(r => ({ ...r, subject_type: r.subject_type as AccessRule['subject_type'], selected: false }))
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Failed to load'
   } finally {
@@ -85,7 +87,7 @@ async function handlePurge(): Promise<void> {
             <tr v-for="r in rules" :key="r.id" :class="{ 'row-selected': r.selected }">
               <td><input type="checkbox" v-model="r.selected" /></td>
               <td><code class="uuid">{{ r.owner_entity_id }}</code></td>
-              <td><code>{{ r.subject_type }}</code></td>
+              <td>{{ subjectTypeLabel[r.subject_type] }}</td>
               <td>{{ r.hostname ?? '—' }}</td>
             </tr>
           </tbody>

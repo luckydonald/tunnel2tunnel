@@ -246,3 +246,5 @@
 
 ❯ add the command to generate an ssh key for the add page(s)
 
+❯ for the subject type add proper english labels - in fact, add translations.
+
