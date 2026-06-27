@@ -248,3 +248,8 @@
 
 ❯ for the subject type add proper english labels - in fact, add translations.
 
+❯ In the key creation panel,
+- detect `-----BEGIN OPENSSH PRIVATE KEY-----` and reduce the text field to just the theader and the footer with `\n…\n`, also display an error alert/overlay.
+- have a filename field (saved, too). the default is `t2t_{name of client/server}`, it's used in all dynamic commands (key creation, ssh connections).
+- have a button to generate the ssh priv key directly in browser, which does it offline, and stores the generated file as download.
+

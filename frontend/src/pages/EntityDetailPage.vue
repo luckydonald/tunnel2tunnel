@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppShell from '@/components/AppShell.vue'
 import EntityName from '@/components/EntityName.vue'
@@ -25,14 +25,27 @@ const keyName = ref('')
 const addingKey = ref(false)
 const keyError = ref<string | null>(null)
 
+// Key filename — persisted to localStorage per entity, default derived from entity name
+const FILENAME_LS_KEY = `t2t_key_filename_${entityId}`
+const keyFilename = ref(localStorage.getItem(FILENAME_LS_KEY) ?? '')
+watch(keyFilename, v => localStorage.setItem(FILENAME_LS_KEY, v))
+
 // Port form
 const showAddPort = ref(false)
 const newPort = ref({ enabled: true, local_port: 8080, proxy_port: 8080, name: '', sort_order: 0 })
 const addingPort = ref(false)
 
+function defaultFilename(name: string | null, type: string): string {
+  const base = name ?? type
+  return 't2t_' + base.toLowerCase().replace(/[^a-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '')
+}
+
 async function load(): Promise<void> {
   try {
     entity.value = await entitiesApi.getEntity(entityId)
+    if (!keyFilename.value) {
+      keyFilename.value = defaultFilename(entity.value.name, entity.value.entity_type)
+    }
   } catch (e) {
     pageError.value = e instanceof Error ? e.message : 'Failed to load entity'
   } finally {
@@ -219,7 +232,7 @@ async function handleDeleteEntity(): Promise<void> {
       <!-- SSH command + ports overview -->
       <section class="section">
         <h2>SSH Command</h2>
-        <SshCommandDisplay :entity="entity" :ports="entity.ports" />
+        <SshCommandDisplay :entity="entity" :ports="entity.ports" :filename="keyFilename" />
       </section>
 
       <!-- Ports management -->
@@ -304,7 +317,7 @@ async function handleDeleteEntity(): Promise<void> {
         </div>
 
         <div v-if="showAddKey" class="add-key-form">
-          <PubkeyInput v-model="parsedKey" />
+          <PubkeyInput v-model="parsedKey" v-model:filename="keyFilename" />
           <div class="field" style="margin-top: .75rem">
             <label>Key name <span class="optional">(optional)</span></label>
             <input v-model="keyName" type="text" placeholder="e.g. laptop" />

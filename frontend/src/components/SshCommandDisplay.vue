@@ -5,9 +5,11 @@ import type { Entity, EntityPort } from '@/api/entities'
 const props = withDefaults(defineProps<{
   entity: Entity
   ports: EntityPort[]
+  filename?: string
   t2tHost?: string
   t2tSshPort?: number
 }>(), {
+  filename: 't2t_key',
   t2tSshPort: 2222,
 })
 
@@ -35,7 +37,8 @@ function isHovered(portId: string): boolean {
           Replace <code>&lt;server&gt;</code> with the server entity ID
         </span>
       </div>
-      <pre class="cmd-text">ssh -N<template v-for="port in enabledPorts" :key="port.id"> \
+      <pre class="cmd-text">ssh -N \
+  -i ~/.ssh/{{ filename }}<template v-for="port in enabledPorts" :key="port.id"> \
   <span
     class="cmd-flag"
     :class="{ 'is-hovered': isHovered(port.id) }"
