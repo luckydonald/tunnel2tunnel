@@ -1,14 +1,15 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppShell from '@/components/AppShell.vue'
 import EntityName from '@/components/EntityName.vue'
 import PubkeyInput, { type ParsedKey } from '@/components/PubkeyInput.vue'
 import SshCommandDisplay from '@/components/SshCommandDisplay.vue'
-import { entitiesApi, type EntityDetail, type EntityPort } from '@/api/entities'
-import { friendsApi, type AccessRule } from '@/api/friends'
+import { entitiesApi, type Entity, type EntityDetail, type EntityPort } from '@/api/entities'
+import { friendsApi, type AccessRule, type Friendship } from '@/api/friends'
 import { adminApi, type ConnLog } from '@/api/admin'
 import { subjectTypeLabel, subjectTypeOptions } from '@/labels'
+import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
 const router = useRouter()
@@ -135,11 +136,30 @@ async function handleDeletePort(portId: string): Promise<void> {
 }
 
 // Access rules
+const auth = useAuthStore()
 const accessRules = ref<AccessRule[]>([])
 const accessLoaded = ref(false)
 const showAddAccess = ref(false)
-const newAccess = ref({ subject_type: 'public_lite', hostname: '' })
+
+type NewAccess = {
+  subject_type: AccessRule['subject_type']
+  subject_entity_id: string | null
+  subject_user_id: string | null
+  hostname: string
+}
+const blankAccess = (): NewAccess => ({
+  subject_type: 'public_lite',
+  subject_entity_id: null,
+  subject_user_id: null,
+  hostname: '',
+})
+const newAccess = ref<NewAccess>(blankAccess())
 const addingAccess = ref(false)
+
+// Form data — entities + accepted friends, loaded once when the form is opened
+const accessFormEntities = ref<Entity[]>([])
+const accessFormFriends = ref<Friendship[]>([])
+const accessFormDataLoaded = ref(false)
 
 async function loadAccess(): Promise<void> {
   if (accessLoaded.value) return
@@ -151,16 +171,61 @@ async function loadAccess(): Promise<void> {
   }
 }
 
+async function loadAccessFormData(): Promise<void> {
+  if (accessFormDataLoaded.value) return
+  try {
+    const [entities, friends] = await Promise.all([
+      entitiesApi.list(),
+      friendsApi.listFriends(),
+    ])
+    accessFormEntities.value = entities
+    accessFormFriends.value = friends.filter(f => f.status === 'accepted')
+    accessFormDataLoaded.value = true
+  } catch {
+    // non-critical
+  }
+}
+
+// helper to get the other user's ID from a friendship
+function friendUserId(f: Friendship): string {
+  return f.from_user_id === auth.user?.id ? f.to_user_id : f.from_user_id
+}
+
+// derived lookup maps for displaying in the rules table once form data is loaded
+const entityNameMap = computed(() => {
+  const m = new Map<string, string>()
+  for (const e of accessFormEntities.value)
+    m.set(e.id, e.name ? `${e.name} (${e.entity_type})` : `${e.id.slice(0, 8)}… (${e.entity_type})`)
+  return m
+})
+
+const friendNameMap = computed(() => {
+  const m = new Map<string, string>()
+  for (const f of accessFormFriends.value) {
+    const uid = friendUserId(f)
+    m.set(uid, uid.slice(0, 13) + '…')
+  }
+  return m
+})
+
+// reset sub-fields when type changes
+watch(() => newAccess.value.subject_type, () => {
+  newAccess.value.subject_entity_id = null
+  newAccess.value.subject_user_id = null
+})
+
 async function handleAddAccess(): Promise<void> {
   addingAccess.value = true
   try {
     const rule = await friendsApi.createAccess(entityId, {
       subject_type: newAccess.value.subject_type,
+      subject_entity_id: newAccess.value.subject_entity_id ?? null,
+      subject_user_id: newAccess.value.subject_user_id ?? null,
       hostname: newAccess.value.hostname || null,
     })
     accessRules.value.push(rule)
     showAddAccess.value = false
-    newAccess.value = { subject_type: 'public_lite', hostname: '' }
+    newAccess.value = blankAccess()
   } catch (e) {
     alert(e instanceof Error ? e.message : 'Failed to add access rule')
   } finally {
@@ -377,7 +442,7 @@ async function handleDeleteEntity(): Promise<void> {
       <section class="section">
         <div class="section-header">
           <h2>Access Rules</h2>
-          <button class="btn-secondary" @click="showAddAccess = !showAddAccess; loadAccess()">
+          <button class="btn-secondary" @click="showAddAccess = !showAddAccess; loadAccess(); loadAccessFormData()">
             {{ showAddAccess ? 'Cancel' : 'Add rule' }}
           </button>
         </div>
@@ -391,13 +456,48 @@ async function handleDeleteEntity(): Promise<void> {
                 {{ opt.label }}
               </option>
             </select>
+
+            <!-- entity picker -->
+            <template v-if="newAccess.subject_type === 'entity'">
+              <label class="field-label">Entity</label>
+              <select v-model="newAccess.subject_entity_id" class="select-sm">
+                <option :value="null" disabled>— pick entity —</option>
+                <option v-for="e in accessFormEntities" :key="e.id" :value="e.id">
+                  {{ e.name ?? e.id.slice(0, 8) + '…' }} ({{ e.entity_type }})
+                </option>
+              </select>
+              <span v-if="!accessFormEntities.length" class="field-hint">No entities found.</span>
+            </template>
+
+            <!-- user picker (accepted friends) -->
+            <template v-if="newAccess.subject_type === 'all_user_entities'">
+              <label class="field-label">Friend's user</label>
+              <select v-model="newAccess.subject_user_id" class="select-sm">
+                <option :value="null" disabled>— pick friend —</option>
+                <option
+                  v-for="f in accessFormFriends"
+                  :key="f.id"
+                  :value="friendUserId(f)"
+                >
+                  {{ friendUserId(f) }}
+                </option>
+              </select>
+              <span v-if="!accessFormFriends.length" class="field-hint">No accepted friends.</span>
+            </template>
+
             <input
               v-model="newAccess.hostname"
               type="text"
               class="input-sm"
               placeholder="Hostname alias (optional)"
             />
-            <button class="btn-primary" :disabled="addingAccess" @click="handleAddAccess">
+            <button
+              class="btn-primary"
+              :disabled="addingAccess
+                || (newAccess.subject_type === 'entity' && !newAccess.subject_entity_id)
+                || (newAccess.subject_type === 'all_user_entities' && !newAccess.subject_user_id)"
+              @click="handleAddAccess"
+            >
               {{ addingAccess ? 'Adding…' : 'Add' }}
             </button>
           </div>
@@ -415,8 +515,22 @@ async function handleDeleteEntity(): Promise<void> {
             <tbody>
               <tr v-for="rule in accessRules" :key="rule.id">
                 <td>{{ subjectTypeLabel[rule.subject_type] }}</td>
-                <td><code v-if="rule.subject_entity_id" class="fp">{{ rule.subject_entity_id }}</code><span v-else>—</span></td>
-                <td><code v-if="rule.subject_user_id" class="fp">{{ rule.subject_user_id }}</code><span v-else>—</span></td>
+                <td>
+                  <template v-if="rule.subject_entity_id">
+                    <code class="fp" :title="rule.subject_entity_id">
+                      {{ entityNameMap.get(rule.subject_entity_id) ?? rule.subject_entity_id }}
+                    </code>
+                  </template>
+                  <span v-else>—</span>
+                </td>
+                <td>
+                  <template v-if="rule.subject_user_id">
+                    <code class="fp" :title="rule.subject_user_id">
+                      {{ friendNameMap.get(rule.subject_user_id) ?? rule.subject_user_id }}
+                    </code>
+                  </template>
+                  <span v-else>—</span>
+                </td>
                 <td>{{ rule.hostname ?? '—' }}</td>
                 <td><button class="btn-del-sm" @click="handleDeleteAccess(rule.id)">×</button></td>
               </tr>
@@ -571,6 +685,7 @@ async function handleDeleteEntity(): Promise<void> {
 }
 
 .field-label { font-size: 0.8125rem; color: #94a3b8; white-space: nowrap; }
+.field-hint  { font-size: 0.8125rem; color: #64748b; white-space: nowrap; }
 
 .select-sm {
   padding: 0.25rem 0.5rem; background: #0f1117; border: 1px solid #2d3248;

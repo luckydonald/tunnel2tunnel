@@ -270,3 +270,5 @@ Create as separate commit:
 
 ❯ /commit-with-lplp-style for each of those tasks.
 
+❯ In the access rules of the enetities, currently it's still lacking the additional selection fields for the specific rules. Check @init.md for how those are supposed to work.
+
