@@ -264,3 +264,9 @@ Create as separate commit:
 - [ ] in the ssh commands, make the server's SSH port clickable and lead to the settings.
 
 
+❯ Update your findings into `CLAUDE.md`
+
+❯ stop changing, another agent is working there!
+
+❯ /commit-with-lplp-style for each of those tasks.
+

@@ -264,13 +264,13 @@ async function handleDeleteEntity(): Promise<void> {
               </td>
               <td>
                 <input
-                  type="number" class="port-num" :value="port.local_port" min="1" max="65535"
+                  type="number" class="port-num" :value="port.local_port" min="1" max="65535" list="common-ports"
                   @blur="port.local_port = +($event.target as HTMLInputElement).value; handleUpdatePort(port)"
                 />
               </td>
               <td>
                 <input
-                  type="number" class="port-num" :value="port.proxy_port" min="1" max="65535"
+                  type="number" class="port-num" :value="port.proxy_port" min="1" max="65535" list="common-ports"
                   @blur="port.proxy_port = +($event.target as HTMLInputElement).value; handleUpdatePort(port)"
                 />
               </td>
@@ -292,10 +292,29 @@ async function handleDeleteEntity(): Promise<void> {
         </table>
         <p v-else class="empty">No ports configured.</p>
 
+        <!-- Common ports suggestions for port inputs -->
+        <datalist id="common-ports">
+          <option value="21" label="FTP" />
+          <option value="22" label="SSH" />
+          <option value="25" label="SMTP" />
+          <option value="80" label="HTTP" />
+          <option value="443" label="HTTPS" />
+          <option value="1433" label="MSSQL" />
+          <option value="3000" label="Node / dev" />
+          <option value="3306" label="MySQL" />
+          <option value="5432" label="PostgreSQL" />
+          <option value="5900" label="VNC" />
+          <option value="6379" label="Redis" />
+          <option value="8080" label="HTTP alt" />
+          <option value="8443" label="HTTPS alt" />
+          <option value="8888" label="Jupyter" />
+          <option value="27017" label="MongoDB" />
+        </datalist>
+
         <!-- Add port form (inline) -->
         <div v-if="showAddPort" class="add-port-form">
-          <input v-model.number="newPort.local_port" type="number" class="port-num" placeholder="Local" min="1" max="65535" />
-          <input v-model.number="newPort.proxy_port" type="number" class="port-num" placeholder="Proxy" min="1" max="65535" />
+          <input v-model.number="newPort.local_port" type="number" class="port-num" placeholder="Local" min="1" max="65535" list="common-ports" />
+          <input v-model.number="newPort.proxy_port" type="number" class="port-num" placeholder="Proxy" min="1" max="65535" list="common-ports" />
           <input v-model="newPort.name" type="text" class="port-name" placeholder="Name (optional)" />
           <label class="checkbox-label">
             <input v-model="newPort.enabled" type="checkbox" /> Enabled
