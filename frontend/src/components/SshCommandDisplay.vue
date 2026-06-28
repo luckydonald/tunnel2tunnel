@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import { RouterLink } from 'vue-router'
 import type { Entity, EntityPort } from '@/api/entities'
 
 const props = withDefaults(defineProps<{
@@ -46,7 +47,7 @@ function isHovered(portId: string): boolean {
     @mouseleave="hoveredPortId = null"
   >{{ portFlag(port) }}</span></template> \
   {{ entity.id }}@{{ t2tHost }} \
-  -p {{ t2tSshPort }}</pre>
+  -p <RouterLink to="/settings" class="port-link">{{ t2tSshPort }}</RouterLink></pre>
     </div>
 
     <table v-if="ports.length" class="ports-table">
@@ -135,6 +136,13 @@ function isHovered(portId: string): boolean {
   color: #94a3b8;
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+.port-link {
+  color: #94a3b8;
+  text-decoration: none;
+  border-bottom: 1px dotted #4f6ef7;
+  &:hover { color: #7dd3fc; border-bottom-style: solid; }
 }
 
 .cmd-flag {
