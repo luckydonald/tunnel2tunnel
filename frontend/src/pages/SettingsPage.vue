@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import AppShell from '@/components/AppShell.vue'
 import { adminApi } from '@/api/admin'
+import { serverApi, type ServerInfo } from '@/api/server'
 
 const oldPw = ref('')
 const newPw = ref('')
@@ -9,6 +10,18 @@ const confirmPw = ref('')
 const pwError = ref<string | null>(null)
 const pwSuccess = ref(false)
 const saving = ref(false)
+
+// Server info
+const serverInfo = ref<ServerInfo | null>(null)
+const sshHost = computed(() => window.location.hostname)
+
+onMounted(async () => {
+  try {
+    serverInfo.value = await serverApi.getInfo()
+  } catch {
+    // non-critical, silently ignore
+  }
+})
 
 async function handleChangePassword(): Promise<void> {
   pwError.value = null
@@ -39,6 +52,26 @@ async function handleChangePassword(): Promise<void> {
 <template>
   <AppShell>
     <h1 class="page-title">Settings</h1>
+
+    <!-- Server information -->
+    <section class="section">
+      <h2>Server Information</h2>
+      <div class="card server-info">
+        <div class="info-row">
+          <span class="info-label">SSH host</span>
+          <code class="info-value">{{ sshHost }}</code>
+        </div>
+        <div class="info-row">
+          <span class="info-label">SSH port</span>
+          <code class="info-value">{{ serverInfo?.ssh_port ?? '…' }}</code>
+          <span class="info-env">env <code>{{ serverInfo?.ssh_port_env_var ?? 'SSH_PORT' }}</code></span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Connect command</span>
+          <code class="info-value mono-sm">ssh &lt;entity-id&gt;@{{ sshHost }} -p {{ serverInfo?.ssh_port ?? '…' }}</code>
+        </div>
+      </div>
+    </section>
 
     <!-- Change password -->
     <section class="section">
@@ -130,4 +163,28 @@ async function handleChangePassword(): Promise<void> {
 
 .error-msg { color: #fca5a5; margin-bottom: 0.75rem; }
 .success-msg { color: #6ee7b7; margin-bottom: 0.75rem; }
+
+.server-info { max-width: 560px; display: flex; flex-direction: column; gap: 0; }
+
+.info-row {
+  display: flex; align-items: center; gap: 1rem; padding: 0.625rem 0;
+  border-bottom: 1px solid #2d3248;
+  &:last-child { border-bottom: none; }
+}
+
+.info-label {
+  width: 110px; flex-shrink: 0; font-size: 0.8125rem; color: #64748b;
+}
+
+.info-value {
+  background: #0f1117; padding: 0.15em 0.45em; border-radius: 3px;
+  font-size: 0.875rem; color: #e2e8f0; flex: 1; word-break: break-all;
+}
+
+.mono-sm { font-size: 0.8rem; }
+
+.info-env {
+  font-size: 0.75rem; color: #64748b;
+  code { background: #2d3248; padding: 0.1em 0.3em; border-radius: 3px; }
+}
 </style>

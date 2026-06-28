@@ -51,7 +51,7 @@ async fn main() -> Result<()> {
     let ssh_pool = pool;
 
     let http = tokio::spawn(async move {
-        start_http(WebConfig { http_port, static_dir }, http_pool)
+        start_http(WebConfig { http_port, ssh_port, static_dir }, http_pool)
             .await
             .expect("HTTP server failed")
     });

@@ -18,17 +18,19 @@ pub use error::WebError;
 #[derive(Clone)]
 pub struct AppState {
     pub db: PgPool,
+    pub ssh_port: u16,
 }
 
 pub struct WebConfig {
     pub http_port: u16,
+    pub ssh_port: u16,
     /// Path to the compiled frontend dist/ directory (e.g. "frontend/dist").
     /// If None (or path doesn't exist), the SPA fallback is skipped.
     pub static_dir: Option<String>,
 }
 
 pub async fn start(config: WebConfig, pool: PgPool) -> anyhow::Result<()> {
-    let state = AppState { db: pool.clone() };
+    let state = AppState { db: pool.clone(), ssh_port: config.ssh_port };
 
     let session_store = PostgresStore::new(pool.clone());
     session_store.migrate().await?;
@@ -88,6 +90,9 @@ pub async fn start(config: WebConfig, pool: PgPool) -> anyhow::Result<()> {
             .post(routes::admin::create_user))
         .route("/api/admin/users/{id}",
             put(routes::admin::update_user))
+        // server info (authenticated)
+        .route("/api/server-info",
+            get(routes::server_info::get_server_info))
         // user settings
         .route("/api/me/password",
             put(routes::settings::change_password))
