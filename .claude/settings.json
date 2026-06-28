@@ -196,7 +196,8 @@
       "Bash(GIT_SEQUENCE_EDITOR=/tmp/git-rebase-todo.sh git rebase *)",
       "Bash(echo \"---\")",
       "Bash(echo ---)",
-      "Bash(echo '---')"
+      "Bash(echo '---')",
+      "Bash(cd /home/user/git/luckydonald/tunnel2tunnel)"
     ],
     "deny": [
       "Read(**/.env*)",
