@@ -33,16 +33,16 @@
 > - Python (FastAPI + SQLAlchemy)
 > - Go (standard lib / chi)
 > - Node.js (Fastify / Hono)
-> 
+>
 > What for the web frontend?
 > - Server-side HTML (Askama/Tera + HTMX) (Recommended)
 > - React (Vite + TanStack Router)
 > - Svelte / SvelteKit
-> 
+>
 > What database?
 > - SQLite (libsql/turso) (Recommended)
 > - PostgreSQL
-> 
+>
 > How should the actual SSH server be implemented?
 > - russh crate (pure Rust SSH) (Recommended)
 > - Wrap OpenSSH (authorized_keys + ForceCommand)
@@ -140,7 +140,7 @@
 >   "annotations": {}
 > }
 > ```
-> 
+>
 
 ❯ Task Notification:
 > - Task `ab6de458243294bee` <kbd>completed</kbd>
@@ -155,7 +155,7 @@
 
 - use the full name `tunnel2tunnel` everywhere. Only the binary may be called `t2t`.
 - use `UUIDv7` everywhere
-- Vue means Vue 3 script setup, fully typed TS (no any, no unknown), SCSS. 
+- Vue means Vue 3 script setup, fully typed TS (no any, no unknown), SCSS.
 - all dates in db shall be timezoned
 - server shall be in UTC.
 - every table shall have `created_at`, `updated_at`, automated db side.
@@ -186,10 +186,10 @@
   - table would be
     - `| **enabled** | **local port** | **proxy port** | **name** | **description** | |`
     - `| quick way to turn a forwarded port on or off | the port on the server machine | the port internal to <code>tunnel2tunnel</code> | short | free text for your notes | |`
-    - then the rows: 
+    - then the rows:
     - `| checkbox | numeric | numeric | text | textarea |`
   - put the SSH command generation earlier, as I need it to test the SSH connection sharing.
-  - the first (zeroth?) phase should be a very simple ssh-to-ssh tunnel test server. 
+  - the first (zeroth?) phase should be a very simple ssh-to-ssh tunnel test server.
     - This is to test feasibility.
     - No auth, just passwordless ssh tunnel.
     - One "host" in the connection command will be `client`, one `server`
@@ -252,4 +252,8 @@
 - detect `-----BEGIN OPENSSH PRIVATE KEY-----` and reduce the text field to just the theader and the footer with `\n…\n`, also display an error alert/overlay.
 - have a filename field (saved, too). the default is `t2t_{name of client/server}`, it's used in all dynamic commands (key creation, ssh connections).
 - have a button to generate the ssh priv key directly in browser, which does it offline, and stores the generated file as download.
+
+❯ Update your findings into `CLAUDE.md`
+
+❯ stop changing, another agent is working there!
 
