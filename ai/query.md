@@ -285,3 +285,5 @@ Error: docker-compose: no port specified: <empty>
 
 ❯ @~/Downloads/deployment-op2p9xw9jzd3bggwsm1uki2e-all-logs-2026-06-29-01-10-32.txt
 
+❯ optimize the dockerfle with caching, inckuding the lab1.7 cache mounts.
+
