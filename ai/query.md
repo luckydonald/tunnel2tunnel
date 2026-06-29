@@ -274,3 +274,7 @@ Create as separate commit:
 
 ❯ create a `docker-compose.coolify.yml` which utilizes the coolify magic env vars to set passwords and usernames, including the default user, db stuff, etc.
 
+❯ The ssh port must be a environment variable in case of something else already running there.
+
+❯ wouldn't it make sense to use that port internally, too, to keep UI references etc. in sync?
+
