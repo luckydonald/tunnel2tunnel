@@ -278,3 +278,6 @@ Create as separate commit:
 
 ❯ wouldn't it make sense to use that port internally, too, to keep UI references etc. in sync?
 
+❯ Error: level=warning msg="The \"SERVICE_FQDN_APP_3000\" variable is not set. Defaulting to a blank string."
+Error: docker-compose: no port specified: <empty>
+

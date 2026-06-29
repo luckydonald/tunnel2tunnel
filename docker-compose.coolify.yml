@@ -12,7 +12,7 @@ services:
       STATIC_DIR: /app/frontend/dist
       RUST_LOG: ${RUST_LOG:-info}
     ports:
-      - "${SERVICE_FQDN_APP_3000}"
+      - "3000:3000"
       - "${SSH_PORT:-2222}:${SSH_PORT:-2222}"
     depends_on:
       db:
