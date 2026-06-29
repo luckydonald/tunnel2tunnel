@@ -4,6 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
     environment:
+      SERVICE_FQDN_APP_3000: ${SERVICE_FQDN_APP_3000}
       DATABASE_URL: postgresql://${SERVICE_USER_POSTGRES:-t2t}:${SERVICE_PASSWORD_POSTGRES}@db:5432/tunnel2tunnel
       HTTP_PORT: "3000"
       SSH_PORT: "${SSH_PORT:-2222}"
@@ -12,7 +13,6 @@ services:
       STATIC_DIR: /app/frontend/dist
       RUST_LOG: ${RUST_LOG:-info}
     ports:
-      - "3000:3000"
       - "${SSH_PORT:-2222}:${SSH_PORT:-2222}"
     depends_on:
       db:

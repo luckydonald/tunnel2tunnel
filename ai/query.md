@@ -281,3 +281,5 @@ Create as separate commit:
 ❯ Error: level=warning msg="The \"SERVICE_FQDN_APP_3000\" variable is not set. Defaulting to a blank string."
 Error: docker-compose: no port specified: <empty>
 
+❯ no, this should only be the magic var, no ports entry for http proxy.
+
