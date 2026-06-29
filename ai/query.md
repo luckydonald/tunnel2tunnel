@@ -283,3 +283,5 @@ Error: docker-compose: no port specified: <empty>
 
 ❯ no, this should only be the magic var, no ports entry for http proxy.
 
+❯ @~/Downloads/deployment-op2p9xw9jzd3bggwsm1uki2e-all-logs-2026-06-29-01-10-32.txt
+
