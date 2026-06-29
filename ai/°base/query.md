@@ -968,3 +968,1075 @@ Activate /commit-with-lplp-style when executing the plan.
    > Change the output dir for agent stuff to `ai/output/agents/NNN.task-id/` (+`output`)
 
 ❯ For implementing `/compact`, see @ai/°base/errors/10.md and @ai/°base/errors/10.expected.md
+❯ /plan For ai hook testing purposes, send me a few questions in all the different formats you can do (single choice, multi choice, with/without code examples, etc.)
+
+> Which Python version should we target?
+> - 3.12 (Recommended)
+> - 3.11
+> - 3.10
+>
+> Which testing libraries do you want included?
+> - pytest
+> - hypothesis
+> - coverage.py
+> - pytest-asyncio
+>
+> How should errors be surfaced to the caller?
+> - Exceptions (Recommended)
+> - Result type
+> - Optional + logging
+>
+> Which areas of the codebase are in scope for this change?
+> - Core library
+> - CLI
+> - Tests
+> - Docs
+> → 3.12 (Recommended)
+>   pytest, coverage.py, Bananas and Mangos. Best fruits.
+>   (notes only)
+>   Docs, CLI, Mangoes. Womengoes?
+> ```json
+> {
+>   "questions": [
+>     {
+>       "question": "Which Python version should we target?",
+>       "header": "Python ver",
+>       "options": [
+>         {
+>           "label": "3.12 (Recommended)",
+>           "description": "Latest stable release with improved error messages and performance."
+>         },
+>         {
+>           "label": "3.11",
+>           "description": "Previous stable, widely deployed."
+>         },
+>         {
+>           "label": "3.10",
+>           "description": "Older but still supported; some environments require it."
+>         }
+>       ],
+>       "multiSelect": false
+>     },
+>     {
+>       "question": "Which testing libraries do you want included?",
+>       "header": "Test libs",
+>       "options": [
+>         {
+>           "label": "pytest",
+>           "description": "De facto standard test runner."
+>         },
+>         {
+>           "label": "hypothesis",
+>           "description": "Property-based testing."
+>         },
+>         {
+>           "label": "coverage.py",
+>           "description": "Measures test coverage."
+>         },
+>         {
+>           "label": "pytest-asyncio",
+>           "description": "Async test support for pytest."
+>         }
+>       ],
+>       "multiSelect": true
+>     },
+>     {
+>       "question": "How should errors be surfaced to the caller?",
+>       "header": "Error style",
+>       "options": [
+>         {
+>           "label": "Exceptions (Recommended)",
+>           "description": "Raise typed exceptions; caller uses try/except.",
+>           "preview": "class NotFoundError(AppError):\n    pass\n\ndef get_user(uid: int) -> User:\n    if not found:\n        raise NotFoundError(uid)"
+>         },
+>         {
+>           "label": "Result type",
+>           "description": "Return Ok/Err wrapper; caller pattern-matches.",
+>           "preview": "def get_user(uid: int) -> Result[User, str]:\n    if not found:\n        return Err(f\"user {uid} not found\")\n    return Ok(user)"
+>         },
+>         {
+>           "label": "Optional + logging",
+>           "description": "Return None on failure and log internally.",
+>           "preview": "def get_user(uid: int) -> User | None:\n    if not found:\n        logger.warning(\"user %s not found\", uid)\n        return None\n    return user"
+>         }
+>       ],
+>       "multiSelect": false
+>     },
+>     {
+>       "question": "Which areas of the codebase are in scope for this change?",
+>       "header": "Scope",
+>       "options": [
+>         {
+>           "label": "Core library",
+>           "description": "The main package under src/."
+>         },
+>         {
+>           "label": "CLI",
+>           "description": "Command-line entry points."
+>         },
+>         {
+>           "label": "Tests",
+>           "description": "Test suite under tests/."
+>         },
+>         {
+>           "label": "Docs",
+>           "description": "Documentation and examples."
+>         }
+>       ],
+>       "multiSelect": true
+>     }
+>   ],
+>   "answers": {
+>     "Which Python version should we target?": "3.12 (Recommended)",
+>     "Which testing libraries do you want included?": "pytest, coverage.py, Bananas and Mangos. Best fruits.",
+>     "How should errors be surfaced to the caller?": "(notes only)",
+>     "Which areas of the codebase are in scope for this change?": "Docs, CLI, Mangoes. Womengoes?"
+>   },
+>   "annotations": {
+>     "How should errors be surfaced to the caller?": {
+>       "notes": "This is a random note I wrote (it rhymes!)"
+>     }
+>   }
+> }
+> ```
+>
+
+❯ Gimme a multi-select with 5 items, just the english number names, I need to test order. And gimme another of those code ones, I need to test what happens if you don't type anything in the notes thingo.
+
+> Select some numbers (testing order) — first batch:
+> - One
+> - Two
+> - Three
+> - Four
+>
+> Pick a logging approach:
+> - Structured JSON
+> - Plain text
+> - No logging
+> → Four, Two, Three, I will select first the extra option, then four, two, three. Yes yes.
+>   No logging
+> ```json
+> {
+>   "questions": [
+>     {
+>       "question": "Select some numbers (testing order) — first batch:",
+>       "header": "Numbers 1-4",
+>       "options": [
+>         {
+>           "label": "One",
+>           "description": "The first."
+>         },
+>         {
+>           "label": "Two",
+>           "description": "The second."
+>         },
+>         {
+>           "label": "Three",
+>           "description": "The third."
+>         },
+>         {
+>           "label": "Four",
+>           "description": "The fourth."
+>         }
+>       ],
+>       "multiSelect": true
+>     },
+>     {
+>       "question": "Pick a logging approach:",
+>       "header": "Logging",
+>       "options": [
+>         {
+>           "label": "Structured JSON",
+>           "description": "Machine-readable log lines.",
+>           "preview": "logger.info(\"user.login\", extra={\n    \"user_id\": uid,\n    \"ip\": request.remote_addr,\n})"
+>         },
+>         {
+>           "label": "Plain text",
+>           "description": "Human-readable, simple.",
+>           "preview": "logger.info(f\"User {uid} logged in from {ip}\")"
+>         },
+>         {
+>           "label": "No logging",
+>           "description": "Silence — caller decides.",
+>           "preview": "# nothing emitted here"
+>         }
+>       ],
+>       "multiSelect": false
+>     }
+>   ],
+>   "answers": {
+>     "Select some numbers (testing order) — first batch:": "Four, Two, Three, I will select first the extra option, then four, two, three. Yes yes.",
+>     "Pick a logging approach:": "No logging"
+>   },
+>   "annotations": {
+>     "Pick a logging approach:": {
+>       "preview": "# nothing emitted here"
+>     }
+>   }
+> }
+> ```
+>
+
+❯ Alright, can you repeat the `Pick a logging approach:` one, please? Can you omit the example for some option? Or did you already for the _No logging_ choice, which I got `# nothing emitted here` for?
+
+> Pick a logging approach (one option has no preview):
+> - Structured JSON
+> - Plain text
+> - No logging
+> → No logging
+> ```json
+> {
+>   "questions": [
+>     {
+>       "question": "Pick a logging approach (one option has no preview):",
+>       "header": "Logging",
+>       "options": [
+>         {
+>           "label": "Structured JSON",
+>           "description": "Machine-readable log lines.",
+>           "preview": "logger.info(\"user.login\", extra={\n    \"user_id\": uid,\n    \"ip\": request.remote_addr,\n})"
+>         },
+>         {
+>           "label": "Plain text",
+>           "description": "Human-readable, simple.",
+>           "preview": "logger.info(f\"User {uid} logged in from {ip}\")"
+>         },
+>         {
+>           "label": "No logging",
+>           "description": "Silence — caller decides. (no preview set for this one)"
+>         }
+>       ],
+>       "multiSelect": false
+>     }
+>   ],
+>   "answers": {
+>     "Pick a logging approach (one option has no preview):": "No logging"
+>   },
+>   "annotations": {}
+> }
+> ```
+>
+
+❯ Alright, let's modernize the question prompt log.
+Currently, we have question output to `query.md` like @ai/°base/errors/12.md
+Instead I want it changed to @ai/°base/errors/12.expected.md
+
+Construct a unittest using `12.expected.md`'s `json` under **Input JSON (Claude)** as input and asserting the markdown under **`query.md` addition** as output.
+For implementing, the sections **Summary of format options** and **Notes** may be helpful.
+
+❯ /plan uuuuh... now adopt the implementation, lol
+
+❯ But it is still compatible with the codex one, yes?
+
+❯ alright, extract the codex questions from `/Users/user/Documents/programming/LUA/GrandMA2/GMA2ColorPicker/ai/query.md` to `./ai/°base/errors/13.md` and reconstruct the original payloads of the call to `13.expected.md`, similar to the `12.md` variants.
+
+› Hey, I want to test a question hook, please ask me one of each question type, 3 times, so I can select something or none or such.
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. For this hook test, pick a simple yes/no-style option.
+>>    -
+>> 2. Choose a priority level for the test response.
+>>    -
+>> 3. Choose how the next step should be represented.
+>>    -
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Binary** (1/3) <kbd>Single Select</kbd><br>
+>> For this hook test, pick a simple yes/no-style option.
+> - [ ] 1\. Yes (Recommended)
+>   - _Confirms the positive path in the selection UI._
+> - [ ] 2\. No
+>   - _Confirms the negative path in the selection UI._
+> - [ ] 3\. Skip
+>   - _Confirms an explicit no-selection-style answer._
+> - [ ] 4\. _Type something._
+>
+>> **Priority** (2/3) <kbd>Single Select</kbd><br>
+>> Choose a priority level for the test response.
+> - [ ] 1\. Medium (Recommended)
+>   - _Uses the default balanced priority._
+> - [ ] 2\. High
+>   - _Marks the response as urgent or important._
+> - [ ] 3\. Low
+>   - _Marks the response as non-urgent._
+> - [ ] 4\. _Type something._
+>
+>> **Mode** (3/3) <kbd>Single Select</kbd><br>
+>> Choose how the next step should be represented.
+> - [ ] 1\. Plan (Recommended)
+>   - _Keeps the result as a planning-style response._
+> - [ ] 2\. Action
+>   - _Treats the result as an implementation-style response._
+> - [ ] 3\. None
+>   - _Leaves the next-step mode unset._
+> - [ ] 4\. _Type something._
+>
+> </details>
+>
+
+› Please instead give me a multiple choice one now, with many options.
+
+› Lol that was only text. Sorry, I guess I have to switch to plan mode first?
+
+› go ahead, hit me with those questions
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. What should this hook test prove?
+>>    -
+>> 2. How many choices should each prompt show?
+>>    -
+>> 3. How should I handle your response to each prompt?
+>>    -
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Goal** (1/3) <kbd>Single Select</kbd><br>
+>> What should this hook test prove?
+> - [ ] 1\. Selection flow (Recommended)
+>   - _Test ordinary single-choice selection behavior._
+> - [ ] 2\. No selection
+>   - _Test the user choosing none of the options._
+> - [ ] 3\. Custom text
+>   - _Test a free-form answer path._
+> - [ ] 4\. _Type something._
+>
+>> **Shape** (2/3) <kbd>Single Select</kbd><br>
+>> How many choices should each prompt show?
+> - [ ] 1\. Few (Recommended)
+>   - _Use a small set of options._
+> - [ ] 2\. Many
+>   - _Use a wider set of options._
+> - [ ] 3\. Mixed
+>   - _Vary the number of options across prompts._
+> - [ ] 4\. _Type something._
+>
+>> **Interaction** (3/3) <kbd>Single Select</kbd><br>
+>> How should I handle your response to each prompt?
+> - [ ] 1\. One pick each (Recommended)
+>   - _Select exactly one option per prompt._
+> - [ ] 2\. Pick multiple
+>   - _Allow several selections where possible._
+> - [ ] 3\. Pick none
+>   - _Leave some prompts unanswered or explicitly none._
+> - [ ] 4\. _Type something._
+>
+> </details>
+>
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. Pick one option from this longer list.
+>>    -
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Wide Set** (1/1) <kbd>Single Select</kbd><br>
+>> Pick one option from this longer list.
+> - [ ] 1\. Option 1 (Recommended)
+>   - _Baseline choice._
+> - [ ] 2\. Option 2
+>   - _Alternate choice._
+> - [ ] 3\. Option 3
+>   - _Alternate choice._
+> - [ ] 4\. Option 4
+>   - _Alternate choice._
+> - [ ] 5\. Option 5
+>   - _Alternate choice._
+> - [ ] 6\. Option 6
+>   - _Alternate choice._
+> - [ ] 7\. Option 7
+>   - _Alternate choice._
+> - [ ] 8\. Option 8
+>   - _Alternate choice._
+> - [ ] 9\. Option 9
+>   - _Alternate choice._
+> - [ ] 10\. Option 10
+>   - _Alternate choice._
+> - [ ] 11\. None
+>   - _Explicitly choose none of these._
+> - [ ] 12\. Other
+>   - _Use a custom free-form answer._
+> - [ ] 13\. _Type something._
+>
+> </details>
+>
+
+› Continue with the other types now, add one question each
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. Pick one option for the single-choice test.
+>>    -
+>> 2. Pick any options that apply for the multi-select test.
+>>    -
+>> 3. Choose an option or use `Other` to add your own text.
+>>    -
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Single** (1/3) <kbd>Single Select</kbd><br>
+>> Pick one option for the single-choice test.
+> - [ ] 1\. Red (Recommended)
+>   - _Baseline single selection._
+> - [ ] 2\. Green
+>   - _Alternate single selection._
+> - [ ] 3\. Blue
+>   - _Alternate single selection._
+> - [ ] 4\. _Type something._
+>
+>> **Multi** (2/3) <kbd>Single Select</kbd><br>
+>> Pick any options that apply for the multi-select test.
+> - [ ] 1\. Apple (Recommended)
+>   - _One possible selection._
+> - [ ] 2\. Banana
+>   - _One possible selection._
+> - [ ] 3\. Cherry
+>   - _One possible selection._
+> - [ ] 4\. Date
+>   - _One possible selection._
+> - [ ] 5\. None
+>   - _Select none of these._
+> - [ ] 6\. _Type something._
+>
+>> **Free** (3/3) <kbd>Single Select</kbd><br>
+>> Choose an option or use `Other` to add your own text.
+> - [ ] 1\. Cat (Recommended)
+>   - _Example canned choice._
+> - [ ] 2\. Dog
+>   - _Example canned choice._
+> - [ ] 3\. Other
+>   - _Provide a custom answer instead._
+> - [ ] 4\. None
+>   - _Leave this unanswered on purpose._
+> - [ ] 5\. _Type something._
+>
+> </details>
+>
+
+› Check out your own typing at @ai/references/https/github.com/openai/codex/blob/49614a0391d83eec442ffeca1d4aa0fdeb119818/codex-rs/protocol/src/request_user_input.rs for the planing prompts and ask me one of every type except the standard single choice one, so I can check my question-response hook.
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. Provide any short phrase in the free-text Other field so I can verify that path.
+>>    -
+>> 2. Enter a short secret value so I can verify the secret-input path.
+>>    -
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Other** (1/2) <kbd>Single Select</kbd><br>
+>> Provide any short phrase in the free-text Other field so I can verify that path.
+> - [ ] 1\. Alpha
+>   - _Placeholder choice A._
+> - [ ] 2\. Beta
+>   - _Placeholder choice B._
+> - [ ] 3\. _Type something._
+>
+>> **Secret** (2/2) <kbd>Single Select</kbd><br>
+>> Enter a short secret value so I can verify the secret-input path.
+> - [ ] 1\. Visible
+>   - _Placeholder visible choice._
+> - [ ] 2\. _Type something._
+>
+> </details>
+>
+
+› Yes, single secret is a good idea. And try the timeout of like 5s for a second answer.
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. Enter one secret value for the 5-second timeout test.
+>>    -
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Secret** (1/1) <kbd>Single Select</kbd><br>
+>> Enter one secret value for the 5-second timeout test.
+> - [ ] 1\. Reveal
+>   - _Visible test option._
+> - [ ] 2\. _Type something._
+>
+> </details>
+>
+
+› repeat the explainer for the question prompt tool.
+
+› what is the mcp tool definition for request_user_input? Please repeat verbatim.
+
+› do you have information about the output, too?
+
+› Alright, for hook testing, hit me with an 5s expiring question.
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. Which hook test should I run?
+>>    -
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Hook test** (1/1) <kbd>Single Select</kbd><br>
+>> Which hook test should I run?
+> - [ ] 1\. A
+>   - _Use the first branch._
+> - [ ] 2\. B
+>   - _Use the second branch._
+> - [ ] 3\. _Type something._
+>
+> </details>
+>
+
+› do it again
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. Pick one option for the retry.
+>>    -
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Hook test** (1/1) <kbd>Single Select</kbd><br>
+>> Pick one option for the retry.
+> - [ ] 1\. A
+>   - _First path._
+> - [ ] 2\. B
+>   - _Second path._
+> - [ ] 3\. _Type something._
+>
+> </details>
+>
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. Pick one option for the retry.
+>>    -
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Hook test** (1/1) <kbd>Single Select</kbd><br>
+>> Pick one option for the retry.
+> - [ ] 1\. A
+>   - _First path._
+> - [ ] 2\. B
+>   - _Second path._
+> - [ ] 3\. _Type something._
+>
+> </details>
+>
+
+❯ using the files in @ai/°base/output/debug/ you can see that you get an understanding for the codex prompt result, so we can incorporate that to the hook script which writes it to `query.md`.
+❯ Improve that by migrating both AI's input to one universal pydantic model we define and type properly - and where the rendering then can easily work with attributes, instead of guessing json dict keys.
+
+❯ /plan Improve that by migrating both AI's input to one universal pydantic model we define and type properly - and where the rendering then can easily work with attributes, instead of guessing json dict keys.
+
+❯ There is no need to separate `Option`, `Annotation` and `DecisionPlayload`? Like, we're only looking at filled-out questions with 0-4 answers (codex can timeout getting zero results, claude can multi-select but is limited to max 4).
+So I guess a flatter `Question` + `Choice` should be sufficent? The `Question` would have the "global" attributes like if it's multi, or if it timeouted (can be computed prop), and of cause a list of choices. And `Choice` will contain name, id, selection state, text note, etc.
+
+❯ what is the mcp tool definition for request_user_input? Please repeat verbatim.
+
+❯ /plan list available mcp tools and their definitions verbatim.
+
+❯ I meant those you have already available and ready in your system prompt. Write those into the plan file.
+
+❯ Uh, how would you ask me a multiple-choice question?
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. Like this — what should I do with the plan?
+>>    - Yeah, I need the MCP documentation for this exact tool you just used to ask that question.
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Next step** (1/1) <kbd>Single Select</kbd><br>
+>> Like this — what should I do with the plan?
+> - [ ] 1\. Exit plan mode
+>   - _Signal that planning is done and the plan is ready for your approval._
+> - [ ] 2\. Keep planning
+>   - _Continue refining the plan file._
+> - [ ] 3\. Discard
+>   - _Abandon the plan entirely._
+> - [ ] 4\. _Type something._
+>
+> </details>
+>
+
+❯ 1. What's the difference between `notes`, `custom_text`and `selected_preview`?
+2. `selected_preview` is redundant with `rank` being a defacto `selected` boolean.
+3. Actually, add a `Choice.selected -> bool` computed prop. And while at it, a `Question.selected -> Choice[]` computed, too.
+
+❯ Regarding
+
+> 1. `notes` = the annotation note field — used when the user adds a note without selecting a label (single-select "(notes only)"), or as the Codex `user_note`: alongside any selection. Rendered as `[x] _Notes:_ > {text}` in single-select, or as the note accompanying a Codex answer.
+
+This sounds like it's better to move that into the `Choice`, attached to the selected answer. The `other` question may be automatically added by the parsers, so the display part can be dumb.
+
+❯ Actually, like we have claude tests, construct some automated parsing tests for codex as well.
+Note, the definitions for codex are at @ai/references/https/github.com/openai/codex/blob/49614a0391d83eec442ffeca1d4aa0fdeb119818/codex-rs/protocol/src/request_user_input.rs
+and for claude are at @ai/°base/plans/019_available-mcp-tools.md
+
+❯ /plan hit me with a variety of questions, I need to check a hook integration.
+
+<!-- This next block is  ai/°base/output/debug/20260624-152802_886401-save-decision.json  -->
+❯ Question answered.
+> <details><summary>
+>
+>> 1. Which environment are you testing the hook integration in?
+>>    - Local dev
+>> 2. What type of hook event are you primarily testing?
+<!-- wrong: 1. "other" apparently not detected/formatted. 2. Typed answer missing
+>>    -
+--><!-- correct: -->
+>>    - _Other_: AI Question hook (this is 'other' btw)
+<!-- end correct -->
+> 3. What is the primary failure mode you're trying to catch?
+<!-- wrong:
+>>    - Wrong payload / data, This is 'something else' checked and manually filled.
+--><!-- correct: -->
+>>    - Wrong payload / data
+>>    - _Other_: This is 'something else' checked and manually filled.
+<!-- end correct -->
+>> 5. How mature is the hook integration you're testing?
+<!-- wrong: 1. "other" apparently not detected/formatted. 2. Typed answer missing
+>>    -
+--><!-- correct: -->
+>>    - _Other_: One more multi-select please. Also one with code snippets. Need to test those, too.
+<!-- end correct -->
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Environment** (1/4) <kbd>Single Select</kbd><br>
+>> Which environment are you testing the hook integration in?
+> - [x] 1\. Local dev
+>   - _Running hooks locally against a dev server or local process._
+> - [ ] 2\. CI/CD pipeline
+>   - _Hooks fire as part of an automated build or deploy pipeline._
+> - [ ] 3\. Staging
+>   - _Hooks are wired up in a staging environment that mirrors production._
+> - [ ] 4\. Production
+>   - _Testing live hooks in the production environment._
+> - [ ] 5\. _Type something._
+>
+>> **Hook type** (2/4) <kbd>Single Select</kbd><br>
+>> What type of hook event are you primarily testing?
+> - [ ] 1\. Pre-commit / pre-push
+>   - _Git hooks that run before a commit or push completes._
+> - [ ] 2\. Webhook (HTTP)
+>   - _An outbound HTTP callback triggered by some event._
+> - [ ] 3\. Tool-call hook
+>   - _Claude Code hooks that intercept tool calls (e.g. user-prompt-submit-hook)._
+> - [ ] 4\. Post-merge / CI trigger
+>   - _Hooks that fire after a merge or as a CI step._
+<!-- wrong: 1. "other" apparently not detected/formatted. 2. Typed answer missing
+> - [ ] 5\. _Type something._
+--><!-- correct: -->
+> - [x] 5\. _Type something:_
+>   - > AI Question hook (this is 'other' btw)
+<!-- end correct -->
+>
+>> **Failure mode** (3/4) <kbd>Multi Select</kbd><br>
+>> What is the primary failure mode you're trying to catch?
+> - [ ] 1\. Hook not firing at all
+>   - _The hook doesn't trigger when it should._
+> - [x] 2\. Wrong payload / data <sup><sub><kbd>#1</kbd></sub></sup>
+>   - _The hook fires but the data it receives or emits is incorrect._
+> - [ ] 3\. Timing / ordering issue
+>   - _The hook fires too early, too late, or out of order._
+> - [ ] 4\. Auth / permissions failure
+>   - _The hook fires but is rejected due to missing or wrong credentials._
+> - [x] 5\. _Type something:_
+>   - > This is 'something else' checked and manually filled.
+>
+>> **Maturity** (4/4) <kbd>Single Select</kbd><br>
+>> How mature is the hook integration you're testing?
+> - [ ] 1\. Brand new
+>   - _First time wiring this hook up — still figuring out the basics._
+> - [ ] 2\. Existing, recently changed
+>   - _The hook worked before; something was modified and you're verifying it still works._
+> - [ ] 3\. Regression check
+>   - _No changes were made; you're confirming nothing broke._
+<!-- wrong: 1. "other" apparently not detected/formatted. 2. Typed answer missing
+> - [ ] 4\. _Type something._
+--><!-- correct: -->
+> - [x] 4\. _Type something:_
+>   - > Pretty good. One more multi-select please. Also one with code snippets. Need to test those, too.
+<!-- end correct -->
+>
+> </details>
+>
+
+› hit me with a variety of questions, I need to check a hook integration.
+
+<!--  next question is from codex and at ai/°base/output/debug/20260624-153111_724937-save-decision.json  -->
+<!-- wrong: 1. using the > symbol of claude, not codex. This should be already part of the hook setting mode claude/codex as param. The hole detection should be based on that hook script argument, no guessing!
+❯ Question answered.
+--><!-- correct: -->
+› Question answered.
+<!-- end correct -->
+> <details><summary>
+>
+>> 1. Which hook surface are you checking right now?
+>>    - Save-decision
+>> 2. What kind of integration input should I focus on?
+<!-- wrong: 1. "other" not detected or displayed.
+>>    - You shouldn't really focus on the integration, I will do. Btw, this is a note under an existing answer.
+--><!-- correct: -->
+>>    - _Other:_ You shouldn't really focus on the integration, I will do. Btw, this is a note under an existing answer.
+<!-- end correct -->
+>> 3. What do you want the questions to help check?
+>>    - Pretty much want to check it's now formatting correctly, nothing for you to do, really, then this question. Afterwards I will shut you down, lol. Btw, this is the automatic "None of the above" choice.
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Surface** (1/3) <kbd>Single Select</kbd><br>
+>> Which hook surface are you checking right now?
+> - [x] 1\. Save-decision
+>   - _Exercise the AskUserQuestion / request_user_input flow that writes to `ai/query.md`._
+> - [ ] 2\. Save-plan
+>   - _Exercise the plan-capture flow for `Write`, `ExitPlanMode`, or `Stop`._
+> - [ ] 3\. Memory
+>   - _Exercise the memory sync / deletion path._
+> - [ ] 4\. _Type something._
+>
+<!-- wrong: The answer should be with the selected question, after all, codex is currently always limited to single choice.
+>> **Input** (2/3) <kbd>Single Select</kbd><br>
+>> What kind of integration input should I focus on?
+> - [x] 1\. Codex payload
+>   - _Validate the `request_user_input` JSON shape and answer normalization._
+> - [ ] 2\. Claude payload
+>   - _Validate the `AskUserQuestion` payload and annotations path._
+> - [ ] 3\. Both
+>   - _Compare both formats and make sure routing stays consistent._
+> - [x] 4\. _Notes:_
+>   - > You shouldn't really focus on the integration, I will do. Btw, this is a note under an existing answer.
+--><!-- correct: -->
+>> **Input** (2/3) <kbd>Single Select</kbd><br>
+>> What kind of integration input should I focus on?
+> - [x] 1\. Codex payload
+>   - _Validate the `request_user_input` JSON shape and answer normalization._
+>   - > You shouldn't really focus on the integration, I will do. Btw, this is a note under an existing answer.
+> - [ ] 2\. Claude payload
+>   - _Validate the `AskUserQuestion` payload and annotations path._
+> - [ ] 3\. Both
+>   - _Compare both formats and make sure routing stays consistent._
+> - [ ] 4\. _Type something._
+<!-- end correct -->
+>
+>> **Goal** (3/3) <kbd>Single Select</kbd><br>
+>> What do you want the questions to help check?
+> - [ ] 1\. Happy path
+>   - _Confirm the hook records and commits a normal successful interaction._
+> - [ ] 2\. Edge cases
+>   - _Probe timeouts, notes-only, multi-select, and malformed input._
+> - [ ] 3\. Regression hunt
+>   - _Try to flush out routing bugs, wrong prefixes, or broken file output._
+<!-- wrong: 1. I want the text changed here as well, to be uniform.
+> - [x] 4\. _Notes:_
+--><!-- correct: -->
+> - [x] 4\. _Type something:_
+<!-- end correct -->
+>   - > Pretty much want to check it's now formatting correctly, nothing for you to do, really, then this question. Afterwards I will shut you down, lol. Btw, this is the automatic "None of the above" choice.
+>
+> </details>
+>
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. Which aspects of the hook payload do you want to validate? (select all that apply)
+>>    - Timestamp format, Event type field, Auth token / signature
+>> 2. Which hook handler pattern do you prefer?
+>>    - Function-based
+>>      ```text
+>>      def handle_hook(event: dict) -> dict:
+>>          payload = event["payload"]
+>>          return {"status": "ok", "received": payload["type"]}
+>>      ```
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Payload checks** (1/2) <kbd>Multi Select</kbd><br>
+>> Which aspects of the hook payload do you want to validate? (select all that apply)
+> - [x] 1\. Event type field <sup><sub><kbd>#2</kbd></sub></sup>
+>   - _Confirm the event name/type is correct in the payload._
+> - [x] 2\. Timestamp format <sup><sub><kbd>#1</kbd></sub></sup>
+>   - _Ensure the timestamp is ISO 8601 or whatever format your consumer expects._
+> - [x] 3\. Auth token / signature <sup><sub><kbd>#3</kbd></sub></sup>
+>   - _Validate HMAC signature or bearer token is present and correct._
+> - [ ] 4\. Body schema
+>   - _Full structure matches the expected JSON schema._
+> - [ ] 5\. _Type something._
+>
+>> **Handler style** (2/2) <kbd>Single Select</kbd><br>
+>> Which hook handler pattern do you prefer?
+> - [ ] 1\. Function-based
+>   - _A plain function that receives the event and returns a response._
+>   - ```
+>     def handle_hook(event: dict) -> dict:
+>         payload = event["payload"]
+>         return {"status": "ok", "received": payload["type"]}
+>     ```
+> - [ ] 2\. Class-based
+>   - _A class that encapsulates state and has a dispatch method._
+>   - ```
+>     class HookHandler:
+>         def __init__(self, secret: str):
+>             self.secret = secret
+>
+>         def dispatch(self, event: dict) -> dict:
+>             self._verify(event["signature"])
+>             return self._process(event["payload"])
+>     ```
+> - [ ] 3\. Middleware chain
+>   - _A list of callables applied in order — auth, validate, process._
+>   - ```text
+>     chain = [
+>         verify_signature,
+>         validate_schema,
+>         process_payload,
+>     ]
+>
+>     def handle_hook(event):
+>         for step in chain:
+>             event = step(event)
+>         return event
+>     ```
+> - [ ] 4\. _Notes: Add notes on this design._
+>
+> </details>
+>
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. What should be treated as the success criterion for formatting?
+>>    - Visual parity
+>> 2. How should note-only selections be represented?
+>>    -
+>> 3. How wide should the check go?
+>>    - we're done here. Please say goodbye.
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Format** (1/3) <kbd>Single Select</kbd><br>
+>> What should be treated as the success criterion for formatting?
+> - [x] 1\. Visual parity
+>   - _The markdown block should look correct and readable even if the internal structure changes._
+> - [ ] 2\. Exact spec
+>   - _The output should match a precise expected block byte-for-byte._
+> - [ ] 3\. Loose compatibility
+>   - _Preserve the old output shape where practical, but allow the new renderer to differ._
+> - [ ] 4\. _Type something._
+>
+>> **Notes** (2/3) <kbd>Single Select</kbd><br>
+>> How should note-only selections be represented?
+> - [ ] 1\. Inline note
+>   - _Attach note text to the special Other row or notes section in the rendered block._
+> - [ ] 2\. Separate summary
+>   - _Keep notes in a distinct summary area instead of mixing them into choice rows._
+> - [ ] 3\. No notes
+>   - _Ignore notes for this check and validate option selection only._
+> - [ ] 4\. _Type something._
+>
+>> **Coverage** (3/3) <kbd>Single Select</kbd><br>
+>> How wide should the check go?
+> - [ ] 1\. Single fixture
+>   - _Use one representative payload and verify one end-to-end render._
+> - [ ] 2\. Matrix
+>   - _Cover multiple payload variants like single-select, multi-select, and timeout._
+> - [ ] 3\. Smoke test
+>   - _Only confirm the hook runs without crashing._
+> - [x] 4\. _Notes:_
+>   - > we're done here. Please say goodbye.
+>
+> </details>
+>
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. Which decorator style would you add to the function-based handler?
+>>    - @register("event_type")
+>>      ```text
+>>      @register("user.created")
+>>      def handle_hook(event: dict) -> dict:
+>>          payload = event["payload"]
+>>          return {"status": "ok", "received": payload["type"]}
+>>      ```
+>> 2. Any specific requirements or constraints for the hook integration not covered above?
+>>    -
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Decorator style** (1/2) <kbd>Single Select</kbd><br>
+>> Which decorator style would you add to the function-based handler?
+> - [ ] 1\. @register("event_type")
+>   - _Explicit event-type binding via decorator argument._
+>   - ```
+>     @register("user.created")
+>     def handle_hook(event: dict) -> dict:
+>         payload = event["payload"]
+>         return {"status": "ok", "received": payload["type"]}
+>     ```
+> - [ ] 2\. @hook
+>   - _Simple marker decorator, type inferred from payload._
+>   - ```
+>     @hook
+>     def handle_hook(event: dict) -> dict:
+>         payload = event["payload"]
+>         return {"status": "ok", "received": payload["type"]}
+>     ```
+> - [ ] 3\. @hook(validate=True)
+>   - _Decorator with inline schema validation enabled._
+>   - ```text
+>     @hook(validate=True)
+>     def handle_hook(event: dict) -> dict:
+>         payload = event["payload"]
+>         return {"status": "ok", "received": payload["type"]}
+>     ```
+> - [ ] 4\. _Notes: Add notes on this design._
+>
+>> **Other notes** (2/2) <kbd>Single Select</kbd><br>
+>> Any specific requirements or constraints for the hook integration not covered above?
+> - [ ] 1\. No additional constraints
+>   - _Everything relevant was covered in the previous questions._
+> - [ ] 2\. Yes, see my note
+>   - _I have something to add — check the notes field._
+> - [ ] 3\. _Type something._
+>
+> </details>
+>
+
+❯ Question answered.
+> <details><summary>
+>
+>>  1\. What should the hook return on a validation error — status code and body?
+>>    -
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Error response** (1/1) <kbd>Single Select</kbd><br>
+>> What should the hook return on a validation error — status code and body?
+> - [ ] 1\. 400 Bad Request
+>   - _Return HTTP 400 with an error message body._
+> - [ ] 2\. 422 Unprocessable Entity
+>   - _Return HTTP 422, signaling the payload was received but invalid._
+> - [ ] 3\. 200 with error flag
+>   - _Always return 200; include an error field in the JSON body._
+> - [ ] 4\. _Type something._
+>
+> </details>
+>
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. Which hook dispatch architecture fits your system best?
+>>    - This is without selecting any of those options, juust directly jumping to the free text field. Neat drawing though.
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Architecture** (1/1) <kbd>Single Select</kbd><br>
+>> Which hook dispatch architecture fits your system best?
+> - [ ] 1\. Direct call
+>   - _Hook handler is called inline in the request path — simple, synchronous._
+>   - ```
+>       Client
+>         │
+>         ▼
+>     ┌─────────┐
+>     │ Server  │──► handle_hook() ──► response
+>     └─────────┘
+>
+>     No queue, no delay. Handler must be fast.
+>     ```
+> - [ ] 2\. Queue-backed
+>   - _Request is acked immediately; handler runs async via a job queue._
+>   - ```
+>       Client
+>         │
+>         ▼
+>     ┌─────────┐     ┌───────┐     ┌─────────┐
+>     │ Server  │────►│ Queue │────►│ Worker  │
+>     └─────────┘     └───────┘     └─────────┘
+>         │                              │
+>       202 Ack                    handle_hook()
+>
+>     Decoupled. Retryable. Slightly more infra.
+>     ```
+> - [ ] 3\. Fan-out
+>   - _One incoming event dispatches to multiple handlers in parallel._
+>   - ```text
+>                 ┌──► handler_a()
+>                 │
+>       event ────┼──► handler_b()
+>                 │
+>                 └──► handler_c()
+>
+>     Good for multi-consumer events.
+>     Each handler is independent.
+>     ```
+> - [x] 4\. _Notes:_
+>   - > This is without selecting any of those options, juust directly jumping to the free text field. Neat drawing though.
+>
+> </details>
+>
+
+❯ Fix @ai/°base/errors/15.md
+
+❯ Write another test utilizing `ai/°base/output/debug/20260624-152802_886401-save-decision.json` and `ai/°base/output/debug/20260624-153111_724937-save-decision.json` as input and an expected output (`15.expected.md`)
+
+❯ I prettly slightly changed the format of `15.expected.md` - Changing the sections to be split by `---\n# {num}\n` and the metadata/imput now being `## Input\n| test | {num} |\n| - | - |\n| type | {codex/claude} |\n| file | \`{file in the °base outputs}\` |`. Dynamically use that table as the subtest (add one initial assertion of that subtest that both `{num}` are the same, and a separete outer test that they are a sequence starting at `0` or `1`). The parsing should be dynamic, the intention is to add more examples over time. So subtest title should be the `{num}`, the type and the file.
+
+❯ Add a `--preview=<file>` flag to render the markdown to `stdout` instead - to quickly validate a question payload json. Allow the following formats:
+- a) filename only (e.g. `20260624-152802_886401-save-decision.json`): Look into `ai/°base/output/debug/` and `ai/output/debug/`.
+- b) relative path to repo root (e.g `ai/output/debug/….json` or `/ai/output/debug/….json` or `../other-project/ai/output/debug/….json`)
+- c) absolute path (must start with `/`)
+- d) relative path to script (e.g. `something.json` - would be in `ai/jooks/save-prompt/`)
+- e) relative path to current codex/claude dir (usually repo root, but subprojects within a bigger project are possible - e.g. `../ai/output/debug/….json`)
+
