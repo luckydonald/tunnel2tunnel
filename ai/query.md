@@ -272,3 +272,5 @@ Create as separate commit:
 
 ❯ In the access rules of the enetities, currently it's still lacking the additional selection fields for the specific rules. Check @init.md for how those are supposed to work.
 
+❯ create a `docker-compose.coolify.yml` which utilizes the coolify magic env vars to set passwords and usernames, including the default user, db stuff, etc.
+
