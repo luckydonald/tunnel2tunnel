@@ -297,3 +297,24 @@ Error: docker-compose: no port specified: <empty>
 
 ❯ Remove the password default, if none is set, it shall error indeed. What's `-q` do?
 
+❯ in the client section, auto-patch the ports for the the connected (authorized) servers.
+These shall be able to be accepted or denied; the default is to include them; reflected in the generated command.
+
+❯ Task Notification:
+> - Task `a0510e78c0cb89e3a` <kbd>completed</kbd>
+> - Tool `toolu_016jLxBq8NVYXWiK881sbQFQ`
+> - > Agent "Explore SshCommandDisplay and entity ports frontend" finished
+> - [Query (`668` chars, `676 B`)](output/agents/005.a0510e78c0cb89e3a/prompt.md)
+> - [Answer (`6010` chars, `5.87 KB`)](output/agents/005.a0510e78c0cb89e3a/result.md)
+> - [Raw log (`254612` chars, `250 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/d15155a6-419b-41d2-a891-d244de162112/tasks/a0510e78c0cb89e3a.output)
+> - `22` tools, `46734` tokens, `0.782533 s`
+
+❯ Task Notification:
+> - Task `af6236911407bc65e` <kbd>completed</kbd>
+> - Tool `toolu_01BFe4sgTS3v8EYiyycWk7xM`
+> - > Agent "Explore ports API routes and backend models" finished
+> - [Query (`699` chars, `707 B`)](output/agents/006.af6236911407bc65e/prompt.md)
+> - [Answer (`9161` chars, `8.97 KB`)](output/agents/006.af6236911407bc65e/result.md)
+> - [Raw log (`206154` chars, `205 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/d15155a6-419b-41d2-a891-d244de162112/tasks/af6236911407bc65e.output)
+> - `20` tools, `37548` tokens, `0.833067 s`
+
