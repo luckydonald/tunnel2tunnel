@@ -13,7 +13,7 @@ services:
       STATIC_DIR: /app/frontend/dist
       RUST_LOG: ${RUST_LOG:-info}
       SSH_HOST_KEY_PATH: /data/ssh_host_key
-      SSH_T2T_KEY_PASSWORD: ${SSH_T2T_KEY_PASSWORD:-}
+      SSH_T2T_KEY_PASSWORD: ${SERVICE_PASSWORD_T2T-KEY}
     volumes:
       - t2t_data:/data
     ports:
