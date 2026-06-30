@@ -29,9 +29,14 @@ services:
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-changeme}
       RUST_LOG: info
+      SSH_HOST_KEY_PATH: /data/ssh_host_key
+      SSH_T2T_KEY_PASSWORD: ${SSH_T2T_KEY_PASSWORD:-}
+    volumes:
+      - t2t_data:/data
     ports:
       - "3000:3000"
       - "2222:2222"
 
 volumes:
   pg_data:
+  t2t_data:

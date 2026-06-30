@@ -343,3 +343,6 @@ This also integrates with the access rule sync nicely as the destination is what
 
 ❯ I am getting the error @ai/errors/1.txt
 
+❯ Fix @ai/errors/2.txt by storing the server's generated key to a persisted volume.
+Encrypt it via `SSH_T2T_KEY_PASSWORD` env var - again using the coolify magic var mechanism.
+

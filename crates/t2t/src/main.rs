@@ -23,6 +23,9 @@ async fn main() -> Result<()> {
     let admin_username = std::env::var("ADMIN_USERNAME").ok();
     let admin_password = std::env::var("ADMIN_PASSWORD").ok();
     let fail2ban_log_path = std::env::var("FAIL2BAN_LOG_PATH").ok();
+    let host_key_path = std::env::var("SSH_HOST_KEY_PATH")
+        .unwrap_or_else(|_| "data/ssh_host_key".to_string());
+    let host_key_password = std::env::var("SSH_T2T_KEY_PASSWORD").ok();
     let static_dir = std::env::var("STATIC_DIR")
         .unwrap_or_else(|_| "frontend/dist".to_string());
     let static_dir = if std::path::Path::new(&static_dir).exists() {
@@ -57,7 +60,7 @@ async fn main() -> Result<()> {
     });
 
     let ssh = tokio::spawn(async move {
-        start_ssh(SshConfig { ssh_port, fail2ban_log_path }, ssh_pool)
+        start_ssh(SshConfig { ssh_port, fail2ban_log_path, host_key_path, host_key_password }, ssh_pool)
             .await
             .expect("SSH server failed")
     });

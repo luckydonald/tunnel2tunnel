@@ -133,6 +133,8 @@ pub struct TimestampsSoftDelete {
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | — | Bootstrap admin on first run (idempotent) |
 | `STATIC_DIR` | `frontend/dist` | Path to compiled Vue SPA; skipped if directory absent |
 | `FAIL2BAN_LOG_PATH` | — | If set, write sshd-format auth events to this file |
+| `SSH_HOST_KEY_PATH` | `data/ssh_host_key` | Path where the SSH host key is persisted; mount as a volume in Docker |
+| `SSH_T2T_KEY_PASSWORD` | — | If set, the stored host key is AES-256-CTR encrypted with this passphrase |
 | `RUST_LOG` | — | Tracing filter, e.g. `info` or `tunnel2tunnel_ssh=debug` |
 
 ---

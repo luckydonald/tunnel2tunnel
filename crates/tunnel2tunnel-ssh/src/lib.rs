@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use getrandom::rand_core::UnwrapErr;
 use getrandom::SysRng;
 use russh::keys::{Algorithm, PrivateKey};
+use russh::keys::ssh_key::LineEnding;
 use russh::server::{Auth, Config, Handle, Handler, Msg, Server, Session};
 use russh::{MethodKind, MethodSet};
 use russh::{Channel, ChannelId, ChannelMsg};
@@ -26,6 +28,10 @@ use tunnel2tunnel_core::{
 pub struct SshConfig {
     pub ssh_port: u16,
     pub fail2ban_log_path: Option<String>,
+    /// Path on disk where the SSH host key is stored. Generated on first run.
+    pub host_key_path: String,
+    /// Optional passphrase used to encrypt the stored host key (SSH_T2T_KEY_PASSWORD).
+    pub host_key_password: Option<String>,
 }
 
 // ── Routing state shared across all SSH sessions ─────────────────────────────
@@ -35,8 +41,10 @@ type ServerSlots = Arc<Mutex<HashMap<(Uuid, u32), Handle>>>;
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 pub async fn start(config: SshConfig, pool: PgPool) -> Result<()> {
-    let key = PrivateKey::random(&mut UnwrapErr(SysRng), Algorithm::Ed25519)
-        .expect("SSH host key generation failed");
+    let key = load_or_generate_host_key(
+        &config.host_key_path,
+        config.host_key_password.as_deref(),
+    )?;
 
     let russh_config = Arc::new(Config {
         keys: vec![key],
@@ -608,6 +616,57 @@ async fn forward_channel(mut src: Channel<Msg>, dst: Handle, dst_ch: ChannelId) 
             }
             _ => {}
         }
+    }
+}
+
+fn load_or_generate_host_key(path: &str, password: Option<&str>) -> Result<PrivateKey> {
+    if Path::new(path).exists() {
+        tracing::info!(%path, "SSH: loading host key from disk");
+        let key = PrivateKey::read_openssh_file(path)
+            .with_context(|| format!("failed to read SSH host key from {path}"))?;
+        let key = if key.is_encrypted() {
+            let pw = password.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "SSH host key at {path} is encrypted but SSH_T2T_KEY_PASSWORD is not set"
+                )
+            })?;
+            key.decrypt(pw)
+                .with_context(|| format!("failed to decrypt SSH host key at {path}"))?
+        } else {
+            key
+        };
+        tracing::info!(
+            %path,
+            fingerprint = %key.public_key().fingerprint(russh::keys::ssh_key::HashAlg::Sha256),
+            "SSH: host key loaded"
+        );
+        Ok(key)
+    } else {
+        tracing::info!(%path, "SSH: no host key found, generating new Ed25519 key");
+        let key = PrivateKey::random(&mut UnwrapErr(SysRng), Algorithm::Ed25519)
+            .context("SSH host key generation failed")?;
+        if let Some(parent) = Path::new(path).parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("failed to create directory for SSH host key: {}", parent.display()))?;
+            }
+        }
+        let key_to_save = if let Some(pw) = password {
+            key.encrypt(&mut UnwrapErr(SysRng), pw)
+                .context("failed to encrypt SSH host key")?
+        } else {
+            key.clone()
+        };
+        key_to_save
+            .write_openssh_file(path, LineEnding::LF)
+            .with_context(|| format!("failed to write SSH host key to {path}"))?;
+        tracing::info!(
+            %path,
+            encrypted = password.is_some(),
+            fingerprint = %key.public_key().fingerprint(russh::keys::ssh_key::HashAlg::Sha256),
+            "SSH: host key generated and saved"
+        );
+        Ok(key)
     }
 }
 
