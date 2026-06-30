@@ -122,6 +122,21 @@ impl EntityAccess {
         Ok(exists)
     }
 
+    pub async fn list_incoming(
+        pool: &PgPool,
+        subject_entity_id: Uuid,
+    ) -> Result<Vec<Self>, CoreError> {
+        sqlx::query_as::<_, EntityAccess>(
+            "SELECT * FROM entity_access \
+             WHERE subject_type = 'entity' AND subject_entity_id = $1 \
+             ORDER BY created_at DESC",
+        )
+        .bind(subject_entity_id)
+        .fetch_all(pool)
+        .await
+        .map_err(CoreError::Sqlx)
+    }
+
     /// Resolve a hostname alias to an entity ID.
     pub async fn find_entity_by_hostname(
         pool: &PgPool,

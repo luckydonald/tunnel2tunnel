@@ -179,7 +179,15 @@ function toggleDiscovery(portId: string, currentState: string | null): void {
       </div>
       <pre class="cmd-text">ssh -N \
   -i ~/.ssh/{{ filename }}<template v-for="port in enabledPorts" :key="port.id"> \
-  <span
+  <RouterLink
+    v-if="entity.entity_type === 'client' && port.server_entity_id"
+    :to="'/entities/' + port.server_entity_id + '#ports'"
+    class="cmd-flag"
+    :class="{ 'is-hovered': isHovered(port.id) }"
+    @mouseenter="hoveredPortId = port.id"
+    @mouseleave="hoveredPortId = null"
+  >{{ portFlag(port) }}</RouterLink><span
+    v-else
     class="cmd-flag"
     :class="{ 'is-hovered': isHovered(port.id) }"
     @mouseenter="hoveredPortId = port.id"
@@ -428,11 +436,19 @@ function toggleDiscovery(portId: string, currentState: string | null): void {
   border-radius: 2px;
   padding: 0.1em 0;
   cursor: default;
+  text-decoration: none;
   transition: background 0.1s;
 
   &.is-hovered {
     background: rgba(79, 110, 247, 0.25);
     color: #93c5fd;
+  }
+
+  // RouterLink variant: show cursor pointer and subtle underline
+  &[href] {
+    cursor: pointer;
+    border-bottom: 1px dotted #4f6ef7;
+    &:hover { border-bottom-style: solid; }
   }
 }
 

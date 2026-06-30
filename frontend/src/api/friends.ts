@@ -87,4 +87,7 @@ export const friendsApi = {
 
   deleteAccess: (entity_id: string, rule_id: string) =>
     apiFetch<void>(`/api/entities/${entity_id}/access/${rule_id}`, { method: 'DELETE' }),
+
+  listIncomingAccess: (entity_id: string) =>
+    apiFetch<AccessRule[]>(`/api/entities/${entity_id}/access/incoming`),
 }

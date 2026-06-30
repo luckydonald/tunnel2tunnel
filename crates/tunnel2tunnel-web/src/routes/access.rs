@@ -61,6 +61,18 @@ pub async fn list_access(
     Ok(Json(rows.into_iter().map(AccessResponse::from).collect()))
 }
 
+pub async fn list_incoming_access(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path(entity_id): Path<Uuid>,
+) -> Result<Json<Vec<AccessResponse>>, WebError> {
+    require_entity_owner(&state, entity_id, user.id).await?;
+    let rows = EntityAccess::list_incoming(&state.db, entity_id)
+        .await
+        .map_err(WebError::Core)?;
+    Ok(Json(rows.into_iter().map(AccessResponse::from).collect()))
+}
+
 #[derive(Deserialize)]
 pub struct CreateAccessBody {
     pub subject_type: String,

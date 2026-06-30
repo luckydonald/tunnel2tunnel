@@ -74,6 +74,8 @@ pub async fn start(config: WebConfig, pool: PgPool) -> anyhow::Result<()> {
         .route("/api/entities/{entity_id}/access",
             get(routes::access::list_access)
             .post(routes::access::create_access))
+        .route("/api/entities/{entity_id}/access/incoming",
+            get(routes::access::list_incoming_access))
         .route("/api/entities/{entity_id}/access/{rule_id}",
             delete(routes::access::delete_access))
         // friends

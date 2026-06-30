@@ -60,6 +60,8 @@ async function load(): Promise<void> {
     if (entity.value.entity_type === 'client') {
       await loadReachableServers()
     }
+    loadAccess()
+    loadIncomingAccess()
   } catch (e) {
     pageError.value = e instanceof Error ? e.message : 'Failed to load entity'
   } finally {
@@ -270,6 +272,20 @@ async function handleDeleteAccess(ruleId: string): Promise<void> {
   }
 }
 
+// Incoming grants (rules on OTHER entities that grant access to this one)
+const incomingGrants = ref<AccessRule[]>([])
+const incomingGrantsLoaded = ref(false)
+
+async function loadIncomingAccess(): Promise<void> {
+  if (incomingGrantsLoaded.value) return
+  try {
+    incomingGrants.value = await friendsApi.listIncomingAccess(entityId)
+    incomingGrantsLoaded.value = true
+  } catch {
+    // non-critical; section stays hidden
+  }
+}
+
 // Connection log
 const connLogs = ref<ConnLog[]>([])
 const logsLoaded = ref(false)
@@ -334,7 +350,7 @@ async function handleDeleteEntity(): Promise<void> {
       </section>
 
       <!-- Ports management -->
-      <section class="section">
+      <section id="ports" class="section">
         <div class="section-header">
           <h2>Ports</h2>
           <button class="btn-secondary" @click="showAddPort = true">Add port</button>
@@ -581,7 +597,32 @@ async function handleDeleteEntity(): Promise<void> {
           </table>
           <p v-else-if="!showAddAccess" class="empty">No access rules.</p>
         </template>
-        <p v-else class="empty">Click "Add rule" to manage access.</p>
+      </section>
+
+      <!-- Incoming grants -->
+      <section v-if="incomingGrantsLoaded && incomingGrants.length" class="section">
+        <h2>Incoming Grants</h2>
+        <p class="section-note">Other entities that have explicitly granted this entity access.</p>
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Owner entity</th>
+              <th>Hostname alias</th>
+              <th>Created</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="rule in incomingGrants" :key="rule.id">
+              <td>
+                <RouterLink :to="'/entities/' + rule.owner_entity_id" class="entity-link">
+                  {{ rule.owner_entity_id.slice(0, 13) }}…
+                </RouterLink>
+              </td>
+              <td>{{ rule.hostname ?? '—' }}</td>
+              <td class="td-ts">{{ new Date(rule.created_at).toLocaleString() }}</td>
+            </tr>
+          </tbody>
+        </table>
       </section>
 
       <!-- Connection log -->
@@ -750,4 +791,8 @@ async function handleDeleteEntity(): Promise<void> {
   border-radius: 4px; color: #e2e8f0; font-size: 0.875rem; min-width: 180px;
   &:focus { outline: none; border-color: #4f6ef7; }
 }
+
+.section-note { font-size: 0.8125rem; color: #64748b; margin: -0.5rem 0 0.75rem; }
+
+.entity-link { color: #818cf8; text-decoration: none; &:hover { text-decoration: underline; } }
 </style>
