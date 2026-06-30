@@ -1,0 +1,5 @@
+2026-06-30T17:50:21.835622Z  INFO tunnel2tunnel_ssh: direct-tcpip: channel open request client_entity=<redacted-uuid-one> client_entity_name="Laptop" peer_ip=<redacted-ip-one> host="<redacted-uuid-two>" port=5900
+2026-06-30T17:50:21.840644Z  INFO tunnel2tunnel_ssh: direct-tcpip: rejected — target server has no registered port (server not connected?) target_entity=<redacted-uuid-two> target_entity_name="PC" proxy_port=5900
+2026-06-30T17:50:36.350713Z  INFO tunnel2tunnel_ssh: SSH: new connection peer_ip=<redacted-ip-two>
+2026-06-30T17:50:37.367474Z  INFO tunnel2tunnel_ssh: SSH: auth attempt (password) — rejected (password auth not supported) peer_ip=<redacted-ip-two> user=root password_len=1 available="publickey"
+2026-06-30T17:50:38.538369Z  INFO tunnel2tunnel_ssh: SSH: connection closed (unauthenticated) peer_ip=<redacted-ip-two>
