@@ -199,7 +199,13 @@
       "Bash(echo \"---\")",
       "Bash(echo ---)",
       "Bash(echo '---')",
-      "Bash(cd /home/user/git/luckydonald/tunnel2tunnel)"
+      "Bash(cd /home/user/git/luckydonald/tunnel2tunnel)",
+      "Bash(git -C /home/user/git/luckydonald/tunnel2tunnel status)",
+      "Bash(git -C /home/user/git/luckydonald/tunnel2tunnel log --oneline:*)",
+      "Bash(git -C /home/user/git/luckydonald/tunnel2tunnel diff:*)",
+      "Bash(git -C /home/user/git/luckydonald/tunnel2tunnel show:*)",
+      "Bash(git -C /home/user/git/luckydonald/tunnel2tunnel add:*)",
+      "Bash(git -C /home/user/git/luckydonald/tunnel2tunnel commit -F ai/git/pending-commit.md)"
     ],
     "deny": [
       "Read(**/.env*)",
