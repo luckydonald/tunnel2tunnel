@@ -7,6 +7,7 @@ use getrandom::rand_core::UnwrapErr;
 use getrandom::SysRng;
 use russh::keys::{Algorithm, PrivateKey};
 use russh::server::{Auth, Config, Handle, Handler, Msg, Server, Session};
+use russh::{MethodKind, MethodSet};
 use russh::{Channel, ChannelId, ChannelMsg};
 use sqlx::PgPool;
 use tokio::sync::Mutex;
@@ -73,7 +74,7 @@ impl Server for T2tServer {
         let peer_ip = addr
             .map(|a| a.ip().to_string())
             .unwrap_or_else(|| "unknown".into());
-        tracing::debug!(%peer_ip, "SSH connect");
+        tracing::info!(%peer_ip, "SSH: new connection");
         T2tHandler {
             pool: self.pool.clone(),
             server_slots: self.server_slots.clone(),
@@ -177,35 +178,102 @@ impl T2tHandler {
 impl Handler for T2tHandler {
     type Error = anyhow::Error;
 
-    async fn auth_publickey(
+    async fn auth_none(&mut self, user: &str) -> Result<Auth, Self::Error> {
+        tracing::info!(
+            peer_ip = %self.peer_ip,
+            %user,
+            available = "publickey",
+            "SSH: auth attempt (none) — rejected"
+        );
+        Ok(Auth::Reject {
+            proceed_with_methods: Some(publickey_only()),
+            partial_success: false,
+        })
+    }
+
+    async fn auth_password(&mut self, user: &str, password: &str) -> Result<Auth, Self::Error> {
+        tracing::info!(
+            peer_ip = %self.peer_ip,
+            %user,
+            password_len = password.len(),
+            available = "publickey",
+            "SSH: auth attempt (password) — rejected (password auth not supported)"
+        );
+        self.log_auth_failure(None, "password auth not supported").await;
+        Ok(Auth::Reject {
+            proceed_with_methods: Some(publickey_only()),
+            partial_success: false,
+        })
+    }
+
+    async fn auth_keyboard_interactive(
         &mut self,
-        _user: &str,
+        user: &str,
+        submethods: &str,
+        _response: Option<russh::server::Response<'_>>,
+    ) -> Result<Auth, Self::Error> {
+        tracing::info!(
+            peer_ip = %self.peer_ip,
+            %user,
+            %submethods,
+            available = "publickey",
+            "SSH: auth attempt (keyboard-interactive) — rejected"
+        );
+        Ok(Auth::Reject {
+            proceed_with_methods: Some(publickey_only()),
+            partial_success: false,
+        })
+    }
+
+    async fn auth_publickey_offered(
+        &mut self,
+        user: &str,
         key: &russh::keys::PublicKey,
     ) -> Result<Auth, Self::Error> {
-        // Compute SHA-256 fingerprint from the public key
+        let fp = format!("{}", key.fingerprint(russh::keys::ssh_key::HashAlg::Sha256));
+        tracing::info!(
+            peer_ip = %self.peer_ip,
+            %user,
+            %fp,
+            key_algo = key.algorithm().as_str(),
+            "SSH: publickey offered (probe, no signature yet)"
+        );
+        // Accept all probes — actual key validation happens in auth_publickey
+        Ok(Auth::Accept)
+    }
+
+    async fn auth_publickey(
+        &mut self,
+        user: &str,
+        key: &russh::keys::PublicKey,
+    ) -> Result<Auth, Self::Error> {
         let fp = format!(
             "{}",
             key.fingerprint(russh::keys::ssh_key::HashAlg::Sha256)
         );
 
+        tracing::info!(peer_ip = %self.peer_ip, %user, %fp, "SSH: auth attempt (publickey)");
+
         // Look up key in database
         let ssh_key = match SshKey::find_by_fingerprint(&self.pool, &fp).await {
             Ok(Some(k)) => k,
             Ok(None) => {
-                tracing::debug!(%fp, peer_ip = %self.peer_ip, "auth rejected: unknown key");
+                tracing::info!(%fp, peer_ip = %self.peer_ip, "SSH: auth rejected — unknown key");
                 self.log_auth_failure(Some(&fp), "unknown key").await;
                 return Ok(Auth::Reject { proceed_with_methods: None, partial_success: false });
             }
             Err(e) => {
-                tracing::error!(err = %e, "db error during auth");
+                tracing::error!(err = %e, %fp, peer_ip = %self.peer_ip, "SSH: auth error — db error during key lookup");
                 return Ok(Auth::Reject { proceed_with_methods: None, partial_success: false });
             }
         };
 
-        // Check key expiry
+        tracing::debug!(%fp, key_id = %ssh_key.id, entity_id = %ssh_key.entity_id, "SSH: key found in db");
+
+        // Check key expiry (soft-deleted = expired)
         if let Some(valid_until) = ssh_key.ts.soft_delete.deleted_at {
             if valid_until < time::OffsetDateTime::now_utc() {
-                tracing::debug!(%fp, "auth rejected: key expired");
+                tracing::info!(%fp, key_id = %ssh_key.id, "SSH: auth rejected — key expired (deleted_at)");
                 self.log_auth_failure(Some(&fp), "key expired").await;
                 return Ok(Auth::Reject { proceed_with_methods: None, partial_success: false });
             }
@@ -213,7 +281,7 @@ impl Handler for T2tHandler {
         // Also check ssh_key's own valid_until field
         if let Some(valid_until) = ssh_key.valid_until {
             if valid_until < time::OffsetDateTime::now_utc() {
-                tracing::debug!(%fp, "auth rejected: key valid_until expired");
+                tracing::info!(%fp, key_id = %ssh_key.id, "SSH: auth rejected — key expired (valid_until)");
                 self.log_auth_failure(Some(&fp), "key expired (valid_until)").await;
                 return Ok(Auth::Reject { proceed_with_methods: None, partial_success: false });
             }
@@ -223,20 +291,22 @@ impl Handler for T2tHandler {
         let entity = match Entity::find_by_id_only(&self.pool, ssh_key.entity_id).await {
             Ok(Some(e)) => e,
             Ok(None) => {
-                tracing::debug!(%fp, "auth rejected: entity not found");
+                tracing::info!(%fp, entity_id = %ssh_key.entity_id, "SSH: auth rejected — entity not found");
                 self.log_auth_failure(Some(&fp), "entity not found").await;
                 return Ok(Auth::Reject { proceed_with_methods: None, partial_success: false });
             }
             Err(e) => {
-                tracing::error!(err = %e, "db error loading entity");
+                tracing::error!(err = %e, %fp, "SSH: auth error — db error loading entity");
                 return Ok(Auth::Reject { proceed_with_methods: None, partial_success: false });
             }
         };
 
+        tracing::debug!(%fp, entity_id = %entity.id, entity_name = entity.name.as_deref().unwrap_or("(unnamed)"), "SSH: entity loaded");
+
         // Check entity expiry
         if let Some(valid_until) = entity.valid_until {
             if valid_until < time::OffsetDateTime::now_utc() {
-                tracing::debug!(entity_id = %entity.id, "auth rejected: entity expired");
+                tracing::info!(entity_id = %entity.id, entity_name = entity.name.as_deref().unwrap_or("(unnamed)"), "SSH: auth rejected — entity expired");
                 self.log_auth_failure(Some(&fp), "entity expired").await;
                 return Ok(Auth::Reject { proceed_with_methods: None, partial_success: false });
             }
@@ -245,13 +315,24 @@ impl Handler for T2tHandler {
         // Check IP whitelist
         if let Some(ref whitelist) = entity.ip_whitelist {
             if !ip_whitelist::evaluate(whitelist, &self.peer_ip) {
-                tracing::debug!(entity_id = %entity.id, peer_ip = %self.peer_ip, "auth rejected: IP blocked");
+                tracing::info!(
+                    entity_id = %entity.id,
+                    entity_name = entity.name.as_deref().unwrap_or("(unnamed)"),
+                    peer_ip = %self.peer_ip,
+                    "SSH: auth rejected — IP blocked by whitelist"
+                );
                 self.log_auth_failure(Some(&fp), "IP blocked by whitelist").await;
                 return Ok(Auth::Reject { proceed_with_methods: None, partial_success: false });
             }
         }
 
-        tracing::info!(entity_id = %entity.id, peer_ip = %self.peer_ip, "auth accepted");
+        tracing::info!(
+            entity_id = %entity.id,
+            entity_name = entity.name.as_deref().unwrap_or("(unnamed)"),
+            peer_ip = %self.peer_ip,
+            %fp,
+            "SSH: auth accepted"
+        );
         let user_id = entity.user_id;
         self.log_auth_success(&entity, &fp).await;
         self.entity = Some(AuthedEntity { entity, user_id });
@@ -427,6 +508,16 @@ impl Handler for T2tHandler {
 
 impl Drop for T2tHandler {
     fn drop(&mut self) {
+        match &self.entity {
+            Some(authed) => tracing::info!(
+                entity_id = %authed.entity.id,
+                entity_name = authed.entity.name.as_deref().unwrap_or("(unnamed)"),
+                peer_ip = %self.peer_ip,
+                "SSH: connection closed (authenticated)"
+            ),
+            None => tracing::info!(peer_ip = %self.peer_ip, "SSH: connection closed (unauthenticated)"),
+        }
+
         // Clean up server slots when a server entity disconnects
         if let Some(ref authed) = self.entity {
             let entity_id = authed.entity.id;
@@ -483,6 +574,10 @@ async fn forward_channel(mut src: Channel<Msg>, dst: Handle, dst_ch: ChannelId) 
             _ => {}
         }
     }
+}
+
+fn publickey_only() -> MethodSet {
+    MethodSet::from(&[MethodKind::PublicKey][..])
 }
 
 fn chrono_like_timestamp() -> String {

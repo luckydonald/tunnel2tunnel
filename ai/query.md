@@ -333,3 +333,11 @@ You don't need to use the exact true/false/null representation, instead true cou
 ❯ I realized, for the client variant of the entity, the port does need the `identity` of where to connect to (aka. the server). This is the `<server>` placeholder currently, but needs to be stored in the DB as well, obviously, so `<server>` can be filled out.
 This also integrates with the access rule sync nicely as the destination is what the sync is based on.
 
+❯ document generic learnings
+
+❯ add verbose console logging to SSH connections, especially regarding auth (password, key, etc.).
+
+❯ Also log which key auth methods are offered and which are available.
+
+❯ document generic learnings
+
