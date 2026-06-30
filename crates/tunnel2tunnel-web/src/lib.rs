@@ -19,6 +19,7 @@ pub use error::WebError;
 pub struct AppState {
     pub db: PgPool,
     pub ssh_port: u16,
+    pub ssh_host_key_fingerprint: String,
 }
 
 pub struct WebConfig {
@@ -27,10 +28,15 @@ pub struct WebConfig {
     /// Path to the compiled frontend dist/ directory (e.g. "frontend/dist").
     /// If None (or path doesn't exist), the SPA fallback is skipped.
     pub static_dir: Option<String>,
+    pub ssh_host_key_fingerprint: String,
 }
 
 pub async fn start(config: WebConfig, pool: PgPool) -> anyhow::Result<()> {
-    let state = AppState { db: pool.clone(), ssh_port: config.ssh_port };
+    let state = AppState {
+        db: pool.clone(),
+        ssh_port: config.ssh_port,
+        ssh_host_key_fingerprint: config.ssh_host_key_fingerprint,
+    };
 
     let session_store = PostgresStore::new(pool.clone());
     session_store.migrate().await?;

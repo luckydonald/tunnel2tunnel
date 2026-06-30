@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use tracing_subscriber::EnvFilter;
 use tunnel2tunnel_core::db;
-use tunnel2tunnel_ssh::{start as start_ssh, SshConfig};
+use tunnel2tunnel_ssh::{start as start_ssh, host_key_fingerprint, SshConfig};
 use tunnel2tunnel_web::{start as start_http, bootstrap_admin, WebConfig};
 
 #[tokio::main]
@@ -50,11 +50,16 @@ async fn main() -> Result<()> {
             .context("failed to bootstrap admin user")?;
     }
 
+    let ssh_host_key_fingerprint = host_key_fingerprint(
+        &host_key_path,
+        host_key_password.as_deref(),
+    ).context("failed to load/generate SSH host key")?;
+
     let http_pool = pool.clone();
     let ssh_pool = pool;
 
     let http = tokio::spawn(async move {
-        start_http(WebConfig { http_port, ssh_port, static_dir }, http_pool)
+        start_http(WebConfig { http_port, ssh_port, static_dir, ssh_host_key_fingerprint }, http_pool)
             .await
             .expect("HTTP server failed")
     });

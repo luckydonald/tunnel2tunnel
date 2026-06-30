@@ -40,6 +40,16 @@ type ServerSlots = Arc<Mutex<HashMap<(Uuid, u32), Handle>>>;
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
+/// Return the SHA-256 fingerprint of the configured SSH host key,
+/// generating and persisting it first if it doesn't yet exist.
+pub fn host_key_fingerprint(path: &str, password: Option<&str>) -> Result<String> {
+    let key = load_or_generate_host_key(path, password)?;
+    Ok(format!(
+        "{}",
+        key.public_key().fingerprint(russh::keys::ssh_key::HashAlg::Sha256)
+    ))
+}
+
 pub async fn start(config: SshConfig, pool: PgPool) -> Result<()> {
     let key = load_or_generate_host_key(
         &config.host_key_path,

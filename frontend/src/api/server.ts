@@ -1,6 +1,7 @@
 export interface ServerInfo {
   ssh_port: number
   ssh_port_env_var: string
+  ssh_host_key_fingerprint: string
 }
 
 async function apiFetch<T>(url: string, options?: RequestInit): Promise<T> {

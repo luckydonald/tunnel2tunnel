@@ -348,3 +348,7 @@ Encrypt it via `SSH_T2T_KEY_PASSWORD` env var - again using the coolify magic va
 
 ❯ document generic learnings; update `.env.example`, `docker-compose.coolify.yml` and `README.md`, too.
 
+❯ Show own key fingerprint in the settings.
+
+❯ keep automatically commiting according to the LPLP commit style SKILL.md in this repo.
+

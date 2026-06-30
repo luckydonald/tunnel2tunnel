@@ -67,6 +67,10 @@ async function handleChangePassword(): Promise<void> {
           <span class="info-env">env <code>{{ serverInfo?.ssh_port_env_var ?? 'SSH_PORT' }}</code></span>
         </div>
         <div class="info-row">
+          <span class="info-label">Host key</span>
+          <code class="info-value mono-sm">{{ serverInfo?.ssh_host_key_fingerprint ?? '…' }}</code>
+        </div>
+        <div class="info-row">
           <span class="info-label">Connect command</span>
           <code class="info-value mono-sm">ssh &lt;entity-id&gt;@{{ sshHost }} -p {{ serverInfo?.ssh_port ?? '…' }}</code>
         </div>
