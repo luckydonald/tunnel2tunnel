@@ -12,6 +12,10 @@ services:
       ADMIN_PASSWORD: ${SERVICE_PASSWORD_ADMIN}
       STATIC_DIR: /app/frontend/dist
       RUST_LOG: ${RUST_LOG:-info}
+      SSH_HOST_KEY_PATH: /data/ssh_host_key
+      SSH_T2T_KEY_PASSWORD: ${SSH_T2T_KEY_PASSWORD:-}
+    volumes:
+      - t2t_data:/data
     ports:
       - "${SSH_PORT:-2222}:${SSH_PORT:-2222}"
     depends_on:
@@ -37,3 +41,4 @@ services:
 
 volumes:
   pg_data:
+  t2t_data:

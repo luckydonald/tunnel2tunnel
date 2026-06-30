@@ -346,3 +346,5 @@ This also integrates with the access rule sync nicely as the destination is what
 ❯ Fix @ai/errors/2.txt by storing the server's generated key to a persisted volume.
 Encrypt it via `SSH_T2T_KEY_PASSWORD` env var - again using the coolify magic var mechanism.
 
+❯ document generic learnings; update `.env.example`, `docker-compose.coolify.yml` and `README.md`, too.
+
