@@ -8,18 +8,19 @@
 
 Create as separate commit (LPLP style):
 
-- [ ] write a welcome message to the new ssh connection
+- [x] write a welcome message to the new ssh connection
   - something nerdy and MLP:FiM related.
-- [ ] Regularly send a ping-like message
+- [x] Regularly send a ping-like message
   - derpy mail mare themed
-- [ ] Send message to all connected ends if another client/server/port etc.
+- [x] Send message to all connected ends if another client/server/port etc.
   - client/server connects
   - port becomes available/unavailable
-- [ ] have a cheap chat for the same clients:
+- [x] have a cheap chat for the same clients:
   - A message typed into one session will be relayed to all others
   - Submit on enter
   - Prefixed with the friendly client/server name + uuid.
   - Something like `${sender.name} (${sender.uuid}): ${message}`.
-- [ ] Clicking the green `-L <port>:<uuid>:<port>` command brings you to the port section of that server.
-- [ ] Display the reversed access rules in the entities viewer as a secondary table.
-- [ ] The _Access Rules_ table stays empty on initial page load.
+- [x] Clicking the green `-L <port>:<uuid>:<port>` command brings you to the port section of that server.
+- [x] Display the reversed access rules in the entities viewer as a secondary table.
+- [x] The _Access Rules_ table stays empty on initial page load.
+
