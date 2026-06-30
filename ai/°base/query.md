@@ -2040,3 +2040,11 @@ and for claude are at @ai/°base/plans/019_available-mcp-tools.md
 - d) relative path to script (e.g. `something.json` - would be in `ai/jooks/save-prompt/`)
 - e) relative path to current codex/claude dir (usually repo root, but subprojects within a bigger project are possible - e.g. `../ai/output/debug/….json`)
 
+❯ for the lplp commit skill, make it clear that you should always make sure to not accidentially commit irrevelent files, and limit just to the ones changed yourself.
+
+❯ It's at @ai/skills/commit-with-lplp-style/SKILL.md
+
+❯ Fix @ai/°base/output/debug/20260630-033350_321912-record-memory.json not causing a plan update commit.
+
+❯ Fix the unittests, add a test checking the output of `ai/°base/output/debug/20260630-033350_321912-record-memory.json`.
+
