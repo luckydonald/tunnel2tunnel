@@ -33,6 +33,7 @@ export interface EntityPort {
   name: string | null
   description: string | null
   sort_order: number
+  server_entity_id: string | null
   created_at: string
   updated_at: string
 }
@@ -84,6 +85,7 @@ export interface CreatePortParams {
   name?: string | null
   description?: string | null
   sort_order?: number
+  server_entity_id?: string | null
 }
 
 export interface UpdatePortParams {
@@ -93,6 +95,7 @@ export interface UpdatePortParams {
   name?: string | null
   description?: string | null
   sort_order: number
+  server_entity_id?: string | null
 }
 
 async function apiFetch<T>(url: string, options?: RequestInit): Promise<T> {

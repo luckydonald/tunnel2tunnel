@@ -22,11 +22,12 @@ const emit = defineEmits<{
 
 const hoveredPortId = ref<string | null>(null)
 const t2tHost = computed(() => props.t2tHost ?? window.location.hostname)
+const servers = computed(() => props.reachableServers ?? [])
 
 // Client-side EntityPort IDs managed by "enabled" discovery rules
 const enabledDiscoveryPortIds = computed(() => {
   const ids = new Set<string>()
-  for (const server of props.reachableServers) {
+  for (const server of servers.value) {
     for (const dp of server.ports) {
       if (dp.discovery_state === 'enabled' && dp.client_port_id) {
         ids.add(dp.client_port_id)
@@ -45,7 +46,7 @@ const enabledPorts = computed(() =>
 interface DiscoveryFlag { flag: string; portId: string }
 const discoveryFlags = computed((): DiscoveryFlag[] => {
   const flags: DiscoveryFlag[] = []
-  for (const server of props.reachableServers) {
+  for (const server of servers.value) {
     const display = server.hostname ?? server.id
     for (const dp of server.ports) {
       if (dp.discovery_state === null) {
@@ -61,9 +62,15 @@ const discoveryFlags = computed((): DiscoveryFlag[] => {
 })
 
 function portFlag(port: EntityPort): string {
-  return props.entity.entity_type === 'server'
-    ? `-R ${port.proxy_port}:localhost:${port.local_port}`
-    : `-L ${port.local_port}:<server>:${port.proxy_port}`
+  if (props.entity.entity_type === 'server') {
+    return `-R ${port.proxy_port}:localhost:${port.local_port}`
+  }
+  if (port.server_entity_id) {
+    const server = servers.value.find(s => s.id === port.server_entity_id)
+    const display = server?.hostname ?? port.server_entity_id
+    return `-L ${port.local_port}:${display}:${port.proxy_port}`
+  }
+  return `-L ${port.local_port}:<server>:${port.proxy_port}`
 }
 
 function isHovered(portId: string): boolean {
@@ -101,9 +108,9 @@ function toggleDiscovery(portId: string, currentState: string | null): void {
   <div class="ssh-cmd-display">
 
     <!-- Discovery section: reachable server ports (client entities only) -->
-    <div v-if="entity.entity_type === 'client' && reachableServers.length" class="discovery-section">
+    <div v-if="entity.entity_type === 'client' && servers.length" class="discovery-section">
       <div class="discovery-header">Authorized server ports</div>
-      <div v-for="server in reachableServers" :key="server.id" class="discovery-server">
+      <div v-for="server in servers" :key="server.id" class="discovery-server">
         <div class="server-name">
           {{ server.name ?? server.id.slice(0, 13) + '…' }}
           <span v-if="server.hostname" class="server-hostname">{{ server.hostname }}</span>
@@ -139,7 +146,7 @@ function toggleDiscovery(portId: string, currentState: string | null): void {
                   max="65535"
                   placeholder="local port"
                   @keyup.enter="confirmPin(dp.id)"
-                  @keyup.escape="cancelPin"
+                  @keyup.esc="cancelPin"
                 />
                 <button class="btn-pin-ok" @click="confirmPin(dp.id)">Pin</button>
                 <button class="btn-icon" @click="cancelPin">✕</button>
@@ -166,7 +173,7 @@ function toggleDiscovery(portId: string, currentState: string | null): void {
     <div class="cmd-block">
       <div class="cmd-header">
         <span class="cmd-label">SSH command</span>
-        <span class="cmd-hint" v-if="entity.entity_type === 'client' && !reachableServers.length">
+        <span class="cmd-hint" v-if="entity.entity_type === 'client' && !servers.length">
           Replace <code>&lt;server&gt;</code> with the server entity ID
         </span>
       </div>

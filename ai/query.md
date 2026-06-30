@@ -330,3 +330,6 @@ You don't need to use the exact true/false/null representation, instead true cou
 > - [Raw log (`185950` chars, `183 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/d15155a6-419b-41d2-a891-d244de162112/tasks/a1533a9b9ee014ed8.output)
 > - `11` tools, `39023` tokens, `0.34045 s`
 
+❯ I realized, for the client variant of the entity, the port does need the `identity` of where to connect to (aka. the server). This is the `<server>` placeholder currently, but needs to be stored in the DB as well, obviously, so `<server>` can be filled out.
+This also integrates with the access rule sync nicely as the destination is what the sync is based on.
+

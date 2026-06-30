@@ -35,7 +35,7 @@ watch(keyFilename, v => localStorage.setItem(FILENAME_LS_KEY, v))
 
 // Port form
 const showAddPort = ref(false)
-const newPort = ref({ enabled: true, local_port: 8080, proxy_port: 8080, name: '', sort_order: 0 })
+const newPort = ref({ enabled: true, local_port: 8080, proxy_port: 8080, name: '', sort_order: 0, server_entity_id: null as string | null })
 const addingPort = ref(false)
 
 function defaultFilename(name: string | null, type: string): string {
@@ -124,7 +124,7 @@ async function handleAddPort(): Promise<void> {
     })
     entity.value.ports.push(port)
     showAddPort.value = false
-    newPort.value = { enabled: true, local_port: 8080, proxy_port: 8080, name: '', sort_order: 0 }
+    newPort.value = { enabled: true, local_port: 8080, proxy_port: 8080, name: '', sort_order: 0, server_entity_id: null }
   } catch (e) {
     alert(e instanceof Error ? e.message : 'Failed to add port')
   } finally {
@@ -141,6 +141,7 @@ async function handleUpdatePort(port: EntityPort): Promise<void> {
       name: port.name,
       description: port.description,
       sort_order: port.sort_order,
+      server_entity_id: port.server_entity_id,
     })
     if (entity.value) {
       const idx = entity.value.ports.findIndex(p => p.id === port.id)
@@ -416,6 +417,16 @@ async function handleDeleteEntity(): Promise<void> {
           <label class="checkbox-label">
             <input v-model="newPort.enabled" type="checkbox" /> Enabled
           </label>
+          <!-- Server target picker (client entities only) -->
+          <template v-if="entity.entity_type === 'client'">
+            <select v-model="newPort.server_entity_id" class="select-sm">
+              <option :value="null">— server (optional) —</option>
+              <option v-for="s in reachableServers" :key="s.id" :value="s.id">
+                {{ s.name ?? s.id.slice(0, 13) + '…' }}
+                <template v-if="s.hostname"> ({{ s.hostname }})</template>
+              </option>
+            </select>
+          </template>
           <button class="btn-primary" :disabled="addingPort" @click="handleAddPort">
             {{ addingPort ? 'Adding…' : 'Add' }}
           </button>

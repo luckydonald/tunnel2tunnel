@@ -87,6 +87,7 @@ struct DiscoveryPortRow {
     name: Option<String>,
     description: Option<String>,
     sort_order: i32,
+    server_entity_id: Option<Uuid>,
     created_at: OffsetDateTime,
     updated_at: OffsetDateTime,
     discovery_state: Option<String>,
@@ -104,6 +105,7 @@ impl DiscoveryPortRow {
             name: self.name,
             description: self.description,
             sort_order: self.sort_order,
+            server_entity_id: self.server_entity_id,
             ts: Timestamps { created_at: self.created_at, updated_at: self.updated_at },
         };
         DiscoveredPort {
@@ -228,7 +230,8 @@ impl EntityPortDiscoveryRule {
 
         let port_rows = sqlx::query_as::<_, DiscoveryPortRow>(
             "SELECT ep.id, ep.entity_id, ep.enabled, ep.local_port, ep.proxy_port, \
-                    ep.name, ep.description, ep.sort_order, ep.created_at, ep.updated_at, \
+                    ep.name, ep.description, ep.sort_order, ep.server_entity_id, \
+                    ep.created_at, ep.updated_at, \
                     epdr.state AS discovery_state, epdr.client_port_id \
              FROM entity_ports ep \
              LEFT JOIN entity_port_discovery_rules epdr \
