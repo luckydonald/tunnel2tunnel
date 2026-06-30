@@ -341,3 +341,5 @@ This also integrates with the access rule sync nicely as the destination is what
 
 ❯ document generic learnings
 
+❯ I am getting the error @ai/errors/1.txt
+

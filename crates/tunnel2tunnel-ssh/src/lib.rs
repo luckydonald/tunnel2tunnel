@@ -386,22 +386,48 @@ impl Handler for T2tHandler {
         session: &mut Session,
     ) -> Result<bool, Self::Error> {
         let Some(ref authed) = self.entity else {
+            tracing::warn!(peer_ip = %self.peer_ip, "direct-tcpip: rejected — not authenticated");
             return Ok(false);
         };
         let client_entity = authed.entity.clone();
         let client_user_id = authed.user_id;
 
+        tracing::info!(
+            client_entity = %client_entity.id,
+            client_entity_name = client_entity.name.as_deref().unwrap_or("(unnamed)"),
+            peer_ip = %self.peer_ip,
+            host = host_to_connect,
+            port = port_to_connect,
+            "direct-tcpip: channel open request"
+        );
+
         // Resolve target entity
         let target_entity_id = resolve_target_entity(&self.pool, host_to_connect).await;
         let Some(target_entity_id) = target_entity_id else {
-            tracing::debug!(hostname = host_to_connect, "direct-tcpip: target not found");
+            tracing::info!(
+                host = host_to_connect,
+                port = port_to_connect,
+                client_entity = %client_entity.id,
+                "direct-tcpip: rejected — target hostname not found (not a UUID or known alias)"
+            );
             return Ok(false);
         };
 
         // Load target entity for user_id
         let target_entity = match Entity::find_by_id_only(&self.pool, target_entity_id).await {
             Ok(Some(e)) => e,
-            _ => return Ok(false),
+            Ok(None) => {
+                tracing::info!(
+                    target_entity = %target_entity_id,
+                    client_entity = %client_entity.id,
+                    "direct-tcpip: rejected — target entity not found in db"
+                );
+                return Ok(false);
+            }
+            Err(e) => {
+                tracing::error!(err = %e, target_entity = %target_entity_id, "direct-tcpip: db error loading target entity");
+                return Ok(false);
+            }
         };
 
         // Check entity_access
@@ -419,7 +445,10 @@ impl Handler for T2tHandler {
             tracing::warn!(
                 client_entity = %client_entity.id,
                 target_entity = %target_entity_id,
-                "direct-tcpip: access denied"
+                target_entity_name = target_entity.name.as_deref().unwrap_or("(unnamed)"),
+                host = host_to_connect,
+                port = port_to_connect,
+                "direct-tcpip: rejected — access denied"
             );
             return Ok(false);
         }
@@ -433,10 +462,11 @@ impl Handler for T2tHandler {
             .cloned();
 
         let Some(server_handle) = server_handle else {
-            tracing::debug!(
+            tracing::info!(
                 target_entity = %target_entity_id,
+                target_entity_name = target_entity.name.as_deref().unwrap_or("(unnamed)"),
                 proxy_port = port_to_connect,
-                "direct-tcpip: no server registered"
+                "direct-tcpip: rejected — target server has no registered port (server not connected?)"
             );
             return Ok(false);
         };
@@ -463,9 +493,14 @@ impl Handler for T2tHandler {
         tokio::spawn(forward_channel(server_ch, client_handle, client_ch_id));
 
         tracing::info!(
+            client_entity = %client_entity.id,
+            target_entity = %target_entity_id,
+            target_entity_name = target_entity.name.as_deref().unwrap_or("(unnamed)"),
+            host = host_to_connect,
+            port = port_to_connect,
             client_ch = %client_ch_id,
             server_ch = %server_ch_id,
-            "bridge established"
+            "direct-tcpip: bridge established"
         );
         Ok(true)
     }
