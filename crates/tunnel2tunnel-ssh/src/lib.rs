@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use getrandom::rand_core::UnwrapErr;
@@ -38,6 +39,32 @@ pub struct SshConfig {
 
 type ServerSlots = Arc<Mutex<HashMap<(Uuid, u32), Handle>>>;
 
+// ── Session registry for messaging (welcome, ping, broadcast, chat) ──────────
+
+struct SessionEntry {
+    handle: Handle,
+    /// Channel used for push messages (welcome, ping, notifications).
+    session_channel_id: Option<ChannelId>,
+}
+
+type SessionRegistry = Arc<Mutex<HashMap<Uuid, SessionEntry>>>;
+
+/// Send `msg` to every registered session channel, optionally skipping one connection.
+async fn broadcast(registry: &SessionRegistry, msg: &str, exclude: Option<Uuid>) {
+    let targets: Vec<(Handle, ChannelId)> = {
+        let reg = registry.lock().await;
+        reg.iter()
+            .filter(|(conn_id, _)| exclude.map_or(true, |ex| **conn_id != ex))
+            .filter_map(|(_, entry)| {
+                entry.session_channel_id.map(|ch| (entry.handle.clone(), ch))
+            })
+            .collect()
+    };
+    for (handle, ch) in targets {
+        let _ = handle.data(ch, msg.as_bytes().to_vec()).await;
+    }
+}
+
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 /// Return the SHA-256 fingerprint of the configured SSH host key,
@@ -62,11 +89,13 @@ pub async fn start(config: SshConfig, pool: PgPool) -> Result<()> {
     });
 
     let server_slots: ServerSlots = Arc::new(Mutex::new(HashMap::new()));
+    let session_registry: SessionRegistry = Arc::new(Mutex::new(HashMap::new()));
     let fail2ban = config.fail2ban_log_path.map(Arc::new);
 
     let mut server = T2tServer {
         pool,
         server_slots,
+        session_registry,
         fail2ban,
     };
 
@@ -82,6 +111,7 @@ pub async fn start(config: SshConfig, pool: PgPool) -> Result<()> {
 struct T2tServer {
     pool: PgPool,
     server_slots: ServerSlots,
+    session_registry: SessionRegistry,
     fail2ban: Option<Arc<String>>,
 }
 
@@ -92,15 +122,19 @@ impl Server for T2tServer {
         let peer_ip = addr
             .map(|a| a.ip().to_string())
             .unwrap_or_else(|| "unknown".into());
-        tracing::info!(%peer_ip, "SSH: new connection");
+        let conn_id = Uuid::now_v7();
+        tracing::info!(%peer_ip, %conn_id, "SSH: new connection");
         T2tHandler {
             pool: self.pool.clone(),
             server_slots: self.server_slots.clone(),
+            session_registry: self.session_registry.clone(),
             fail2ban: self.fail2ban.clone(),
+            conn_id,
             peer_ip,
             entity: None,
             bridges: HashMap::new(),
             log_id: None,
+            session_channel_id: None,
         }
     }
 }
@@ -118,11 +152,15 @@ struct AuthedEntity {
 struct T2tHandler {
     pool: PgPool,
     server_slots: ServerSlots,
+    session_registry: SessionRegistry,
     fail2ban: Option<Arc<String>>,
+    conn_id: Uuid,
     peer_ip: String,
     entity: Option<AuthedEntity>,
     bridges: HashMap<ChannelId, (Handle, ChannelId)>,
     log_id: Option<Uuid>,
+    /// Server-initiated session channel used for push messages (welcome, ping, notifications).
+    session_channel_id: Option<ChannelId>,
 }
 
 impl T2tHandler {
@@ -358,6 +396,132 @@ impl Handler for T2tHandler {
         Ok(Auth::Accept)
     }
 
+    // Called after successful authentication — send welcome message and set up session channel.
+    async fn auth_succeeded(&mut self, session: &mut Session) -> Result<(), Self::Error> {
+        let Some(ref authed) = self.entity else { return Ok(()); };
+        let entity = authed.entity.clone();
+        let entity_name = entity.name.as_deref().unwrap_or("(unnamed)").to_string();
+        let entity_type = entity.entity_type.clone();
+        let conn_id = self.conn_id;
+
+        let handle = session.handle();
+
+        // Register session entry (without channel yet — filled in below if open succeeds)
+        {
+            let mut reg = self.session_registry.lock().await;
+            reg.insert(conn_id, SessionEntry {
+                handle: handle.clone(),
+                session_channel_id: None,
+            });
+        }
+
+        // Try to open a server-initiated session channel to the client for push messages.
+        match handle.channel_open_session().await {
+            Ok(ch) => {
+                let ch_id = ch.id();
+                self.session_channel_id = Some(ch_id);
+
+                // Update registry entry with channel id
+                if let Some(entry) = self.session_registry.lock().await.get_mut(&conn_id) {
+                    entry.session_channel_id = Some(ch_id);
+                }
+
+                // Send welcome message
+                let welcome = format!(
+                    "\r\n\x1b[35m✨ Welcome to tunnel2tunnel, {}! ✨\x1b[0m\r\n\
+                     \x1b[34mTwilight Sparkle has verified your access rules — everything checks out.\r\n\
+                     The portal stands ready. Your {} connection is now active. 📚\x1b[0m\r\n\r\n",
+                    entity_name, entity_type
+                );
+                let _ = handle.data(ch_id, welcome.into_bytes()).await;
+
+                // Spawn task: keep channel alive and send periodic Derpy pings
+                let ping_handle = handle.clone();
+                tokio::spawn(async move {
+                    let mut channel = ch;
+                    let mut interval = tokio::time::interval(Duration::from_secs(5 * 60));
+                    interval.tick().await; // skip first immediate tick
+                    loop {
+                        tokio::select! {
+                            msg = channel.wait() => {
+                                match msg {
+                                    None | Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) => break,
+                                    _ => {}
+                                }
+                            }
+                            _ = interval.tick() => {
+                                let ping = "\r\n\x1b[33m✉ Derpy Hooves stopped by to make sure your tunnel is still up! 🧁\x1b[0m\r\n\r\n";
+                                if ping_handle.data(ch_id, ping.as_bytes().to_vec()).await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                });
+
+                tracing::debug!(%conn_id, ch = %ch_id, "SSH: session channel opened for push messages");
+            }
+            Err(e) => {
+                tracing::debug!(%conn_id, err = %e, "SSH: could not open session channel (client may not support it)");
+            }
+        }
+
+        // Broadcast arrival to all other sessions
+        let connect_msg = format!(
+            "\r\n\x1b[32m📡 {} ({}) connected.\x1b[0m\r\n\r\n",
+            entity_name, entity_type
+        );
+        broadcast(&self.session_registry, &connect_msg, Some(conn_id)).await;
+
+        Ok(())
+    }
+
+    // Accept client-initiated session channels (interactive `ssh` without -N).
+    async fn channel_open_session(
+        &mut self,
+        channel: Channel<Msg>,
+        _session: &mut Session,
+    ) -> Result<bool, Self::Error> {
+        let Some(ref authed) = self.entity else { return Ok(false); };
+        let entity_name = authed.entity.name.as_deref().unwrap_or("(unnamed)").to_string();
+        let entity_type = authed.entity.entity_type.clone();
+        let conn_id = self.conn_id;
+        let ch_id = channel.id();
+
+        // Use this client-opened channel for receiving chat input
+        self.session_channel_id = Some(ch_id);
+
+        // Also update the registry so broadcasts reach this channel
+        if let Some(entry) = self.session_registry.lock().await.get_mut(&conn_id) {
+            entry.session_channel_id = Some(ch_id);
+        }
+
+        tracing::debug!(%conn_id, ch = %ch_id, "SSH: client-initiated session channel accepted");
+
+        // Keep the channel alive in a background task
+        let handle = _session.handle();
+        let welcome = format!(
+            "\r\n\x1b[35m✨ Welcome to tunnel2tunnel, {}! ✨\x1b[0m\r\n\
+             \x1b[34mTwilight Sparkle has verified your access rules — everything checks out.\r\n\
+             The portal stands ready. Your {} connection is now active. 📚\r\n\
+             Type a message and press Enter to chat with other connected entities.\x1b[0m\r\n\r\n",
+            entity_name, entity_type
+        );
+        let _ = handle.data(ch_id, welcome.into_bytes()).await;
+
+        tokio::spawn(async move {
+            let mut ch = channel;
+            loop {
+                match ch.wait().await {
+                    None | Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) => break,
+                    _ => {}
+                }
+            }
+        });
+
+        Ok(true)
+    }
+
     // Server registers a remote port (-R proxy_port:...)
     async fn tcpip_forward(
         &mut self,
@@ -369,11 +533,20 @@ impl Handler for T2tHandler {
             return Ok(false);
         };
         let entity_id = authed.entity.id;
+        let entity_name = authed.entity.name.as_deref().unwrap_or("(unnamed)").to_string();
         tracing::info!(%entity_id, proxy_port = port, "server registered port");
         self.server_slots
             .lock()
             .await
             .insert((entity_id, *port), session.handle());
+
+        // Notify all other sessions
+        let msg = format!(
+            "\r\n\x1b[32m🟢 Port {} on {} is now registered.\x1b[0m\r\n\r\n",
+            port, entity_name
+        );
+        broadcast(&self.session_registry, &msg, Some(self.conn_id)).await;
+
         Ok(true)
     }
 
@@ -386,10 +559,19 @@ impl Handler for T2tHandler {
         let Some(ref authed) = self.entity else {
             return Ok(false);
         };
+        let entity_name = authed.entity.name.as_deref().unwrap_or("(unnamed)").to_string();
         self.server_slots
             .lock()
             .await
             .remove(&(authed.entity.id, port));
+
+        // Notify all other sessions
+        let msg = format!(
+            "\r\n\x1b[31m🔴 Port {} on {} is no longer available.\x1b[0m\r\n\r\n",
+            port, entity_name
+        );
+        broadcast(&self.session_registry, &msg, Some(self.conn_id)).await;
+
         Ok(true)
     }
 
@@ -529,10 +711,30 @@ impl Handler for T2tHandler {
         data: &[u8],
         _session: &mut Session,
     ) -> Result<(), Self::Error> {
+        // Bridge: forward data to the paired channel
         let state = self.bridges.get(&channel).cloned();
         if let Some((handle, ch)) = state {
             let _ = handle.data(ch, data.to_vec()).await;
+            return Ok(());
         }
+
+        // Session channel: relay as chat to all other connected entities
+        if Some(channel) == self.session_channel_id {
+            if let Some(ref authed) = self.entity {
+                let text = String::from_utf8_lossy(data);
+                let text = text.trim_end_matches(['\r', '\n']);
+                if !text.is_empty() {
+                    let entity_name = authed.entity.name.as_deref().unwrap_or("(unnamed)");
+                    let short_id = &authed.entity.id.to_string()[..8];
+                    let msg = format!(
+                        "\r\n\x1b[36m{} ({}): {}\x1b[0m\r\n\r\n",
+                        entity_name, short_id, text
+                    );
+                    broadcast(&self.session_registry, &msg, Some(self.conn_id)).await;
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -569,6 +771,22 @@ impl Drop for T2tHandler {
                 "SSH: connection closed (authenticated)"
             ),
             None => tracing::info!(peer_ip = %self.peer_ip, "SSH: connection closed (unauthenticated)"),
+        }
+
+        // Broadcast disconnect and clean up session registry
+        if let Some(ref authed) = self.entity {
+            let entity_name = authed.entity.name.as_deref().unwrap_or("(unnamed)").to_string();
+            let entity_type = authed.entity.entity_type.clone();
+            let conn_id = self.conn_id;
+            let registry = self.session_registry.clone();
+            tokio::spawn(async move {
+                registry.lock().await.remove(&conn_id);
+                let msg = format!(
+                    "\r\n\x1b[31m🔌 {} ({}) disconnected.\x1b[0m\r\n\r\n",
+                    entity_name, entity_type
+                );
+                broadcast(&registry, &msg, None).await;
+            });
         }
 
         // Clean up server slots when a server entity disconnects
