@@ -205,7 +205,8 @@
       "Bash(git -C /home/user/git/luckydonald/tunnel2tunnel diff:*)",
       "Bash(git -C /home/user/git/luckydonald/tunnel2tunnel show:*)",
       "Bash(git -C /home/user/git/luckydonald/tunnel2tunnel add:*)",
-      "Bash(git -C /home/user/git/luckydonald/tunnel2tunnel commit -F ai/git/pending-commit.md)"
+      "Bash(git -C /home/user/git/luckydonald/tunnel2tunnel commit -F ai/git/pending-commit.md)",
+      "Bash(git -C /home/user/git/luckydonald/tunnel2tunnel reset --soft HEAD~1)"
     ],
     "deny": [
       "Read(**/.env*)",
