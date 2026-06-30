@@ -90,6 +90,16 @@ impl EntityPort {
         .map_err(CoreError::Sqlx)
     }
 
+    pub async fn find_by_id(pool: &PgPool, id: Uuid) -> Result<Option<Self>, CoreError> {
+        sqlx::query_as::<_, EntityPort>(
+            "SELECT * FROM entity_ports WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .map_err(CoreError::Sqlx)
+    }
+
     pub async fn delete(pool: &PgPool, id: Uuid, entity_id: Uuid) -> Result<bool, CoreError> {
         let r = sqlx::query(
             "DELETE FROM entity_ports WHERE id = $1 AND entity_id = $2",

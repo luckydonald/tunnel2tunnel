@@ -81,6 +81,11 @@ pub async fn start(config: WebConfig, pool: PgPool) -> anyhow::Result<()> {
             .post(routes::friends::add_grant))
         .route("/api/friends/{id}/grants/{entity_id}",
             delete(routes::friends::remove_grant))
+        // port discovery (client entities)
+        .route("/api/entities/{entity_id}/reachable-servers",
+            get(routes::entities::list_reachable_servers))
+        .route("/api/entities/{client_id}/port-discovery/{server_port_id}",
+            put(routes::entities::set_port_discovery_state))
         // entity connection logs
         .route("/api/entities/{id}/logs",
             get(routes::entities::list_connection_logs))

@@ -42,6 +42,18 @@ export interface EntityDetail extends Entity {
   ports: EntityPort[]
 }
 
+export type DiscoveryState = 'enabled' | 'disabled'
+
+export interface DiscoveredPort extends EntityPort {
+  discovery_state: DiscoveryState | null
+  client_port_id: string | null
+}
+
+export interface ReachableServer extends Entity {
+  hostname: string | null
+  ports: DiscoveredPort[]
+}
+
 export interface CreateEntityParams {
   entity_type: 'server' | 'client'
   name?: string | null
@@ -144,4 +156,18 @@ export const entitiesApi = {
 
   deletePort: (entityId: string, portId: string) =>
     apiFetch<void>(`/api/entities/${entityId}/ports/${portId}`, { method: 'DELETE' }),
+
+  getReachableServers: (entityId: string) =>
+    apiFetch<ReachableServer[]>(`/api/entities/${entityId}/reachable-servers`),
+
+  setPortDiscoveryState: (
+    clientEntityId: string,
+    serverPortId: string,
+    state: 'auto' | DiscoveryState,
+    localPort?: number,
+  ) =>
+    apiFetch<void>(`/api/entities/${clientEntityId}/port-discovery/${serverPortId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ state, local_port: localPort ?? null }),
+    }),
 }

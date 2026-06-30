@@ -10,6 +10,7 @@ use tunnel2tunnel_core::models::{
     connection_log::ConnectionLog,
     entity::Entity,
     entity_port::EntityPort,
+    entity_port_discovery_rule::EntityPortDiscoveryRule,
     ssh_key::SshKey,
 };
 use crate::{extractors::AuthUser, AppState, WebError};
@@ -376,6 +377,145 @@ pub async fn delete_port(
     } else {
         Err(WebError::NotFound)
     }
+}
+
+// ── Port discovery ────────────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct DiscoveredPortResponse {
+    #[serde(flatten)]
+    pub port: EntityPortResponse,
+    pub discovery_state: Option<String>,
+    pub client_port_id: Option<Uuid>,
+}
+
+#[derive(Serialize)]
+pub struct ReachableServerResponse {
+    #[serde(flatten)]
+    pub entity: EntityResponse,
+    pub hostname: Option<String>,
+    pub ports: Vec<DiscoveredPortResponse>,
+}
+
+#[derive(Deserialize)]
+pub struct SetDiscoveryStateBody {
+    pub state: String,
+    pub local_port: Option<i32>,
+}
+
+pub async fn list_reachable_servers(
+    AuthUser(user): AuthUser,
+    State(state): State<AppState>,
+    Path(entity_id): Path<Uuid>,
+) -> Result<Json<Vec<ReachableServerResponse>>, WebError> {
+    let client = require_owner(&state.db, entity_id, user.id).await?;
+    if client.entity_type != "client" {
+        return Err(WebError::BadRequest("entity must be a client".into()));
+    }
+    let servers = EntityPortDiscoveryRule::list_reachable_for_client(
+        &state.db, entity_id, user.id,
+    )
+    .await?;
+    let response = servers
+        .into_iter()
+        .map(|s| ReachableServerResponse {
+            entity: EntityResponse::from(s.entity),
+            hostname: s.hostname,
+            ports: s
+                .ports
+                .into_iter()
+                .map(|dp| DiscoveredPortResponse {
+                    port: EntityPortResponse::from(dp.port),
+                    discovery_state: dp.discovery_state,
+                    client_port_id: dp.client_port_id,
+                })
+                .collect(),
+        })
+        .collect();
+    Ok(Json(response))
+}
+
+pub async fn set_port_discovery_state(
+    AuthUser(user): AuthUser,
+    State(state): State<AppState>,
+    Path((client_id, server_port_id)): Path<(Uuid, Uuid)>,
+    Json(b): Json<SetDiscoveryStateBody>,
+) -> Result<StatusCode, WebError> {
+    let client = require_owner(&state.db, client_id, user.id).await?;
+    if client.entity_type != "client" {
+        return Err(WebError::BadRequest("entity must be a client".into()));
+    }
+    match b.state.as_str() {
+        "auto" => {
+            if let Some(rule) =
+                EntityPortDiscoveryRule::delete(&state.db, client_id, server_port_id).await?
+            {
+                if rule.state == "enabled" {
+                    if let Some(cid) = rule.client_port_id {
+                        EntityPort::delete(&state.db, cid, client_id).await?;
+                    }
+                }
+            }
+        }
+        "enabled" => {
+            let local_port = b
+                .local_port
+                .ok_or_else(|| WebError::BadRequest("local_port required for 'enabled'".into()))?;
+            let server_port = EntityPort::find_by_id(&state.db, server_port_id)
+                .await?
+                .ok_or(WebError::NotFound)?;
+            // Remove previous client port if re-enabling
+            if let Some(existing) =
+                EntityPortDiscoveryRule::find(&state.db, client_id, server_port_id).await?
+            {
+                if existing.state == "enabled" {
+                    if let Some(cid) = existing.client_port_id {
+                        EntityPort::delete(&state.db, cid, client_id).await?;
+                    }
+                }
+            }
+            let client_port = EntityPort::create(
+                &state.db,
+                client_id,
+                true,
+                local_port,
+                server_port.proxy_port,
+                server_port.name.as_deref(),
+                server_port.description.as_deref(),
+                server_port.sort_order,
+            )
+            .await?;
+            EntityPortDiscoveryRule::upsert(
+                &state.db,
+                client_id,
+                server_port_id,
+                "enabled",
+                Some(client_port.id),
+            )
+            .await?;
+        }
+        "disabled" => {
+            if let Some(existing) =
+                EntityPortDiscoveryRule::find(&state.db, client_id, server_port_id).await?
+            {
+                if existing.state == "enabled" {
+                    if let Some(cid) = existing.client_port_id {
+                        EntityPort::delete(&state.db, cid, client_id).await?;
+                    }
+                }
+            }
+            EntityPortDiscoveryRule::upsert(
+                &state.db, client_id, server_port_id, "disabled", None,
+            )
+            .await?;
+        }
+        _ => {
+            return Err(WebError::BadRequest(
+                "state must be 'auto', 'enabled', or 'disabled'".into(),
+            ))
+        }
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // ── Connection log ────────────────────────────────────────────────────────────

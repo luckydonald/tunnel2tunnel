@@ -5,7 +5,7 @@ import AppShell from '@/components/AppShell.vue'
 import EntityName from '@/components/EntityName.vue'
 import PubkeyInput, { type ParsedKey } from '@/components/PubkeyInput.vue'
 import SshCommandDisplay from '@/components/SshCommandDisplay.vue'
-import { entitiesApi, type Entity, type EntityDetail, type EntityPort } from '@/api/entities'
+import { entitiesApi, type Entity, type EntityDetail, type EntityPort, type ReachableServer } from '@/api/entities'
 import { friendsApi, type AccessRule, type Friendship } from '@/api/friends'
 import { adminApi, type ConnLog } from '@/api/admin'
 import { subjectTypeLabel, subjectTypeOptions } from '@/labels'
@@ -18,6 +18,8 @@ const entityId = route.params.id as string
 const entity = ref<EntityDetail | null>(null)
 const loading = ref(true)
 const pageError = ref<string | null>(null)
+
+const reachableServers = ref<ReachableServer[]>([])
 
 // SSH key form
 const showAddKey = ref(false)
@@ -41,16 +43,40 @@ function defaultFilename(name: string | null, type: string): string {
   return 't2t_' + base.toLowerCase().replace(/[^a-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '')
 }
 
+async function loadReachableServers(): Promise<void> {
+  try {
+    reachableServers.value = await entitiesApi.getReachableServers(entityId)
+  } catch {
+    // non-critical; discovery section stays empty
+  }
+}
+
 async function load(): Promise<void> {
   try {
     entity.value = await entitiesApi.getEntity(entityId)
     if (!keyFilename.value) {
       keyFilename.value = defaultFilename(entity.value.name, entity.value.entity_type)
     }
+    if (entity.value.entity_type === 'client') {
+      await loadReachableServers()
+    }
   } catch (e) {
     pageError.value = e instanceof Error ? e.message : 'Failed to load entity'
   } finally {
     loading.value = false
+  }
+}
+
+async function handleDiscoveryStateChange(
+  serverPortId: string,
+  state: 'auto' | 'enabled' | 'disabled',
+  localPort?: number,
+): Promise<void> {
+  try {
+    await entitiesApi.setPortDiscoveryState(entityId, serverPortId, state, localPort)
+    await Promise.all([load(), loadReachableServers()])
+  } catch (e) {
+    alert(e instanceof Error ? e.message : 'Failed to update discovery state')
   }
 }
 
@@ -297,7 +323,13 @@ async function handleDeleteEntity(): Promise<void> {
       <!-- SSH command + ports overview -->
       <section class="section">
         <h2>SSH Command</h2>
-        <SshCommandDisplay :entity="entity" :ports="entity.ports" :filename="keyFilename" />
+        <SshCommandDisplay
+          :entity="entity"
+          :ports="entity.ports"
+          :filename="keyFilename"
+          :reachable-servers="reachableServers"
+          @discovery-state-change="handleDiscoveryStateChange"
+        />
       </section>
 
       <!-- Ports management -->

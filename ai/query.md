@@ -318,3 +318,15 @@ These shall be able to be accepted or denied; the default is to include them; re
 > - [Raw log (`206154` chars, `205 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/d15155a6-419b-41d2-a891-d244de162112/tasks/af6236911407bc65e.output)
 > - `20` tools, `37548` tokens, `0.833067 s`
 
+❯ I want it to persist the checkbox setting (null/true/false - auto/enabled/disabled - where enabled means a port is configured (same as & appears in  port section below) - it is persisted outside of automatic discovery; disabled means to ignore that automatic port discovery; and null means no setting - it will be added/removed based on discovery. A <kbd>x</kbd> button allows to remove a discovery rule again, detaching it/setting it to null.
+You don't need to use the exact true/false/null representation, instead true could be the existing port config matching up with auto-discovery.
+
+❯ Task Notification:
+> - Task `a1533a9b9ee014ed8` <kbd>completed</kbd>
+> - Tool `toolu_01PNCWtXkVhm9db6LitJ48kw`
+> - > Agent "Read key implementation files for context" finished
+> - [Query (`1208` chars, `1.18 KB`)](output/agents/007.a1533a9b9ee014ed8/prompt.md)
+> - [Answer (`5549` chars, `5.45 KB`)](output/agents/007.a1533a9b9ee014ed8/result.md)
+> - [Raw log (`185950` chars, `183 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/d15155a6-419b-41d2-a891-d244de162112/tasks/a1533a9b9ee014ed8.output)
+> - `11` tools, `39023` tokens, `0.34045 s`
+
