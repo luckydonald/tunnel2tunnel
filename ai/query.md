@@ -289,3 +289,11 @@ Error: docker-compose: no port specified: <empty>
 
 ❯ Fix @~/Downloads/deployment-mqdcsgy6d7evme4w286dz0kb-all-logs-2026-06-29-08-44-47.txt
 
+❯ Fix @~/Downloads/deployment-tuwpljk1h3jhau8a229tp3zp-all-logs-2026-06-29-23-59-48.txt
+
+❯ it's coolify-hosted
+
+❯ @~/Downloads/db-d5oteit4omkq577f6j4r3rd9-000245033027-all-logs-2026-06-30-00-12-37.txt
+
+❯ Remove the password default, if none is set, it shall error indeed. What's `-q` do?
+
