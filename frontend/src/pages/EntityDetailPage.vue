@@ -10,6 +10,9 @@ import { friendsApi, type AccessRule, type Friendship } from '@/api/friends'
 import { adminApi, type ConnLog } from '@/api/admin'
 import { subjectTypeLabel, subjectTypeOptions } from '@/labels'
 import { useAuthStore } from '@/stores/auth'
+import { useToast } from '@/composables/useToast'
+
+const { show: toast } = useToast()
 
 const route = useRoute()
 const router = useRouter()
@@ -78,7 +81,7 @@ async function handleDiscoveryStateChange(
     await entitiesApi.setPortDiscoveryState(entityId, serverPortId, state, localPort)
     await Promise.all([load(), loadReachableServers()])
   } catch (e) {
-    alert(e instanceof Error ? e.message : 'Failed to update discovery state')
+    toast(e instanceof Error ? e.message : 'Failed to update discovery state')
   }
 }
 
@@ -112,7 +115,7 @@ async function handleDeleteKey(keyId: string): Promise<void> {
     await entitiesApi.deleteKey(entityId, keyId)
     if (entity.value) entity.value.ssh_keys = entity.value.ssh_keys.filter(k => k.id !== keyId)
   } catch (e) {
-    alert(e instanceof Error ? e.message : 'Failed to delete key')
+    toast(e instanceof Error ? e.message : 'Failed to delete key')
   }
 }
 
@@ -128,7 +131,7 @@ async function handleAddPort(): Promise<void> {
     showAddPort.value = false
     newPort.value = { enabled: true, local_port: 8080, proxy_port: 8080, name: '', sort_order: 0, host: 'localhost', server_entity_id: null }
   } catch (e) {
-    alert(e instanceof Error ? e.message : 'Failed to add port')
+    toast(e instanceof Error ? e.message : 'Failed to add port')
   } finally {
     addingPort.value = false
   }
@@ -151,7 +154,7 @@ async function handleUpdatePort(port: EntityPort): Promise<void> {
       if (idx >= 0) entity.value.ports[idx] = updated
     }
   } catch (e) {
-    alert(e instanceof Error ? e.message : 'Failed to update port')
+    toast(e instanceof Error ? e.message : 'Failed to update port')
   }
 }
 
@@ -161,7 +164,7 @@ async function handleDeletePort(portId: string): Promise<void> {
     await entitiesApi.deletePort(entityId, portId)
     if (entity.value) entity.value.ports = entity.value.ports.filter(p => p.id !== portId)
   } catch (e) {
-    alert(e instanceof Error ? e.message : 'Failed to delete port')
+    toast(e instanceof Error ? e.message : 'Failed to delete port')
   }
 }
 
@@ -197,7 +200,7 @@ async function loadAccess(): Promise<void> {
     accessRules.value = await friendsApi.listAccess(entityId)
     accessLoaded.value = true
   } catch (e) {
-    alert(e instanceof Error ? e.message : 'Failed to load access rules')
+    toast(e instanceof Error ? e.message : 'Failed to load access rules')
   }
 }
 
@@ -257,7 +260,7 @@ async function handleAddAccess(): Promise<void> {
     showAddAccess.value = false
     newAccess.value = blankAccess()
   } catch (e) {
-    alert(e instanceof Error ? e.message : 'Failed to add access rule')
+    toast(e instanceof Error ? e.message : 'Failed to add access rule')
   } finally {
     addingAccess.value = false
   }
@@ -269,7 +272,7 @@ async function handleDeleteAccess(ruleId: string): Promise<void> {
     await friendsApi.deleteAccess(entityId, ruleId)
     accessRules.value = accessRules.value.filter(r => r.id !== ruleId)
   } catch (e) {
-    alert(e instanceof Error ? e.message : 'Failed to delete rule')
+    toast(e instanceof Error ? e.message : 'Failed to delete rule')
   }
 }
 
@@ -299,7 +302,7 @@ async function loadConnLogs(): Promise<void> {
     connLogs.value = await adminApi.listConnectionLogs(entityId)
     logsLoaded.value = true
   } catch (e) {
-    alert(e instanceof Error ? e.message : 'Failed to load logs')
+    toast(e instanceof Error ? e.message : 'Failed to load logs')
   } finally {
     logsLoading.value = false
   }
@@ -311,7 +314,7 @@ async function handleDeleteEntity(): Promise<void> {
     await entitiesApi.deleteEntity(entityId)
     await router.push({ name: 'entities' })
   } catch (e) {
-    alert(e instanceof Error ? e.message : 'Failed to delete entity')
+    toast(e instanceof Error ? e.message : 'Failed to delete entity')
   }
 }
 </script>

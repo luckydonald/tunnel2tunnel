@@ -7,7 +7,9 @@ import { friendsApi, type EntityGrant } from '@/api/friends'
 import { useEntitiesStore } from '@/stores/entities'
 import type { Friendship } from '@/api/friends'
 import { visibilityGrantOptions, friendshipStatusLabel } from '@/labels'
+import { useToast } from '@/composables/useToast'
 
+const { show: toast } = useToast()
 const auth = useAuthStore()
 const store = useFriendsStore()
 const entitiesStore = useEntitiesStore()
@@ -48,7 +50,7 @@ async function handleUpdate(
   try {
     await store.updateFriendship(f.id, patch)
   } catch (e) {
-    alert(e instanceof Error ? e.message : 'Failed to update')
+    toast(e instanceof Error ? e.message : 'Failed to update')
   }
 }
 
@@ -73,7 +75,7 @@ async function handleAddGrant(): Promise<void> {
     grants.value.push(g)
     grantEntityId.value = ''
   } catch (e) {
-    alert(e instanceof Error ? e.message : 'Failed to add grant')
+    toast(e instanceof Error ? e.message : 'Failed to add grant')
   }
 }
 
@@ -83,7 +85,7 @@ async function handleRemoveGrant(entity_id: string): Promise<void> {
     await friendsApi.removeGrant(expandedId.value, entity_id)
     grants.value = grants.value.filter(g => g.entity_id !== entity_id)
   } catch (e) {
-    alert(e instanceof Error ? e.message : 'Failed to remove grant')
+    toast(e instanceof Error ? e.message : 'Failed to remove grant')
   }
 }
 

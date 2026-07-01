@@ -4,6 +4,9 @@ import { useRouter } from 'vue-router'
 import AppShell from '@/components/AppShell.vue'
 import EntityName from '@/components/EntityName.vue'
 import { useEntitiesStore } from '@/stores/entities'
+import { useToast } from '@/composables/useToast'
+
+const { show: toast } = useToast()
 
 const props = defineProps<{
   entityType?: 'server' | 'client'
@@ -50,7 +53,7 @@ async function handleDelete(id: string): Promise<void> {
   try {
     await store.deleteEntity(id)
   } catch (e) {
-    alert(e instanceof Error ? e.message : 'Failed to delete')
+    toast(e instanceof Error ? e.message : 'Failed to delete')
   }
 }
 
