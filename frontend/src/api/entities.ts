@@ -33,6 +33,7 @@ export interface EntityPort {
   name: string | null
   description: string | null
   sort_order: number
+  host: string
   server_entity_id: string | null
   created_at: string
   updated_at: string
@@ -85,6 +86,7 @@ export interface CreatePortParams {
   name?: string | null
   description?: string | null
   sort_order?: number
+  host?: string
   server_entity_id?: string | null
 }
 
@@ -95,6 +97,7 @@ export interface UpdatePortParams {
   name?: string | null
   description?: string | null
   sort_order: number
+  host?: string
   server_entity_id?: string | null
 }
 

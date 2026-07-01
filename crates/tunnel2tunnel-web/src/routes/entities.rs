@@ -59,6 +59,7 @@ pub struct CreatePortBody {
     pub name: Option<String>,
     pub description: Option<String>,
     pub sort_order: Option<i32>,
+    pub host: Option<String>,
     pub server_entity_id: Option<Uuid>,
 }
 
@@ -70,6 +71,7 @@ pub struct UpdatePortBody {
     pub name: Option<String>,
     pub description: Option<String>,
     pub sort_order: i32,
+    pub host: Option<String>,
     pub server_entity_id: Option<Uuid>,
 }
 
@@ -155,6 +157,7 @@ pub struct EntityPortResponse {
     pub name: Option<String>,
     pub description: Option<String>,
     pub sort_order: i32,
+    pub host: String,
     pub server_entity_id: Option<Uuid>,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
@@ -173,6 +176,7 @@ impl From<EntityPort> for EntityPortResponse {
             name: p.name,
             description: p.description,
             sort_order: p.sort_order,
+            host: p.host,
             server_entity_id: p.server_entity_id,
             created_at: p.ts.created_at,
             updated_at: p.ts.updated_at,
@@ -342,6 +346,7 @@ pub async fn create_port(
         b.name.as_deref(),
         b.description.as_deref(),
         b.sort_order.unwrap_or(0),
+        b.host.as_deref().unwrap_or("localhost"),
         b.server_entity_id,
     )
     .await?;
@@ -365,6 +370,7 @@ pub async fn update_port(
         b.name.as_deref(),
         b.description.as_deref(),
         b.sort_order,
+        b.host.as_deref().unwrap_or("localhost"),
         b.server_entity_id,
     )
     .await?
@@ -489,6 +495,7 @@ pub async fn set_port_discovery_state(
                 server_port.name.as_deref(),
                 server_port.description.as_deref(),
                 server_port.sort_order,
+                "localhost",
                 Some(server_port.entity_id),
             )
             .await?;

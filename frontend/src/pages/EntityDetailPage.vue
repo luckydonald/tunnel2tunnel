@@ -35,7 +35,7 @@ watch(keyFilename, v => localStorage.setItem(FILENAME_LS_KEY, v))
 
 // Port form
 const showAddPort = ref(false)
-const newPort = ref({ enabled: true, local_port: 8080, proxy_port: 8080, name: '', sort_order: 0, server_entity_id: null as string | null })
+const newPort = ref({ enabled: true, local_port: 8080, proxy_port: 8080, name: '', sort_order: 0, host: 'localhost', server_entity_id: null as string | null })
 const addingPort = ref(false)
 
 function defaultFilename(name: string | null, type: string): string {
@@ -126,7 +126,7 @@ async function handleAddPort(): Promise<void> {
     })
     entity.value.ports.push(port)
     showAddPort.value = false
-    newPort.value = { enabled: true, local_port: 8080, proxy_port: 8080, name: '', sort_order: 0, server_entity_id: null }
+    newPort.value = { enabled: true, local_port: 8080, proxy_port: 8080, name: '', sort_order: 0, host: 'localhost', server_entity_id: null }
   } catch (e) {
     alert(e instanceof Error ? e.message : 'Failed to add port')
   } finally {
@@ -143,6 +143,7 @@ async function handleUpdatePort(port: EntityPort): Promise<void> {
       name: port.name,
       description: port.description,
       sort_order: port.sort_order,
+      host: port.host,
       server_entity_id: port.server_entity_id,
     })
     if (entity.value) {
@@ -362,6 +363,7 @@ async function handleDeleteEntity(): Promise<void> {
               <th>Enabled</th>
               <th>Local port</th>
               <th>Proxy port</th>
+              <th v-if="entity.entity_type === 'server'">Host</th>
               <th>Name</th>
               <th>Order</th>
               <th></th>
@@ -386,6 +388,12 @@ async function handleDeleteEntity(): Promise<void> {
                 <input
                   type="number" class="port-num" :value="port.proxy_port" min="1" max="65535" list="common-ports"
                   @blur="port.proxy_port = +($event.target as HTMLInputElement).value; handleUpdatePort(port)"
+                />
+              </td>
+              <td v-if="entity.entity_type === 'server'">
+                <input
+                  type="text" class="port-host" :value="port.host"
+                  @blur="port.host = ($event.target as HTMLInputElement).value || 'localhost'; handleUpdatePort(port)"
                 />
               </td>
               <td>
@@ -429,6 +437,9 @@ async function handleDeleteEntity(): Promise<void> {
         <div v-if="showAddPort" class="add-port-form">
           <input v-model.number="newPort.local_port" type="number" class="port-num" placeholder="Local" min="1" max="65535" list="common-ports" />
           <input v-model.number="newPort.proxy_port" type="number" class="port-num" placeholder="Proxy" min="1" max="65535" list="common-ports" />
+          <template v-if="entity.entity_type === 'server'">
+            <input v-model="newPort.host" type="text" class="port-host" placeholder="Host (default: localhost)" />
+          </template>
           <input v-model="newPort.name" type="text" class="port-name" placeholder="Name (optional)" />
           <label class="checkbox-label">
             <input v-model="newPort.enabled" type="checkbox" /> Enabled
@@ -709,8 +720,9 @@ async function handleDeleteEntity(): Promise<void> {
 .port-num   { width: 70px; }
 .port-name  { width: 120px; }
 .port-order { width: 55px; }
+.port-host  { width: 140px; }
 
-.port-num, .port-name, .port-order {
+.port-num, .port-name, .port-order, .port-host {
   padding: 0.25rem 0.375rem; background: #0f1117; border: 1px solid #2d3248;
   border-radius: 3px; color: #e2e8f0; font-size: 0.875rem;
   &:focus { outline: none; border-color: #4f6ef7; }

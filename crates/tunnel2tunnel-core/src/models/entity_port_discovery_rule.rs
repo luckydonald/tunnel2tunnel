@@ -87,6 +87,7 @@ struct DiscoveryPortRow {
     name: Option<String>,
     description: Option<String>,
     sort_order: i32,
+    host: String,
     server_entity_id: Option<Uuid>,
     created_at: OffsetDateTime,
     updated_at: OffsetDateTime,
@@ -105,6 +106,7 @@ impl DiscoveryPortRow {
             name: self.name,
             description: self.description,
             sort_order: self.sort_order,
+            host: self.host,
             server_entity_id: self.server_entity_id,
             ts: Timestamps { created_at: self.created_at, updated_at: self.updated_at },
         };

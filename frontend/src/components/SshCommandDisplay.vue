@@ -63,7 +63,7 @@ const discoveryFlags = computed((): DiscoveryFlag[] => {
 
 function portFlag(port: EntityPort): string {
   if (props.entity.entity_type === 'server') {
-    return `-R ${port.proxy_port}:localhost:${port.local_port}`
+    return `-R ${port.proxy_port}:${port.host}:${port.local_port}`
   }
   if (port.server_entity_id) {
     const server = servers.value.find(s => s.id === port.server_entity_id)

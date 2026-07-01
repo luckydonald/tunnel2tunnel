@@ -14,6 +14,9 @@ pub struct EntityPort {
     pub name: Option<String>,
     pub description: Option<String>,
     pub sort_order: i32,
+    /// For server-side ports: the host to forward connections to (default: "localhost").
+    /// Lets you expose a service on another machine reachable from the server entity.
+    pub host: String,
     /// For client-side ports: the server entity this tunnel routes through.
     /// `None` for server-side ports or pre-migration ports.
     pub server_entity_id: Option<Uuid>,
@@ -42,13 +45,14 @@ impl EntityPort {
         name: Option<&str>,
         description: Option<&str>,
         sort_order: i32,
+        host: &str,
         server_entity_id: Option<Uuid>,
     ) -> Result<Self, CoreError> {
         let id = Uuid::now_v7();
         sqlx::query_as::<_, EntityPort>(
             "INSERT INTO entity_ports \
-               (id, entity_id, enabled, local_port, proxy_port, name, description, sort_order, server_entity_id) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
+               (id, entity_id, enabled, local_port, proxy_port, name, description, sort_order, host, server_entity_id) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) \
              RETURNING *",
         )
         .bind(id)
@@ -59,6 +63,7 @@ impl EntityPort {
         .bind(name)
         .bind(description)
         .bind(sort_order)
+        .bind(host)
         .bind(server_entity_id)
         .fetch_one(pool)
         .await
@@ -75,12 +80,13 @@ impl EntityPort {
         name: Option<&str>,
         description: Option<&str>,
         sort_order: i32,
+        host: &str,
         server_entity_id: Option<Uuid>,
     ) -> Result<Option<Self>, CoreError> {
         sqlx::query_as::<_, EntityPort>(
             "UPDATE entity_ports \
              SET enabled=$3, local_port=$4, proxy_port=$5, name=$6, description=$7, \
-                 sort_order=$8, server_entity_id=$9 \
+                 sort_order=$8, host=$9, server_entity_id=$10 \
              WHERE id = $1 AND entity_id = $2 \
              RETURNING *",
         )
@@ -92,6 +98,7 @@ impl EntityPort {
         .bind(name)
         .bind(description)
         .bind(sort_order)
+        .bind(host)
         .bind(server_entity_id)
         .fetch_optional(pool)
         .await
