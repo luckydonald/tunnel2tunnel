@@ -586,11 +586,14 @@ async function handleDeleteEntity(): Promise<void> {
               <tr v-for="rule in accessRules" :key="rule.id">
                 <td>{{ subjectTypeLabel[rule.subject_type] }}</td>
                 <td>
-                  <template v-if="rule.subject_entity_id">
-                    <code class="fp" :title="rule.subject_entity_id">
-                      {{ entityNameMap.get(rule.subject_entity_id) ?? rule.subject_entity_id }}
-                    </code>
-                  </template>
+                  <RouterLink
+                    v-if="rule.subject_entity_id"
+                    :to="'/entities/' + rule.subject_entity_id"
+                    :title="rule.subject_entity_id"
+                    class="entity-link"
+                  >
+                    {{ entityNameMap.get(rule.subject_entity_id) ?? rule.subject_entity_id.slice(0, 13) + '…' }}
+                  </RouterLink>
                   <span v-else>—</span>
                 </td>
                 <td>
