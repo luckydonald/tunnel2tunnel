@@ -25,8 +25,8 @@
 
 Implement as separate commit (see @ai/skills/commit-with-lplp-style/SKILL.md) for each task:
 
-- [ ] The link in the `Incoming Grants` change the URL correctly, but the page stays as is. So the router failes to switch or something.
-- [ ] For the serverside, allow to set a different host than `localhost`, i.e. for sharing a different computer's access. Table default shall stay `localhost`.
-- [ ] Access Rules should be links to the entities as well.
-- [ ] Don't use `alert()` to do frontend error reporting (especially failed network requests), use toasts and sentry logging instead.
+- [x] The link in the `Incoming Grants` change the URL correctly, but the page stays as is. So the router failes to switch or something.
+- [x] For the serverside, allow to set a different host than `localhost`, i.e. for sharing a different computer's access. Table default shall stay `localhost`.
+- [x] Access Rules should be links to the entities as well.
+- [x] Don't use `alert()` to do frontend error reporting (especially failed network requests), use toasts and sentry logging instead.
 

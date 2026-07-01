@@ -372,3 +372,11 @@ Encrypt it via `SSH_T2T_KEY_PASSWORD` env var - again using the coolify magic va
 > - [Raw log (`269736` chars, `265 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/4e03ed8c-f268-407f-a241-415199236b9b/tasks/ac46c306f479fe8f6.output)
 > - `12` tools, `48331` tokens, `0.7359 s`
 
+❯ Implement as separate commit (see @ai/skills/commit-with-lplp-style/SKILL.md) for each task:
+
+- [ ] The link in the `Incoming Grants` change the URL correctly, but the page stays as is. So the router failes to switch or something.
+- [ ] For the serverside, allow to set a different host than `localhost`, i.e. for sharing a different computer's access. Table default shall stay `localhost`.
+- [ ] Access Rules should be links to the entities as well.
+- [ ] Don't use `alert()` to do frontend error reporting (especially failed network requests), use toasts and sentry logging instead.
+
+
