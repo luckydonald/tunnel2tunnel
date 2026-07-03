@@ -380,3 +380,24 @@ Encrypt it via `SSH_T2T_KEY_PASSWORD` env var - again using the coolify magic va
 - [ ] Don't use `alert()` to do frontend error reporting (especially failed network requests), use toasts and sentry logging instead.
 
 
+❯ Alright, login doesn't seem to really work?
+You can try yourself:
+```shell
+ ssh -N \
+   -i ~/.ssh/${T2T_NAME} \
+   -R 5900:localhost:5900 \
+   "${T2T_UUID}@${T2T_HOST}" \
+   -p 2222
+```
+
+❯ Task Notification:
+> - Task `a36afc7a4bb87eadf` <kbd>completed</kbd>
+> - Tool `toolu_019ovPu87Aoziyksiv2tfBtR`
+> - > Agent "Explore SSH server auth flow code" finished
+> - [Query (`2160` chars, `2.13 KB`)](output/agents/008.a36afc7a4bb87eadf/prompt.md)
+> - [Answer (`12251` chars, `12 KB`)](output/agents/008.a36afc7a4bb87eadf/result.md)
+> - [Raw log (`336911` chars, `331 KB`)](/private/tmp/claude-501/-Users-user-Documents-programming-Rust-tunnel2tunnel/bfbc86ac-21e5-492c-bc97-ffec5840d624/tasks/a36afc7a4bb87eadf.output)
+> - `31` tools, `63019` tokens, `5.81138 s`
+
+❯ deployment is in cloud after lplp-style commit
+

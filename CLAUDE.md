@@ -191,6 +191,7 @@ Produces a correct OpenSSH wire-format private key (`openssh-key-v1\0`, unencryp
 
 - **Axum 0.8 routes**: use `{param}` not `:param` — the server panics on startup otherwise.
 - **russh `Auth::Reject`**: must include `partial_success: false` field (required in 0.61).
+- **russh `Handle` confirmation calls** (e.g. `channel_open_session()`): must be `tokio::spawn`ed, never `.await`ed inline from a `Handler` callback (e.g. `auth_succeeded`) — the confirmation round-trips through that same connection's single-task event loop, so awaiting it synchronously inside the callback deadlocks permanently.
 - **`Timestamps` vs `TimestampsSoftDelete`**: see struct table above — wrong nesting causes SQLx compile errors.
 - **tower-sessions versions**: `0.14` + `0.15` pair is required; mismatching breaks the session store trait.
 - **Docker Desktop not available**: use Podman (`/usr/bin/podman`). No daemon needed.

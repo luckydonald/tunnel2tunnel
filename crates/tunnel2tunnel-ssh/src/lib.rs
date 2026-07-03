@@ -134,7 +134,6 @@ impl Server for T2tServer {
             entity: None,
             bridges: HashMap::new(),
             log_id: None,
-            session_channel_id: None,
         }
     }
 }
@@ -159,8 +158,6 @@ struct T2tHandler {
     entity: Option<AuthedEntity>,
     bridges: HashMap<ChannelId, (Handle, ChannelId)>,
     log_id: Option<Uuid>,
-    /// Server-initiated session channel used for push messages (welcome, ping, notifications).
-    session_channel_id: Option<ChannelId>,
 }
 
 impl T2tHandler {
@@ -415,56 +412,64 @@ impl Handler for T2tHandler {
             });
         }
 
-        // Try to open a server-initiated session channel to the client for push messages.
-        match handle.channel_open_session().await {
-            Ok(ch) => {
-                let ch_id = ch.id();
-                self.session_channel_id = Some(ch_id);
+        // Open a server-initiated session channel to the client for push messages, in the
+        // background. `channel_open_session()` awaits a confirmation that round-trips
+        // through this same connection's single-task event loop — awaiting it inline here
+        // (still inside that loop's packet dispatch) would deadlock permanently, since the
+        // loop can never get back around to servicing its own request.
+        let registry = self.session_registry.clone();
+        let welcome_entity_name = entity_name.clone();
+        let welcome_entity_type = entity_type.clone();
+        tokio::spawn(async move {
+            match handle.channel_open_session().await {
+                Ok(ch) => {
+                    let ch_id = ch.id();
 
-                // Update registry entry with channel id
-                if let Some(entry) = self.session_registry.lock().await.get_mut(&conn_id) {
-                    entry.session_channel_id = Some(ch_id);
-                }
+                    // Update registry entry with channel id
+                    if let Some(entry) = registry.lock().await.get_mut(&conn_id) {
+                        entry.session_channel_id = Some(ch_id);
+                    }
 
-                // Send welcome message
-                let welcome = format!(
-                    "\r\n\x1b[35m✨ Welcome to tunnel2tunnel, {}! ✨\x1b[0m\r\n\
-                     \x1b[34mTwilight Sparkle has verified your access rules — everything checks out.\r\n\
-                     The portal stands ready. Your {} connection is now active. 📚\x1b[0m\r\n\r\n",
-                    entity_name, entity_type
-                );
-                let _ = handle.data(ch_id, welcome.into_bytes()).await;
+                    // Send welcome message
+                    let welcome = format!(
+                        "\r\n\x1b[35m✨ Welcome to tunnel2tunnel, {}! ✨\x1b[0m\r\n\
+                         \x1b[34mTwilight Sparkle has verified your access rules — everything checks out.\r\n\
+                         The portal stands ready. Your {} connection is now active. 📚\x1b[0m\r\n\r\n",
+                        welcome_entity_name, welcome_entity_type
+                    );
+                    let _ = handle.data(ch_id, welcome.into_bytes()).await;
 
-                // Spawn task: keep channel alive and send periodic Derpy pings
-                let ping_handle = handle.clone();
-                tokio::spawn(async move {
-                    let mut channel = ch;
-                    let mut interval = tokio::time::interval(Duration::from_secs(5 * 60));
-                    interval.tick().await; // skip first immediate tick
-                    loop {
-                        tokio::select! {
-                            msg = channel.wait() => {
-                                match msg {
-                                    None | Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) => break,
-                                    _ => {}
+                    // Spawn task: keep channel alive and send periodic Derpy pings
+                    let ping_handle = handle.clone();
+                    tokio::spawn(async move {
+                        let mut channel = ch;
+                        let mut interval = tokio::time::interval(Duration::from_secs(5 * 60));
+                        interval.tick().await; // skip first immediate tick
+                        loop {
+                            tokio::select! {
+                                msg = channel.wait() => {
+                                    match msg {
+                                        None | Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) => break,
+                                        _ => {}
+                                    }
                                 }
-                            }
-                            _ = interval.tick() => {
-                                let ping = "\r\n\x1b[33m✉ Derpy Hooves stopped by to make sure your tunnel is still up! 🧁\x1b[0m\r\n\r\n";
-                                if ping_handle.data(ch_id, ping.as_bytes().to_vec()).await.is_err() {
-                                    break;
+                                _ = interval.tick() => {
+                                    let ping = "\r\n\x1b[33m✉ Derpy Hooves stopped by to make sure your tunnel is still up! 🧁\x1b[0m\r\n\r\n";
+                                    if ping_handle.data(ch_id, ping.as_bytes().to_vec()).await.is_err() {
+                                        break;
+                                    }
                                 }
                             }
                         }
-                    }
-                });
+                    });
 
-                tracing::debug!(%conn_id, ch = %ch_id, "SSH: session channel opened for push messages");
+                    tracing::debug!(%conn_id, ch = %ch_id, "SSH: session channel opened for push messages");
+                }
+                Err(e) => {
+                    tracing::debug!(%conn_id, err = %e, "SSH: could not open session channel (client may not support it)");
+                }
             }
-            Err(e) => {
-                tracing::debug!(%conn_id, err = %e, "SSH: could not open session channel (client may not support it)");
-            }
-        }
+        });
 
         // Broadcast arrival to all other sessions
         let connect_msg = format!(
@@ -488,10 +493,8 @@ impl Handler for T2tHandler {
         let conn_id = self.conn_id;
         let ch_id = channel.id();
 
-        // Use this client-opened channel for receiving chat input
-        self.session_channel_id = Some(ch_id);
-
-        // Also update the registry so broadcasts reach this channel
+        // Use this client-opened channel for receiving chat input.
+        // Update the registry so broadcasts reach this channel
         if let Some(entry) = self.session_registry.lock().await.get_mut(&conn_id) {
             entry.session_channel_id = Some(ch_id);
         }
@@ -719,7 +722,13 @@ impl Handler for T2tHandler {
         }
 
         // Session channel: relay as chat to all other connected entities
-        if Some(channel) == self.session_channel_id {
+        let session_channel = self
+            .session_registry
+            .lock()
+            .await
+            .get(&self.conn_id)
+            .and_then(|e| e.session_channel_id);
+        if session_channel == Some(channel) {
             if let Some(ref authed) = self.entity {
                 let text = String::from_utf8_lossy(data);
                 let text = text.trim_end_matches(['\r', '\n']);
