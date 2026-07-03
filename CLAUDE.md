@@ -71,6 +71,7 @@ Browse to `http://localhost:3000`. Login: `admin` / `changeme`.
 | Timestamps | `time = "0.3"` with `serde-well-known`; `#[serde(with = "time::serde::rfc3339")]` for ISO 8601 |
 | Password hashing | `argon2 = "0.5"` |
 | IP whitelist | Custom evaluator in `tunnel2tunnel-core/src/ip_whitelist.rs`; CIDR (`ipnetwork`), glob (`glob`), regex (`regex`), `!` prefix = deny; top-to-bottom first-match |
+| Sentry | `sentry = "0.48.3"`; init lives in `crates/t2t/src/sentry.rs`, called from `main()` before the tokio runtime starts (no `#[tokio::main]`); `sentry-tower`'s `NewSentryLayer`/`SentryHttpLayer` wrap the axum router in `tunnel2tunnel-web/src/lib.rs` for request-correlated error capture. No `dist` field on `ClientOptions` in this version — build time is set as a scope tag instead. |
 
 ### Timestamp model structs — critical distinction
 
@@ -136,6 +137,14 @@ pub struct TimestampsSoftDelete {
 | `SSH_HOST_KEY_PATH` | `data/ssh_host_key` | Path where the SSH host key is persisted; mount as a volume in Docker |
 | `SSH_T2T_KEY_PASSWORD` | — | If set, the stored host key is AES-256-CTR encrypted with this passphrase |
 | `RUST_LOG` | — | Tracing filter, e.g. `info` or `tunnel2tunnel_ssh=debug` |
+| `SENTRY_DSN` | — | Backend Sentry/Bugsink DSN. Empty/unset = reporting disabled. |
+| `SENTRY_ENVIRONMENT` | — | e.g. `production`, `development` |
+| `SENTRY_RELEASE` | git commit (`SOURCE_COMMIT` → `git rev-parse HEAD`) | Explicit override for the release tag |
+| `SENTRY_TRACES_SAMPLE_RATE` | `0` | `0`–`1`; omit or `0` to disable tracing spans |
+| `VITE_SENTRY_DSN` | — | Frontend DSN, baked in at **build time**. Separate Bugsink project from the backend for this deployment. |
+| `VITE_SENTRY_ENVIRONMENT` / `VITE_SENTRY_RELEASE` / `VITE_SENTRY_TRACES_SAMPLE_RATE` | — | Frontend equivalents of the backend vars above |
+| `SOURCE_COMMIT` / `GIT_BRANCH` / `BUILD_TIME` | — | Release/build metadata tags shared by frontend+backend. Auto-detected via `git` when `.git` is present (local dev); must be passed explicitly as Docker **build args** for the frontend (Dockerfile's `node-builder` stage has no `.git`) and as container env for the backend. |
+| `BUILD_BUGSINK_URL` / `BUILD_BUGSINK_AUTH_TOKEN` / `BUILD_BUGSINK_PROJECT_SLUG` | — | Build-time-only secrets (deliberately not `VITE_`-prefixed) for uploading frontend sourcemaps via `@sentry/vite-plugin`; build succeeds without them, just skips the upload |
 
 ---
 
@@ -195,4 +204,7 @@ Produces a correct OpenSSH wire-format private key (`openssh-key-v1\0`, unencryp
 - **`Timestamps` vs `TimestampsSoftDelete`**: see struct table above — wrong nesting causes SQLx compile errors.
 - **tower-sessions versions**: `0.14` + `0.15` pair is required; mismatching breaks the session store trait.
 - **Docker Desktop not available**: use Podman (`/usr/bin/podman`). No daemon needed.
-- **Frontend alias**: `moduleResolution: bundler` has no Node types — do not `import { resolve } from 'path'`.
+- **Frontend alias**: no Node types in browser-shipped `src/**` code — do not `import { resolve } from 'path'` there. `vite.config.ts` itself *does* run in Node at build time and legitimately uses `node:child_process`/`process.env` (for git commit/build-time metadata) — `@types/node` is a devDependency for that reason, but only `vite.config.ts` should rely on it.
+- **Sentry init must precede the tokio runtime**: `crates/t2t/src/main.rs` can't use `#[tokio::main]` — it builds the runtime by hand in `main()` after `sentry::init_sentry()` so the panic hook covers tasks spawned during runtime startup too.
+- **Panic-returning axum handlers**: a handler body that only `panic!()`s can't return `impl IntoResponse` (E0560 "never type fallback" — opaque `impl Trait` return types don't coerce from `!`). Give it a concrete return type instead, e.g. `axum::http::StatusCode` (see `routes/diagnostics.rs::sample_error`).
+- **`sentry` 0.48.3 `ClientOptions` has no `dist` field** (removed from older SDK versions) — tag build time via `sentry::configure_scope` instead.

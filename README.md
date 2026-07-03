@@ -44,6 +44,14 @@ Browse to `http://localhost:3000`. Default login: `admin` / `changeme`.
 | `SSH_T2T_KEY_PASSWORD` | — | If set, the stored host key is AES-256-CTR encrypted with this passphrase |
 | `FAIL2BAN_LOG_PATH` | — | If set, write sshd-format auth events to this file for fail2ban |
 | `RUST_LOG` | — | Tracing filter, e.g. `info` or `tunnel2tunnel_ssh=debug` |
+| `SENTRY_DSN` | — | Backend Sentry/Bugsink DSN. Empty/unset disables reporting. |
+| `SENTRY_ENVIRONMENT` | — | e.g. `production`, `development` |
+| `SENTRY_RELEASE` | git commit | Overrides the auto-detected release tag |
+| `SENTRY_TRACES_SAMPLE_RATE` | `0` | `0`–`1`; omit or `0` to disable tracing spans |
+| `VITE_SENTRY_DSN` | — | Frontend Sentry/Bugsink DSN (baked in at build time). Empty/unset disables reporting. |
+| `VITE_SENTRY_ENVIRONMENT` / `VITE_SENTRY_RELEASE` / `VITE_SENTRY_TRACES_SAMPLE_RATE` | — | Frontend equivalents of the backend vars above |
+| `SOURCE_COMMIT` / `GIT_BRANCH` / `BUILD_TIME` | git commit/branch, now | Release metadata tags; auto-detected via `git` locally, set explicitly in Docker builds where `.git` isn't available |
+| `BUILD_BUGSINK_URL` / `BUILD_BUGSINK_AUTH_TOKEN` / `BUILD_BUGSINK_PROJECT_SLUG` | — | Build-time-only secrets for uploading frontend sourcemaps to Bugsink/Sentry; build succeeds without them, just skips the upload |
 
 ## Docker Compose
 

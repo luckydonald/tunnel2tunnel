@@ -1,15 +1,29 @@
+mod sentry;
+
 use anyhow::{Context, Result};
 use tracing_subscriber::EnvFilter;
 use tunnel2tunnel_core::db;
 use tunnel2tunnel_ssh::{start as start_ssh, host_key_fingerprint, SshConfig};
 use tunnel2tunnel_web::{start as start_http, bootstrap_admin, WebConfig};
 
-#[tokio::main]
-async fn main() -> Result<()> {
+// Sentry must be initialized before the tokio runtime starts so its panic
+// hook covers the whole process, including tasks spawned during runtime
+// startup — #[tokio::main] would start the runtime first, so build it by hand.
+fn main() -> Result<()> {
+    let _sentry_guard = sentry::init_sentry();
+
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
         .init();
 
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("failed to build tokio runtime")?
+        .block_on(run())
+}
+
+async fn run() -> Result<()> {
     let database_url = std::env::var("DATABASE_URL")
         .context("DATABASE_URL must be set")?;
     let http_port: u16 = std::env::var("HTTP_PORT")

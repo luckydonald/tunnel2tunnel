@@ -9,6 +9,7 @@ import AdminUsersPage from '@/pages/AdminUsersPage.vue'
 import SettingsPage from '@/pages/SettingsPage.vue'
 import PurgeKeysPage from '@/pages/PurgeKeysPage.vue'
 import PurgeAccessPage from '@/pages/PurgeAccessPage.vue'
+import SentryTestPage from '@/pages/SentryTestPage.vue'
 
 const routes: RouteRecordRaw[] = [
   { path: '/login', name: 'login', component: LoginPage },
@@ -73,6 +74,13 @@ const routes: RouteRecordRaw[] = [
     path: '/settings/purge-access',
     name: 'purge-access',
     component: PurgeAccessPage,
+    meta: { requiresAuth: true },
+  },
+  {
+    // Not linked from nav — visit directly to verify Sentry/Bugsink reporting end to end.
+    path: '/sentry-test',
+    name: 'sentry-test',
+    component: SentryTestPage,
     meta: { requiresAuth: true },
   },
 ]

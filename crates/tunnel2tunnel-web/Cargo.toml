@@ -18,3 +18,5 @@ time                        = { workspace = true }
 uuid                        = { workspace = true }
 anyhow                      = { workspace = true }
 sqlx                        = { workspace = true }
+sentry                      = { workspace = true, features = ["tower-axum-matched-path"] }
+tower                       = { workspace = true }

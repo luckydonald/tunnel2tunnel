@@ -4,10 +4,13 @@ mod extractors;
 pub mod routes;
 
 use axum::{
+    extract::Request,
     routing::{delete, get, post, put},
     Router,
 };
+use sentry::integrations::tower::{NewSentryLayer, SentryHttpLayer};
 use sqlx::PgPool;
+use tower::ServiceBuilder;
 use tower_http::services::{ServeDir, ServeFile};
 use tower_sessions::{cookie::time::Duration, Expiry, SessionManagerLayer};
 use tower_sessions_sqlx_store::PostgresStore;
@@ -106,6 +109,9 @@ pub async fn start(config: WebConfig, pool: PgPool) -> anyhow::Result<()> {
         // server info (authenticated)
         .route("/api/server-info",
             get(routes::server_info::get_server_info))
+        // Sentry/Bugsink verification (admin only)
+        .route("/api/admin/sample-error",
+            get(routes::diagnostics::sample_error))
         // user settings
         .route("/api/me/password",
             put(routes::settings::change_password))
@@ -117,7 +123,13 @@ pub async fn start(config: WebConfig, pool: PgPool) -> anyhow::Result<()> {
             get(routes::settings::list_my_access))
         .route("/api/me/purge-access",
             post(routes::settings::purge_access))
-        .layer(session_layer)
+        .layer(
+            ServiceBuilder::new()
+                // binds a fresh Hub per request for correct error<->request correlation
+                .layer(NewSentryLayer::<Request>::new_from_top())
+                .layer(SentryHttpLayer::new().enable_transaction())
+                .layer(session_layer),
+        )
         .with_state(state);
 
     // Serve the compiled Vue SPA for all non-API routes

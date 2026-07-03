@@ -17,6 +17,18 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 
 # Stage 2: Build Vue frontend
 FROM node:24-alpine AS node-builder
+# Release/build metadata baked into the bundle at build time (see frontend/vite.config.ts).
+ARG SOURCE_COMMIT
+ARG GIT_BRANCH
+ARG BUILD_TIME
+ARG VITE_SENTRY_DSN
+ARG VITE_SENTRY_ENVIRONMENT
+ARG VITE_SENTRY_RELEASE
+ARG VITE_SENTRY_TRACES_SAMPLE_RATE
+# Sourcemap upload secrets — deliberately not VITE_-prefixed so Vite doesn't inline them into the bundle.
+ARG BUILD_BUGSINK_URL
+ARG BUILD_BUGSINK_AUTH_TOKEN
+ARG BUILD_BUGSINK_PROJECT_SLUG
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json* ./
 RUN --mount=type=cache,target=/root/.npm \

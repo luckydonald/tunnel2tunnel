@@ -424,3 +424,38 @@ You can try yourself:
 
 ❯ Confirm the last assumptions with the server side log from your ssh attempt at `~/Downloads/tunnel2tunnel-d5oteit4omkq577f6j4r3rd9-121028661386-all-logs-2026-07-03-06-00-24.txt`. Note, this is not yet the updated deploy.
 
+❯ Implement sentry reporting for front- and backend.
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. Do you have a Bugsink/Sentry DSN already, and is it reachable directly from the browser (with CORS), or only from inside your server's network (typical self-hosted setup)?
+>>    - Directly reachable with working CORS
+>> 2. One Bugsink project shared by frontend and backend, or two separate DSNs?
+>>    - Two separate projects
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **DSN reachability** (1/2) <kbd>Single Select</kbd><br>
+>> Do you have a Bugsink/Sentry DSN already, and is it reachable directly from the browser (with CORS), or only from inside your server's network (typical self-hosted setup)?
+> - [ ] 1\. Self-hosted, browser can't reach it directly (Recommended)
+>   - _Build the same-origin tunnel endpoint on the backend so browser events aren't silently dropped by CORS/mixed-content. This is the common case for self-hosted Bugsink._
+> - [x] 2\. Directly reachable with working CORS
+>   - _Skip the tunnel entirely — the frontend SDK posts straight to the DSN._
+> - [ ] 3\. Not sure yet / decide later
+>   - _I'll wire up the probe-and-fallback pattern so it works either way, and you can verify once you have the DSN._
+> - [ ] 4\. _Type something._
+>
+>> **Project split** (2/2) <kbd>Single Select</kbd><br>
+>> One Bugsink project shared by frontend and backend, or two separate DSNs?
+> - [ ] 1\. One shared project (Recommended)
+>   - _Single SENTRY_DSN drives both; VITE_SENTRY_DSN defaults to it._
+> - [x] 2\. Two separate projects
+>   - _Frontend and backend report to different Bugsink projects with independent DSNs._
+> - [ ] 3\. _Type something._
+>
+> </details>
+>
+

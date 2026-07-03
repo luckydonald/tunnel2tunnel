@@ -104,4 +104,6 @@ export const adminApi = {
 
   listConnectionLogs: (entity_id: string) =>
     apiFetch<ConnLog[]>(`/api/entities/${entity_id}/logs`),
+
+  sampleError: () => apiFetch<void>('/api/admin/sample-error'),
 }
