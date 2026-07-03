@@ -43,7 +43,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/°base/ai/hooks/save-decision/hook.py\" 'claude'",
+            "command": "\"$(git rev-parse --show-toplevel)/scripts/°base/git/hooks/tool_path.sh\" uv run --project \"$(git rev-parse --show-toplevel)/scripts/°base\" python \"$(git rev-parse --show-toplevel)/scripts/°base/ai/hooks/save-decision/hook.py\" 'claude'",
             "async": true
           }
         ]
@@ -125,10 +125,6 @@
       "Bash(uv run python -m pytest:*)",
       "Bash(poetry run pytests:*)",
       "Bash(python3 -m unittest:*)",
-      "Bash(python3 -m unittest ai.scripts.tests.test_permission_check:*)",
-      "Bash(python3 -m unittest ai.scripts.tests.test_permission_check.IntegrationTests.test_git_commit_heredoc_prose_mention_allowed:*)",
-      "Bash(python3 -m unittest ai.scripts.tests.test_permission_check.CheckGitCommitTests.test_co_authored_by_heredoc_caught_by_shlex_path:*)",
-      "Bash(uv run --project scripts/°base python -m unittest:*)",
       "Bash(npm test:*)",
       "Bash(yarn test:*)",
       "Bash(yarn test:unit:*)",
@@ -182,8 +178,8 @@
       "Skill(/commit-with-lplp-style)",
       "Read(ai/skills/commit-with-lplp-style/SKILL.md)",
       "Read(./ai/skills/commit-with-lplp-style/SKILL.md)",
-      "Bash(uv run --project scripts/°base python -m unittest ai.scripts.tests.test_git_remote_fix ai.scripts.tests.test_git_remote_fix_tui_tdd ai.scripts.tests.test_git_remote_fix_tui_terminal -v)",
-      "Bash(uv run --project scripts/°base python -m unittest discover -s scripts/°base/tests -v)",
+      "Bash(uv run --project scripts/°base python -m unittest:*)",
+      "Bash(uv run --project \"scripts/°base\" python -m unittest:*)",
       "Bash(python3 scripts/°base/ai/hooks/save-prompt/hook.py)",
       "Bash(python3 -m pytest scripts/°base/tests/test_permission_check.py:*)",
       "Bash(python3 -m pytest scripts/°base/init/checkout.sh)",
@@ -195,6 +191,12 @@
       "Bash(uv run --directory scripts/°base python -m ai.settings.sync:*)",
       "Bash(./scripts/°base/ai/settings/sync.py)",
       "Bash(GIT_SEQUENCE_EDITOR=/tmp/git-rebase-todo.sh git rebase *)",
+      "Bash(env UV_CACHE_DIR=/tmp/uv-cache DOWNLOAD_LINK_LIVE=1 uv run --project scripts/°base python -m unittest scripts/°base/tests/test_download_link_live.py -v)",
+      "Bash(env UV_CACHE_DIR=/tmp/uv-cache ./scripts/°base/ai/references/download-link.py:*)",
+      "Bash(./scripts/°base/ai/references/download-link.py:*)",
+      "mcp__bugsink__list_projects",
+      "mcp__bugsink__list_issues",
+      "mcp__bugsink__get_issue",
       "Bash(echo \"---\")",
       "Bash(echo ---)",
       "Bash(echo '---')",
@@ -217,5 +219,13 @@
       "Read(**/.aws/**)",
       "Read(**/.ssh/**)"
     ]
-  }
+  },
+  "enabledPlugins": {
+    "openai-developers@openai-developers": true,
+    "skill-creator@claude-plugins-official": true
+  },
+  "enabledMcpjsonServers": [],
+  "disabledMcpjsonServers": [
+    "bugsink"
+  ]
 }

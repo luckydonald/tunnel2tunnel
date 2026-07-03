@@ -2048,3 +2048,266 @@ and for claude are at @ai/°base/plans/019_available-mcp-tools.md
 
 ❯ Fix the unittests, add a test checking the output of `ai/°base/output/debug/20260630-033350_321912-record-memory.json`.
 
+❯ Write me a short python script into `scripts/°base/`, which rebases the current branch from the last `origin/mane` meeting point until now, and removes all claude committer/author name/email.
+I.e. `claude[bot] <41898282+claude[bot]@users.noreply.github.com>` should instead be `✨❯ Lucky Lucy <claude._.ai._.code@luckydonald.de>`.
+
+› Fix ai/°base/errors/16.txt and ai/°base/errors/17.txt
+
+› write a python script at `scripts/°base/ai/references/download-link.py`, which
+- input: URL
+- processes arg 1 or asks for input, fails if no tty and nothing piped in with error how to do it instead.
+- Take url as folder path (remove schema's `:` though)
+- write output to `ai/references/{path}`.
+- fetches url and writes to file
+- use `uv` to install some html-to-markdown parser
+- `uv` shebang
+- basically for downloading documentation
+- cases:
+  1. link ends in `.md`
+     - can be downloaded directy
+     - path as is
+  2. link does not end in `.md`
+     - attempt if `.md` version exists
+     - try with and without original extension
+     - Examples:
+       - `/docs/foo` -> `/docs/foo.md`
+       - `/docs/bar.html` -> `/docs/bar.md`, `/docs/bar.html.md`
+  3. Link is on github
+     - grab permalink
+       1. basically api lookup for the repo's current commit
+          - `curl -sS -H "Accept: application/vnd.github+json" https://api.github.com/repos/OWNER/REPO/git/ref/heads/BRANCH | jq -r .object.sha`
+       2. Construct back the full URL with the blob/COMMIT
+     - actually download from the `raw.githubusercontent.com` page instead
+  4. other git hoster
+     - similar to github
+     - gitlab, bitbucket, sourceforge, AWS CodeCommit, SourceHut, Codeberg, Launchpad
+     - gitlab selfhosted, gitea, Forgejo, Radicle, other selfhosted
+  5. readthedocs
+     - if not latest use the version in the url (i.e. 2.3.4) as is - normal url parsing should work
+     - the filename should not be `_.md` but the revision (in footer of document)
+  5. HTML pages
+     - convert to markdown
+     - attach `/_.md` for writing the file.
+- tests:
+  - `https://developers.openai.com/codex/config-advanced#profiles` -> `ai/resources/https/developers.openai.com/codex/config-advanced.md`
+  - `https://github.com/j-shelfwood/bugsink-mcp/blob/main/README.md` -> `ai/resources/https/github.com/j-shelfwood/bugsink-mcp/blob/3010d119bca3a48eced460e8f51f52cda4b51d5b/README.md` for folder path and `https://raw.githubusercontent.com/j-shelfwood/bugsink-mcp/3010d119bca3a48eced460e8f51f52cda4b51d5b/README.md` for dl.
+  - `https://pyte.readthedocs.io/en/latest/api.html` -> `ai/resources/https/pyte.readthedocs.io/en/latest/api.html/a267d4ae.md`
+  - `https://www.equestriadaily.com/2016/02/oc-pony-spotlight-littlepip.html` -> `ai/resources/https/www.equestriadaily.com/2016/02/oc-pony-spotlight-littlepip.html/_.md`
+
+› Also fix `• PostToolUse hook (failed)` ` error: hook exited with code 1`
+
+› No, it's probably the record decision hook when I answered the questions.
+
+› No, use `uv` shebang and `uv` command to make sure pydantic is installed through it.
+
+> › Implement the [Plan](./plans/020_download-references-script-and-uv-hook-fix.md).
+
+› Also recover the question decision by manually triggerening the fixed hook. Then use $commit-with-lplp-style
+
+› Question answered.
+> <details><summary>
+>
+>> 1. Which output root should the script and tests use?
+>>    - ai/references (Recommended)
+>> 2. How complete should the first implementation be for non-GitHub git hosters?
+>>    - All listed hosters
+>> 3. Should tests hit the live network or mock fetch/API responses?
+>>    - _Other_: Both, Mock network for exact tests, plus live examples which assert that something useful is returned. Also for e.g. github add some branch links and commit-hash permalinks to the test input. At least the commit ones should not change at all, for the other two, be okay with the resulting commit hash changing.
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Output Root** (1/3) <kbd>Single Select</kbd><br>
+>> Which output root should the script and tests use?
+> - [x] 1\. ai/references (Recommended)
+>   - _Matches the main requirement and existing repository layout; treat the `ai/resources` examples as typos._
+> - [ ] 2\. ai/resources
+>   - _Matches the example paths exactly, but conflicts with the requested destination and existing reference files._
+> - [ ] 3\. _Type something._
+>
+>> **Forge Scope** (2/3) <kbd>Single Select</kbd><br>
+>> How complete should the first implementation be for non-GitHub git hosters?
+> - [ ] 1\. GitHub full, others clear errors (Recommended)
+>   - _Implements GitHub permalink/raw behavior now, with explicit unsupported-host errors for other forges._
+> - [ ] 2\. Major hosted forges
+>   - _Also implement GitLab.com, Bitbucket, Codeberg/Forgejo/Gitea public URL patterns where raw/permalink URLs are deterministic._
+> - [x] 3\. All listed hosters
+>   - _Attempts broad support including self-hosted and uncommon forges, increasing complexity and likely requiring host-specific API decisions._
+> - [ ] 4\. _Type something._
+>
+>> **Tests** (3/3) <kbd>Single Select</kbd><br>
+>> Should tests hit the live network or mock fetch/API responses?
+> - [ ] 1\. Mock network (Recommended)
+>   - _Keeps unit tests stable and fast while asserting exact URL resolution, fallback order, and output paths._
+> - [ ] 2\. Live examples
+>   - _Uses the provided URLs end-to-end, but tests can fail when remote content, branches, or revision hashes change._
+> - [x] 3\. _Type something:_
+>   - > Both, Mock network for exact tests, plus live examples which assert that something useful is returned. Also for e.g. github add some branch links and commit-hash permalinks to the test input. At least the commit ones should not change at all, for the other two, be okay with the resulting commit hash changing.
+>
+> </details>
+>
+
+› Hey, keep my additions to `ai/tool-settings/settings.json`!
+
+› for `uv`, check `scripts/°base/git/hooks/tool_path.sh`, if that can be adapted to properly support `uv`.
+
+› You may extract the `download-link.py` to have `°dllink_lib/*.py` (or subfolders in that), to organize the code better. Including `°dllink_lib.providers.*` packages, etc. `download-link.py` is still the command starting point.
+
+› In the script, add the flags `--no-git-add` and `--no-open-ide`, and the default behaviour to `git add` the downloaded file, and open the file in the IDE. IDE is `pycharm` by default, however it's setable via `ai/tool-settings/settings.json` (also defaulting to `pycharm` there). Here `--open-ide=<command>` would be possible to set, too, however the `--no-open-ide` still wins.
+For example `pycharm`, `rustrover`, `codium`, `code` would be exectuables which take the file path as arg and might be good choices for the settings file.
+Add a `ai/tool-settings/README.md` documenting that file.
+
+❯ Allow `enabledPlugins` for claude config (See `ai/tool-settings/settings.json`, `scripts/°base/ai/settings/sync.py`, `.claude/settings.json`, `.codex/hooks.json`.
+
+❯ Check the `codex` config & permission documentation in @ai/references/https/developers.openai.com/codex/ and adapt @scripts/°base/ai/settings/sync.py accordingly.
+
+❯ /plan add sycronisation of command permissions for codex as well. You can introduce a better format (i.e. `{ type: 'bash', command: "…" }` instead of `"Bash(…)"`) for our own settings file, to better transform it to both codex and claude.
+
+❯ Task Notification:
+> - Task `aa8bd65b4be70f656` <kbd>completed</kbd>
+> - Tool `toolu_01Gw3QqjpPnxAXuLLsAMHvLU`
+> - > Agent "Explore permission-check.py and settings sync format" finished
+> - [Query (`3423` chars, `3.36 KB`)](output/agents/001.aa8bd65b4be70f656/prompt.md)
+> - [Answer (`11947` chars, `11.7 KB`)](output/agents/001.aa8bd65b4be70f656/result.md)
+> - [Raw log (`386357` chars, `378 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-base/c2fb04e4-da32-448e-9403-50f57883376f/tasks/aa8bd65b4be70f656.output)
+> - `26` tools, `56310` tokens, `1.17953 s`
+
+❯ While at it, extract the toolings etc. to local submodules, to clean up the code. Also note that parsing the codex files shall be supported.
+Additionally check if we can properly sync the `enabledPlugins`, too.
+
+❯ Additionally, using @ai/references/https/developers.openai.com/codex/mcp.md and @ai/references/https/github.com/7c/bugsink-mcp/blob/87ce8bba8d65b15004f80314fce5845543ae193b/README.md support MCP sync.
+While at it configure it directly with `envmcp` to use `ai/.env` of a repo, see @ai/references/https/github.com/griffithsbs/envmcp/blob/9dc9d6510aa07f999095b7bb5eed636428eebec5/README.md for that tool.
+
+❯ For the mcp server config, I don't want to hardcode `envmcp` into the command, but instead use a tool definition in the core settings file, to then be written to the configs accordingly and merged.
+```json5
+{
+  // other config stuff
+  "mcp": {
+    "tools": {
+      // key: tool name
+      ".env": {
+          // key: variant
+          // empty key = default variant
+          "": {
+            "mode": "prefix", // <-- only one mode supported for now
+            "cmd": ["npx", "-y", "--env-file", "ai/.env"],
+          },
+          "repo-root": {
+            "mode": "prefix",
+            "cmd": ["npx", "-y", "--env-file", "$(git rev-parse --show-toplevel)/.env"],
+            // ^ not entirely sure if this is possible - i.e. if that command var thing is actually substituted... - but if not this shall be unused and only remain an example for how to create a second variant.
+          },
+          "debug": {
+              "mode": "prefix",
+              "cmd": ["npx", "-y", "mcpipe", "--debug", "--env-file", "ai/.env"]
+          }
+      },
+    },
+    "servers": {
+      // the actual definitions:
+      "bugsink": {
+          "enabled": true,  // first
+          "type": "stdio",
+          "tools": [".env", ".env@repo-root"], // format: `tool@variant`. Note that `".env"` == `".env@"` == `.env@default`. They will be added/executed left first to right array element.
+          // notice that we don't manually have to split `"cmd"` in `"command": "npx"` and `"args": ["…",…]`, the tool will.
+          "cmd": ["npx", "-y", "bugsink-mcp"],
+      },
+    },
+  }
+}
+```
+Create a jsonschema for it, too, please.
+
+❯ for the `# 4 command permission(s) could not be translated to a Codex prefix rule and were skipped (compound/redirected/substituted commands).` comment in the last line of `.codex/rules/generated.rules`, also add those offending rules commented out (single-line json)
+
+❯ /plan Add MCP tools to allow list.
+For claude, `bugsink`'s `list_projects` would be stored as the following allow string: `"mcp__bugsink__list_projects"` (as opposed to `"Bash(echo foo)"`). So joined by `__`. I don't know the format for codex, please figure that out.
+
+❯ Task Notification:
+> - Task `a56caacdd01d5802f` <kbd>completed</kbd>
+> - Tool `toolu_01QopXefL2RREexaweoKvsms`
+> - > Agent "Explore MCP + permission sync code" finished
+> - [Query (`3034` chars, `2.99 KB`)](output/agents/002.a56caacdd01d5802f/prompt.md)
+> - [Answer (`10575` chars, `10.4 KB`)](output/agents/002.a56caacdd01d5802f/result.md)
+> - [Raw log (`450128` chars, `440 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-base/7544b66e-7c4d-4f20-aba7-f287b2106bfa/tasks/a56caacdd01d5802f.output)
+> - `38` tools, `64013` tokens, `1.60485 s`
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. Should the deny bucket also get MCP-tool support (e.g. `permissions.deny` entry for `mcp__server__tool` → Codex `disabled_tools`), or just allow for now?
+>>    - Allow + deny (Recommended)
+>> 2. Should I also add a concrete example entry (bugsink's list_projects) to the tracked ai/tool-settings/settings.json as part of this change?
+>>    - _Other_: Yes, and the following entries: `{"type": "mcp", "server": "bugsink", "tool": "list_projects"}` (like the format), and the json variant of `mcp__bugsink__list_issues`, `mcp__bugsink__get_issue`.
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Deny support** (1/2) <kbd>Single Select</kbd><br>
+>> Should the deny bucket also get MCP-tool support (e.g. `permissions.deny` entry for `mcp__server__tool` → Codex `disabled_tools`), or just allow for now?
+> - [x] 1\. Allow + deny (Recommended)
+>   - _Mirror the existing bash prefix_rule pattern, which already supports both allow (→ approval_mode = "auto") and deny (→ disabled_tools) for symmetry and future-proofing._
+> - [ ] 2\. Allow only
+>   - _Only implement the allow-list mechanism you asked about; skip deny handling for MCP tools entirely for now._
+> - [ ] 3\. _Type something._
+>
+>> **Example entry** (2/2) <kbd>Single Select</kbd><br>
+>> Should I also add a concrete example entry (bugsink's list_projects) to the tracked ai/tool-settings/settings.json as part of this change?
+> - [ ] 1\. No, mechanism only (Recommended)
+>   - _Just build the parse/render machinery and cover it with tests; you can add real allow entries yourself afterward via .claude/settings.json or the neutral file._
+> - [ ] 2\. Yes, add it now
+>   - _Also add {"type": "mcp", "server": "bugsink", "tool": "list_projects"} to the allow list as a working example, even though bugsink is currently disabled._
+> - [x] 3\. _Type something:_
+>   - > Yes, and the following entries: `{"type": "mcp", "server": "bugsink", "tool": "list_projects"}` (like the format), and the json variant of `mcp__bugsink__list_issues`, `mcp__bugsink__get_issue`.
+>
+> </details>
+>
+
+❯ for loading the skills for codex and claude, would it make sense to just symlink them instead of writing the wrappers into .codex and .claude?
+
+❯ All Linux/Mac, no Windows checkouts.
+
+❯ /plan check out `scripts/°base/ai/settings/sync.py`. It should be able to parse old versions of the config files (version 1, fix the missing bump to two btw)
+An example would be the before-after of file `ai/tool-settings/settings.json` in commit `95f48bc69b93f990ce7986344ca05722192c4ff1`
+Additionally I'd like the following changes, while at it:
+2. `enabled` booleans shall always come as first in json or toml export.
+3. `permissions`.`allow`/`deny`'s elements should be singleline each.
+4. if there's `enabled…`/`disabled…` variants (MCP, Plugins, etc.), always populate both arrays, and make sure they have a linesplit for best possible diffs.
+5. A MCP server with a tool will be synced to claude/codex, but then replace back the original MCP in the ai/…/settings.json - hence replacing the short `"tool"` version with an merged longer `"cmd"` containing the tool invocation hardcoded.
+  - a) detect the case of inlining a tool directly
+  - b) detect matching existing tools to extract them from `"cmd"`.
+  - c) improve merge strategy to not be weird.
+6. `mcp.tools.<tool>.<variant>.cmd` and `mcp.servers.<name>.cmd` shall be single line.
+7. `enabledPlugins` should be just be `plugins` in the settings file, and have `enabled` flag as well (respecting **2.** and **4.**).
+
+❯ For the old version parsing, most of it the claude parser should be able to parse it, as it has been the plain claude schema at first anyways. The current missmatch with the already converted ones should be carefully considered if the file says v1, but can be skipped for a proper v2 once we're done here.
+
+❯ Task Notification:
+> - Task `a4f40cec5f0aab7bd` <kbd>completed</kbd>
+> - Tool `toolu_01PHUDQagJbNGRD3MqRAmZE6`
+> - > Agent "placeholder to yield turn" finished
+> - [Query (`4` chars, `4 B`)](output/agents/003.a4f40cec5f0aab7bd/prompt.md)
+> - [Answer (`36` chars, `38 B`)](output/agents/003.a4f40cec5f0aab7bd/result.md)
+> - [Raw log (`12968` chars, `12.7 KB`)](/private/tmp/claude-501/-Users-user-Documents-programming-Python-base/bad0a844-d71b-44c5-bc5d-a77a872c284f/tasks/a4f40cec5f0aab7bd.output)
+> - `0` tools, `15084` tokens, `0.0598333 s`
+
+❯ /plan check on settings sync design plan agent
+
+❯ Task Notification:
+> - Task `a01f38eb95bb4ce4c` <kbd>completed</kbd>
+> - Tool `toolu_01SZRcE53V1ZN78C37rGXday`
+> - > Agent "Design settings sync improvements" finished
+> - [Query (`13467` chars, `13.2 KB`)](output/agents/004.a01f38eb95bb4ce4c/prompt.md)
+> - [Answer (`23282` chars, `22.9 KB`)](output/agents/004.a01f38eb95bb4ce4c/result.md)
+> - [Raw log (`518301` chars, `507 KB`)](/private/tmp/claude-501/-Users-user-Documents-programming-Python-base/bad0a844-d71b-44c5-bc5d-a77a872c284f/tasks/a01f38eb95bb4ce4c.output)
+> - `22` tools, `108608` tokens, `7.6869 s`
+
+❯ Alright, let's assume sync.opy or the readme/agends.md might be wrong in how to handle skills.
+I want to have a way to easily call the skill with autocompletion. Codex allows `$skill` so this `/skill` wrapper looked like the second best way fot claude?
+
+❯ /plan check on settings sync design plan agent
+
+❯ then run it now, to see it's handling the unmarked v1.5 properly.
+
