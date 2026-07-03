@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -128,6 +129,57 @@ def _write_symlink_if_changed(link_path: Path, target_path: Path, apply: bool) -
     return [str(link_path)]
 
 
+def _write_dir_symlink_if_changed(link_path: Path, target_path: Path, apply: bool) -> list[str]:
+    """Like _write_symlink_if_changed, but symlinks a whole skill directory rather than a
+    single file — so multi-file skills (references/, scripts/, ...) mirror completely instead
+    of only their SKILL.md being visible at the mirrored location."""
+    relative_target = Path(os.path.relpath(target_path, start=link_path.parent))
+    if link_path.is_symlink() and Path(os.readlink(link_path)) == relative_target:
+        return []
+    if apply:
+        link_path.parent.mkdir(parents=True, exist_ok=True)
+        if link_path.is_symlink():
+            link_path.unlink()
+        elif link_path.is_dir():
+            shutil.rmtree(link_path)
+        elif link_path.exists():
+            link_path.unlink()
+        link_path.symlink_to(relative_target, target_is_directory=True)
+    return [str(link_path)]
+
+
+def _promote_extra_skill_files(source_skill_md: Path, shared_dir: Path, apply: bool) -> list[str]:
+    """The first time a skill is discovered outside its canonical ai/skills/<slug>/ directory
+    (e.g. authored directly under .claude/skills/<slug>/SKILL.md), copy any sibling files or
+    directories — references/, scripts/, assets/ — into the canonical directory alongside it.
+    Only SKILL.md's *text* gets re-rendered by the caller; everything else just needs to exist
+    in one place so the directory symlinks can pick it up. Never overwrites files that already
+    exist in the canonical directory, so this is a no-op once a skill is already canonical."""
+    changed: list[str] = []
+    source_dir = source_skill_md.parent
+    try:
+        if source_dir.resolve() == shared_dir.resolve():
+            return changed
+    except OSError:
+        pass
+    if not source_dir.is_dir():
+        return changed
+    for item in sorted(source_dir.iterdir()):
+        if item.name == "SKILL.md":
+            continue
+        dest = shared_dir / item.name
+        if dest.exists():
+            continue
+        changed.append(str(dest))
+        if apply:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if item.is_dir():
+                shutil.copytree(item, dest)
+            else:
+                shutil.copy2(item, dest)
+    return changed
+
+
 def _render_claude_command_shim(name: str, description: str, shared_path: Path) -> str:
     command_description = description or f"Invoke the {name} skill."
     return (
@@ -149,24 +201,27 @@ def _sync_skills(apply: bool) -> list[str]:
 
     for name, source in sorted(sources.items()):
         slug = _skill_slug(name)
-        shared_path = paths.SHARED_SKILLS / slug / "SKILL.md"
+        shared_dir = paths.SHARED_SKILLS / slug
+        shared_path = shared_dir / "SKILL.md"
         description = str(source["description"])
         skill_text = _render_canonical_skill(name, description, str(source["body"]))
+
+        changed.extend(_promote_extra_skill_files(Path(source["path"]), shared_dir, apply))
         changed.extend(_write_text_if_changed(shared_path, skill_text, apply))
 
-        codex_skill_path = paths.AGENTS_SKILLS / slug / "SKILL.md"
-        claude_skill_paths = {paths.CLAUDE_SKILLS / slug / "SKILL.md"}
+        codex_skill_dir = paths.AGENTS_SKILLS / slug
+        claude_skill_dirs = {paths.CLAUDE_SKILLS / slug}
         claude_command_paths = {paths.CLAUDE_COMMANDS / f"{slug}.md"}
         for path in claude_paths.get(name, set()):
             if path.name == "SKILL.md":
-                claude_skill_paths.add(path)
+                claude_skill_dirs.add(path.parent)
             elif path.suffix == ".md":
                 claude_command_paths.add(path)
 
         command_shim = _render_claude_command_shim(name, description, shared_path)
-        changed.extend(_write_symlink_if_changed(codex_skill_path, shared_path, apply))
-        for path in sorted(claude_skill_paths):
-            changed.extend(_write_symlink_if_changed(path, shared_path, apply))
+        changed.extend(_write_dir_symlink_if_changed(codex_skill_dir, shared_dir, apply))
+        for path in sorted(claude_skill_dirs):
+            changed.extend(_write_dir_symlink_if_changed(path, shared_dir, apply))
         for path in sorted(claude_command_paths):
             changed.extend(_write_text_if_changed(path, command_shim, apply))
 

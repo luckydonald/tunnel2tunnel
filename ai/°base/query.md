@@ -2311,3 +2311,17 @@ I want to have a way to easily call the skill with autocompletion. Codex allows 
 
 ❯ then run it now, to see it's handling the unmarked v1.5 properly.
 
+❯ Why are my plugins and skills listed multiple times?
+
+❯ Alright, let's clean it up.
+
+❯ /skill-creator:skill-creator
+
+❯ Adding bugsink sentry configuration to a project. For now add python and vue, especially the commits after `195f7383dd37bad36d4cb3d10a93b5fc0bdee539` should be helpful. Be generic, not bound to this repo, so we can use it in base.
+
+❯ Actually write it as multiple files, and adapt the sync script. If that means we can split it by language, that means we can collect those (currently: vue, python) over time, but also not spam context with irrelevent stuff we don't need for a specific project using specific languages.
+
+❯ /skill-creator:skill-creator
+
+❯ Check out the skill at `ai/skills/bugsink-setup/`, and update it to also include rust via @ai/references/https/docs.sentry.io/platforms/rust.md and @ai/references/https/docs.sentry.io/platforms/rust/
+
