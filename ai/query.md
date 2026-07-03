@@ -401,3 +401,26 @@ You can try yourself:
 
 ❯ deployment is in cloud after lplp-style commit
 
+❯ Question answered.
+> <details><summary>
+>
+>> 1. Push mane to origin now to trigger the cloud deploy?
+>>    - No, I'll push myself
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Push & deploy** (1/1) <kbd>Single Select</kbd><br>
+>> Push mane to origin now to trigger the cloud deploy?
+> - [ ] 1\. Yes, push now (Recommended)
+>   - _Push all 27 commits currently ahead of origin/mane, including this fix, so Coolify picks it up and redeploys._
+> - [x] 2\. No, I'll push myself
+>   - _Leave the commit local; you'll handle pushing/deploying on your own timing._
+> - [ ] 3\. _Type something._
+>
+> </details>
+>
+
+❯ Confirm the last assumptions with the server side log from your ssh attempt at `~/Downloads/tunnel2tunnel-d5oteit4omkq577f6j4r3rd9-121028661386-all-logs-2026-07-03-06-00-24.txt`. Note, this is not yet the updated deploy.
+
