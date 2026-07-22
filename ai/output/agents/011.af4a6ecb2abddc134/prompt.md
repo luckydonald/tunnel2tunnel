@@ -1,0 +1,7 @@
+In repo /home/user/git/luckydonald/tunnel2tunnel, research two things:
+
+1. fail2ban integration: find contrib/fail2ban/filter.d/tunnel2tunnel.conf (quote it), and find the Rust code that writes to FAIL2BAN_LOG_PATH (search crates/tunnel2tunnel-ssh and tunnel2tunnel-core for "fail2ban", "FAIL2BAN_LOG_PATH", "sshd["). Quote the exact log line format code (the "fail2ban-format log write" mentioned in CLAUDE.md: "write sshd-format auth events to this file"). I need to know the exact function signature and how it's called from the auth handler, so I can add tarpit-related events to the same log in the same format.
+
+2. Existing test patterns for the SSH server: search crates/tunnel2tunnel-ssh and crates/tunnel2tunnel-core for existing integration/unit tests (tests/ dirs, #[tokio::test], #[test] functions) related to auth flows, especially any test that simulates an SSH client connecting via russh client APIs against the in-process server (to understand how to write a new test simulating a legit login sequence and tarpit-triggering sequences). Quote setup helpers/fixtures used (e.g. test server bootstrap, in-memory or test DB usage, migrations in tests).
+
+Report file paths, line numbers, quoted code. Research only, no modifications.
