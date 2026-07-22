@@ -702,3 +702,5 @@ Generally:
 - in the admin table, there is needed a ban button.
 - _drive via OpenSSH subprocess_ this sounds dangerous, I don't want to do any sys/cmd calls.
 
+❯ For statistical reasons, we should also mark the final disconnect time of such a session. This also allows us to show a online/offline badge in the frontend next to server/clients.
+
