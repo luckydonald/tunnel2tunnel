@@ -1,5 +1,10 @@
 {
   "version": 2,
+  "pre_commit": {
+    "yarn@4": {
+      "enabled": false
+    }
+  },
   "hooks": {
     "PermissionRequest": [
       {
