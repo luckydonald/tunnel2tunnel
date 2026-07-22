@@ -580,3 +580,35 @@ Also add an automated test based on the `MANUAL_TESTING.md` with the fake stuff 
 
 ❯ codex
 
+❯ /plan I am experiencing a lot of ssh login attempts - from the stdout log I can see it's often the same address multiple times, trying different passwords.
+Now basically, what I want is a combination of `fail2ban` and `endlessh`/`tarssh`.
+See @/home/user/git/luckydonald/tunnel2tunnel/ai/references/https/nullprogram.com/blog/2019/03/22/_.md documenting how `endlessh` keeps the client waiting before the real SSH exchange starts.
+
+However, there are also other tarpits which could be done:
+- Slow auth responses: accept the connection, then delay or drip-feed replies during username/password or public-key checks.
+- Fake interactive shell: let attackers in just far enough to make them wait on a bogus shell prompt.
+- possibly different phases?
+- Basically round robin those different tarpit methods.
+
+Like `fail2ban`, this should happen after wrong attempts only
+- rules settable via website, if you're admin
+- based on either `peer_ip` or `user`.
+  - this comes with a log table
+  - stores `peer_ip`
+  - if available (came so far), stores `user`.
+  - if a password was attempted, the used password shall be used.
+  - if a private key was attempted, the `fp` (but like the long name of that variable) shall be stored.
+  - which tarpit method were used.
+  - this db table should be accessable for the admin on the webui, with pagination, filtering and search.
+  - success yes/no (yes -> we consider the client as cleared even if it was banned earlier; computed boolean based on the next two columns)
+  - why it failed (password tried even if we don't accept those, wrong user, wrong ssh key, …) (one of these reason fields must be NULL)
+  - why it succeded (correct login, reset by admin in webgui, …) (one of those reason fields must be NULL)
+- write a fail2ban compatible log (like the ssh client)
+
+Note that a valid login goes like @/home/user/git/luckydonald/tunnel2tunnel/ai/errors/4.legitimiate.txt 
+- this should not cause a blocking.
+- specifically add a unittest for this sequence.
+
+Generally:
+- Add automatic tests for each method.
+
