@@ -1,0 +1,6 @@
+2026-07-22T17:48:21.393825Z  INFO tunnel2tunnel_ssh: SSH: new connection peer_ip=69.69.69.69 conn_id=019f8b1e-35dc-7ea3-a99b-c3f8a4aa891c
+2026-07-22T17:48:21.506077Z  INFO tunnel2tunnel_ssh: SSH: auth attempt (none) — rejected peer_ip=69.69.69.69 user=019f8b17-dce1-7d7c-858d-463d74f90f51 available="publickey"
+2026-07-22T17:48:22.529950Z  INFO tunnel2tunnel_ssh: SSH: publickey offered (probe, no signature yet) peer_ip=69.69.69.69 user=019f8b17-dce1-7d7c-858d-463d74f90f51 fp=SHA256:j1dUSAdy+QPp5Jf9IntNwFtkEscOYwYln3+wpkPC1kM key_algo="ssh-ed25519"
+2026-07-22T17:48:22.549704Z  INFO tunnel2tunnel_ssh: SSH: auth attempt (publickey) peer_ip=69.69.69.69 user=019f8b17-dce1-7d7c-858d-463d74f90f51 fp=SHA256:j1dUSAdy+QPp5Jf9IntNwFtkEscOYwYln3+wpkPC1kM
+2026-07-22T17:48:22.552322Z  INFO tunnel2tunnel_ssh: SSH: auth accepted entity_id=019f8b17-dce1-7d7c-858d-463d74f90f51 entity_name="Laptop" peer_ip=69.69.69.69 fp=SHA256:j1dUSAdy+QPp5Jf9IntNwFtkEscOYwYln3+wpkPC1kM
+2026-07-22T17:58:22.634262Z  INFO tunnel2tunnel_ssh: SSH: connection closed (authenticated) entity_id=019f8b17-dce1-7d7c-858d-463d74f90f51 entity_name="Laptop" peer_ip=69.69.69.69
