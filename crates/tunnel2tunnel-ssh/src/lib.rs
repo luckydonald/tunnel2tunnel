@@ -37,7 +37,7 @@ pub struct SshConfig {
 
 // ── Routing state shared across all SSH sessions ─────────────────────────────
 
-type ServerSlots = Arc<Mutex<HashMap<(Uuid, u32), Handle>>>;
+type ServerSlots = Arc<Mutex<HashMap<(Uuid, u32), (Handle, String)>>>;
 
 // ── Session registry for messaging (welcome, ping, broadcast, chat) ──────────
 
@@ -528,7 +528,7 @@ impl Handler for T2tHandler {
     // Server registers a remote port (-R proxy_port:...)
     async fn tcpip_forward(
         &mut self,
-        _address: &str,
+        address: &str,
         port: &mut u32,
         session: &mut Session,
     ) -> Result<bool, Self::Error> {
@@ -541,7 +541,7 @@ impl Handler for T2tHandler {
         self.server_slots
             .lock()
             .await
-            .insert((entity_id, *port), session.handle());
+            .insert((entity_id, *port), (session.handle(), address.to_string()));
 
         // Notify all other sessions
         let msg = format!(
@@ -657,14 +657,14 @@ impl Handler for T2tHandler {
         }
 
         // Find server handle for this entity + port
-        let server_handle = self
+        let server_slot = self
             .server_slots
             .lock()
             .await
             .get(&(target_entity_id, port_to_connect))
             .cloned();
 
-        let Some(server_handle) = server_handle else {
+        let Some((server_handle, registered_address)) = server_slot else {
             tracing::info!(
                 target_entity = %target_entity_id,
                 target_entity_name = target_entity.name.as_deref().unwrap_or("(unnamed)"),
@@ -674,10 +674,13 @@ impl Handler for T2tHandler {
             return Ok(false);
         };
 
-        // Ask server to open forwarded channel to its local service
+        // Ask server to open forwarded channel to its local service. The address must match
+        // what the server's ssh client registered via tcpip_forward (e.g. "localhost" from
+        // `-R port:...`) — OpenSSH matches incoming forwarded-tcpip requests against its
+        // registered (address, port) forward table, not the client's requested hostname.
         let server_ch = server_handle
             .channel_open_forwarded_tcpip(
-                host_to_connect,
+                &registered_address,
                 port_to_connect,
                 "127.0.0.1",
                 0,

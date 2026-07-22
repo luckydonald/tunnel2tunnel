@@ -525,3 +525,67 @@ You can try yourself:
 
 ❯ Check on the background cargo build (task bhlzvnqe3) validating the release profile and CARGO_BUILD_JOBS=1 changes. If finished, report results and wrap up (add CLAUDE.md gotcha note, final summary). If still running, check again.
 
+❯ Set up a test where you tunnel through it with two ssh connections.
+
+❯ /login
+
+❯ Can't you use Postgres.app?
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. Postgres.app only has PG16 installed, but the migrations require PG18's native uuidv7(). How should I get a PG18 instance for this test?
+>>    - Add a PG18 server inside Postgres.app
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Postgres version** (1/1) <kbd>Single Select</kbd><br>
+>> Postgres.app only has PG16 installed, but the migrations require PG18's native uuidv7(). How should I get a PG18 instance for this test?
+> - [ ] 1\. Use the Homebrew postgresql@18 I just installed
+>   - _Already installed via brew; I'll start it standalone on port 5432 just for this test and can stop/uninstall it afterward._
+> - [x] 2\. Add a PG18 server inside Postgres.app
+>   - _Use Postgres.app's UI/CLI to initialize an additional PG18 server alongside your existing PG16 one._
+> - [ ] 3\. Something else
+>   - _Tell me how you'd like to run Postgres 18 for this test._
+> - [ ] 4\. _Type something._
+>
+> </details>
+>
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. You've switched into plan mode but I don't see a new request in this turn — what would you like me to plan?
+>>    - _Other_: I now switched to auto-mode, cary on implementing. Then commit. Then add tests. Then commit. Then run them, and after each fixing round, commit, then run tests again.
+Also add an automated test based on the `MANUAL_TESTING.md` with the fake stuff inside the `/tmp/` subfolder.
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **What to plan** (1/1) <kbd>Single Select</kbd><br>
+>> You've switched into plan mode but I don't see a new request in this turn — what would you like me to plan?
+> - [ ] 1\. Extend the SSH tunnel fix
+>   - _e.g. add automated tests for the forwarded-tcpip address bug, or check for similar issues elsewhere in the SSH handler._
+> - [ ] 2\. Something else entirely
+>   - _Tell me the task you want planned._
+> - [x] 3\. _Type something:_
+>   - > I now switched to auto-mode, cary on implementing. Then commit. Then add tests. Then commit. Then run them, and after each fixing round, commit, then run tests again.
+Also add an automated test based on the `MANUAL_TESTING.md` with the fake stuff inside the `/tmp/` subfolder.
+>
+> </details>
+>
+
+❯ Task Notification:
+> - Task `afc0e611d5b3908b3` <kbd>completed</kbd>
+> - Tool `toolu_01TCGYTGsoLFjNnnB85TwdeQ`
+> - > Agent "Explore existing test infra and patterns" finished
+> - [Query (`3633` chars, `3.56 KB`)](output/agents/010.afc0e611d5b3908b3/prompt.md)
+> - [Answer (`14794` chars, `14.5 KB`)](output/agents/010.afc0e611d5b3908b3/result.md)
+> - [Raw log (`392491` chars, `385 KB`)](/private/tmp/claude-501/-Users-user-Documents-programming-Rust-tunnel2tunnel/e5104227-d25f-45e8-bf48-cb2975b2fbe1/tasks/afc0e611d5b3908b3.output)
+> - `44` tools, `73762` tokens, `6.5952 s`
+
+❯ Notice that the ai commits right before our commit might be for those unstaged changes, in that case merge those (and the auto-commit caused by this prompt) with the code.
+

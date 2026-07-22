@@ -17,3 +17,8 @@ tracing-subscriber  = { workspace = true }
 anyhow              = { workspace = true }
 sqlx                = { workspace = true }
 sentry              = { workspace = true }
+
+[dev-dependencies]
+russh               = { workspace = true }
+getrandom           = { workspace = true }
+uuid                = { workspace = true }
