@@ -630,3 +630,12 @@ Generally:
 > - [Raw log (`218772` chars, `216 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/65a8ce4e-85b4-43dc-930a-adce9067ca43/tasks/ac396b2f3ccec98ae.output)
 > - `13` tools, `46430` tokens, `1.88822 s`
 
+❯ Task Notification:
+> - Task `a3cc6a94f78cafdb2` <kbd>completed</kbd>
+> - Tool `toolu_01Be29F7tr7JkE7ToLCjTJbr`
+> - > Agent "Explore connection_logs table and admin log UI patterns" finished
+> - [Query (`1719` chars, `1.69 KB`)](output/agents/013.a3cc6a94f78cafdb2/prompt.md)
+> - [Answer (`14841` chars, `14.7 KB`)](output/agents/013.a3cc6a94f78cafdb2/result.md)
+> - [Raw log (`327457` chars, `321 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/65a8ce4e-85b4-43dc-930a-adce9067ca43/tasks/a3cc6a94f78cafdb2.output)
+> - `47` tools, `55429` tokens, `3.5788 s`
+
