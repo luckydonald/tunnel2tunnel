@@ -8,8 +8,19 @@ Target:  <subproject>/ai/memory/<name>.md
 Fires on:
   - PostToolUse(Write|Edit): sync the single file the tool just touched, if
     it lives inside the source memory dir.
+  - PostToolUse(Bash|shell|unified_exec): if the command `rm`'d an absolute
+    `.md` path directly under the source memory dir, and that file is now
+    confirmed gone, propagate the deletion to the repo mirror via
+    `°memory_lib.delete_memory` -- the same marker-commit mechanism
+    `scripts/°base/ai/memory/delete.py` uses. This is the only place a
+    deletion is ever *originated* from an observed event; a missing source
+    file discovered later (e.g. during `SessionStart`) is never treated as a
+    deletion request (see `_sync_all` below and
+    `ai/°base/plans/007_prevent-accidental-memory-deletion.md`).
   - SessionStart: bulk-sync every `*.md` under the source memory dir as a
-    catch-up.
+    catch-up, then capture the compact summary from the transcript on older
+    Claude versions whose post-compaction payload arrived only through this
+    event.
 
 Linking strategy mirrors `scripts/°base/memories/hardlink_memories.sh` but for
 single files: hardlink first, fall back to symlink when hardlinks aren't
@@ -18,21 +29,27 @@ Bind mounts are skipped — they only make sense at directory granularity.
 """
 from __future__ import annotations
 
+import importlib
 import os
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import compact_result  # noqa: E402
 from _lib import (  # noqa: E402
     _chdir_to_git_root,
     _is_inside_base_repo,
     _subproject_root,
-    base_ai_commit_subject,
     dump_debug_payload,
     read_payload,
+    running_copilot,
 )
+
+memory_lib = importlib.import_module("°memory_lib")
+commit_message = importlib.import_module("°commit_style_lib").commit_message
 
 
 def _encoded_project_dir(subproject: Path) -> Path:
@@ -49,38 +66,56 @@ def _memory_dirs(subproject: Path) -> tuple[Path, Path]:
     return src, subproject / rel
 
 
-def _same_inode(a: Path, b: Path) -> bool:
+_SHELL_OPERATORS = {"&&", "||", ";"}
+
+
+def _split_on_shell_operators(argv: list[str]) -> list[list[str]]:
+    """Split a shlex-parsed argv on shell operators (&&, ||, ;) into
+    sub-commands. Mirrors `.claude/hooks/permission-check.py`'s helper of the
+    same shape -- shlex treats these as regular tokens, so they must be split
+    out manually."""
+    sub_commands: list[list[str]] = []
+    current: list[str] = []
+    for token in argv:
+        if token in _SHELL_OPERATORS:
+            if current:
+                sub_commands.append(current)
+            current = []
+        else:
+            current.append(token)
+    if current:
+        sub_commands.append(current)
+    return sub_commands
+
+
+def _rm_targets(command: str) -> list[Path]:
+    """Absolute `.md` paths passed as plain arguments to a plain `rm`
+    invocation anywhere in `command` (chained via &&/||/;).
+
+    Expands `$HOME`/`~` since the shell would have. Relative paths are
+    skipped -- this hook has no reliable view of the Bash tool's cwd, so a
+    relative `rm` argument can't be resolved against the right directory.
+    """
     try:
-        return a.stat().st_ino == b.stat().st_ino and a.stat().st_dev == b.stat().st_dev
-    except OSError:
-        return False
+        argv = shlex.split(command)
+    except ValueError:
+        return []
 
-
-def _sync_file(src: Path, dst: Path) -> bool:
-    """Make ``dst`` a hardlink (or symlink fallback) of ``src``.
-    Returns True if something changed; False if already in sync."""
-    if not src.is_file():
-        return False
-
-    if dst.is_symlink():
-        try:
-            if dst.resolve() == src.resolve():
-                return False
-        except OSError:
-            pass
-    elif dst.exists() and _same_inode(dst, src):
-        return False
-
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    if dst.is_symlink() or dst.exists():
-        dst.unlink()
-
-    try:
-        os.link(src, dst)
-    except OSError:
-        # Cross-filesystem or other hardlink restriction → symlink fallback.
-        os.symlink(src, dst)
-    return True
+    targets: list[Path] = []
+    for sub_argv in _split_on_shell_operators(argv):
+        if not sub_argv or sub_argv[0] != "rm":
+            continue
+        only_paths = False
+        for token in sub_argv[1:]:
+            if not only_paths and token == "--":
+                only_paths = True
+                continue
+            if not only_paths and token.startswith("-"):
+                continue
+            expanded = Path(os.path.expandvars(token)).expanduser()
+            if expanded.is_absolute() and expanded.suffix == ".md":
+                targets.append(expanded)
+    return targets
 
 
 def _git_text(*args: str) -> str:
@@ -112,7 +147,12 @@ def _unlink_file(path: Path) -> bool:
 def _sync_all(src_dir: Path, dst_dir: Path, dst_dir_rel: str) -> list[str]:
     """Sync memory files without treating a missing source as a delete.
 
-    Repo memory is the durable copy. A missing Claude source file is recreated
+    Repo memory is the durable copy, and it wins on content conflicts too: a
+    genuinely new Claude source file (no repo counterpart yet) still
+    propagates src -> dst, but once both sides exist, the Claude source has no
+    audit trail (unlike the repo's git history), so a diverging source is
+    treated as untracked drift and overwritten from the repo (dst -> src)
+    instead of being committed. A missing Claude source file is recreated
     from the repo file. A stale Claude source file is removed only when git
     history has an explicit `Deleted Memory: <name>.md` marker for that file.
     """
@@ -121,21 +161,54 @@ def _sync_all(src_dir: Path, dst_dir: Path, dst_dir_rel: str) -> list[str]:
     if src_dir.is_dir():
         for src in sorted(src_dir.glob("*.md")):
             src_names.add(src.name)
-            if (
-                not (dst_dir / src.name).exists()
-                and _is_marked_deleted(dst_dir_rel, src.name)
-            ):
-                _unlink_file(src)
+            dst = dst_dir / src.name
+            if not dst.exists():
+                if _is_marked_deleted(dst_dir_rel, src.name):
+                    _unlink_file(src)
+                    continue
+                if memory_lib.link_file(src, dst):
+                    changed.append(src.name)
                 continue
-            if _sync_file(src, dst_dir / src.name):
-                changed.append(src.name)
+            if not memory_lib.same_inode(dst, src):
+                memory_lib.link_file(dst, src)
 
     if dst_dir.is_dir():
         for dst in sorted(dst_dir.glob("*.md")):
             if dst.name in src_names:
                 continue
-            _sync_file(dst, src_dir / dst.name)
+            memory_lib.link_file(dst, src_dir / dst.name)
     return changed
+
+
+_MEMORY_LINK_RE = re.compile(r"\(([^()\s]+\.md)\)")
+
+
+def _check_memory_index_consistency(dst_dir: Path) -> None:
+    """Warn (never auto-fix) when MEMORY.md's index and the files actually on
+    disk in ``dst_dir`` disagree: an orphaned file with no index entry, or an
+    index entry pointing at a file that no longer exists. Purely diagnostic —
+    inferring a deletion or resurrection from this mismatch is exactly the
+    accidental-loss failure mode `require_memory_delete_marker.py` exists to
+    prevent, so this only ever prints."""
+    memory_md = dst_dir / "MEMORY.md"
+    if not memory_md.is_file():
+        return
+    referenced = set(_MEMORY_LINK_RE.findall(memory_md.read_text(encoding="utf-8")))
+    on_disk = {p.name for p in dst_dir.glob("*.md") if p.name != "MEMORY.md"}
+
+    for name in sorted(on_disk - referenced):
+        print(
+            f"record-memory: {dst_dir / name} is orphaned -- not referenced by "
+            f"MEMORY.md. Add it back to the index or delete it properly via "
+            f"scripts/°base/ai/memory/delete.py.",
+            file=sys.stderr,
+        )
+    for name in sorted(referenced - on_disk):
+        print(
+            f"record-memory: MEMORY.md references {name}, which doesn't exist "
+            f"in {dst_dir} (dangling link).",
+            file=sys.stderr,
+        )
 
 
 def _commit(dst_dir_rel: str, names: list[str]) -> None:
@@ -148,7 +221,7 @@ def _commit(dst_dir_rel: str, names: list[str]) -> None:
         head = ", ".join(Path(n).stem for n in names[:3])
         extra = f" (+{len(names) - 3} more)" if len(names) > 3 else ""
         msg = f"ai: record memories {head}{extra}"
-    msg = base_ai_commit_subject(msg)
+    msg = commit_message("ai/commit-templates/memory", msg)
     subprocess.run(["git", "commit", "--no-verify", "--only", dst_dir_rel, "-m", msg], capture_output=True)
 
 
@@ -275,7 +348,7 @@ def _uninstall_legacy(legacy: Path, src_dir: Path) -> bool | None:
     # Directory hardlink: same inode as source. We CANNOT remove this from
     # here. `os.rmdir` only works on empty dirs; `shutil.rmtree` would follow
     # the shared inode and delete the source contents. Hand off to the user.
-    if legacy.is_dir() and _same_inode(legacy, src_dir):
+    if legacy.is_dir() and memory_lib.same_inode(legacy, src_dir):
         return None
 
     return False
@@ -300,6 +373,14 @@ def _uninstall_legacy_all(subproject: Path, src_dir: Path) -> None:
 
 
 def main() -> int:
+    # Copilot Memory is a cloud/server-side feature with no local file
+    # representation to hardlink from (confirmed via official docs), and
+    # `.github/hooks/generated.json` unconditionally renders this hook's
+    # entries alongside Claude's — stay a safe no-op under Copilot rather
+    # than doing wasted (and, via the `.claude/settings.json` cross-read,
+    # duplicated) work that can never find a source directory.
+    if running_copilot():
+        return 0
     if _git_root() is None:
         return 0
     subproject = _subproject_root()
@@ -313,6 +394,20 @@ def main() -> int:
 
     if event == "PostToolUse":
         tool_input = payload.get("tool_input") or {}
+        command = tool_input.get("command") or ""
+        if command:
+            resolved_src_dir = src_dir.resolve()
+            for target in _rm_targets(command):
+                if target.parent != resolved_src_dir:
+                    continue
+                if target.exists():
+                    continue  # rm didn't actually remove it -- nothing to do
+                memory_lib.delete_memory(
+                    target.name, src_dir=src_dir, dst_dir=dst_dir, dst_dir_rel=dst_dir_rel
+                )
+            _check_memory_index_consistency(dst_dir)
+            return 0
+
         raw = tool_input.get("file_path") or ""
         if not raw:
             return 0
@@ -321,8 +416,9 @@ def main() -> int:
             rel = src_file.relative_to(src_dir.resolve())
         except (OSError, ValueError):
             return 0
-        if _sync_file(src_file, dst_dir / rel):
+        if memory_lib.link_file(src_file, dst_dir / rel):
             _commit(dst_dir_rel, [str(rel)])
+        _check_memory_index_consistency(dst_dir)
         return 0
 
     # SessionStart (and any other event) — full catch-up sync.
@@ -331,6 +427,8 @@ def main() -> int:
     _uninstall_legacy_all(subproject, src_dir)
     changed = _sync_all(src_dir, dst_dir, dst_dir_rel)
     _commit(dst_dir_rel, changed)
+    _check_memory_index_consistency(dst_dir)
+    compact_result.capture_session_start(payload)
     return 0
 
 

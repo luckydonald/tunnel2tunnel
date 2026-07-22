@@ -20,6 +20,13 @@ from pathlib import Path
 # because parent dirs contain non-ASCII / hyphenated names).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from merge_staged import merge as _merge_lines  # noqa: E402
+from importlib import import_module  # noqa: E402
+
+_commit_style = import_module("°commit_style_lib")
+base_ai_commit_subject = _commit_style.base_ai_commit_subject
+_commit_message = _commit_style.commit_message
+_is_inside_base_repo = _commit_style._is_inside_base_repo
+_read_by_issue = _commit_style._read_by_issue
 
 
 def read_payload() -> dict:
@@ -70,27 +77,33 @@ def _git_bytes(*args: str) -> bytes:
     return subprocess.run(["git", *args], capture_output=True).stdout or b""
 
 
-def _is_inside_base_repo(subproject_root: Path) -> bool:
-    """True iff we are inside the `base` meta-repo: subproject directory named
-    `base`, with origin pointing at luckydonald/base.
+def running_copilot() -> bool:
+    """True when this process is actually running under Copilot CLI, per its
+    own env markers. Unlike Claude's/Codex's markers, these are set directly
+    by the Copilot CLI process itself for every hook invocation."""
+    return bool(os.environ.get("COPILOT_CLI") or os.environ.get("COPILOT_AGENT_SESSION_ID"))
 
-    In a stand-alone consuming repo, subproject_root == git_root and the name
-    won't be `base`, so this returns False. In a monorepo, subproject_root is
-    the per-project directory below the git root and again won't match.
+
+def is_cross_tool_duplicate(ai_tool: str) -> bool:
+    """True when this hook invocation is a redundant duplicate caused by
+    Copilot CLI's unconditional cross-read of `.claude/settings.json`
+    alongside its own native `.github/hooks/*.json` config: when both files
+    define a hook for the same event, Copilot runs *both*, once per config
+    source. The two firings differ only in the baked-in ``ai_tool`` CLI
+    argument (``'copilot'`` from the native config, ``'claude'``/``'codex'``
+    from the cross-read Claude config) — this detects the mismatch so the
+    caller can skip the redundant one.
+
+    Detection is intentionally narrow: it only fires when the environment
+    unambiguously marks the *actually running* harness as Copilot
+    (``COPILOT_CLI``/``COPILOT_AGENT_SESSION_ID``), since ambient variables
+    like ``CLAUDE_CODE_SSE_PORT`` can leak into a Copilot CLI process from
+    the surrounding shell/IDE and are not reliable signals on their own.
+    Returns ``False`` (never a duplicate) for Claude, Codex, and any other
+    harness, and for manual/test invocations where no such env var is set.
     """
-    if subproject_root.name != "base":
-        return False
-    origin = _git_text("remote", "get-url", "origin")
-    return bool(re.search(r"(^|[:/])luckydonald/base(\.git)?/?$", origin, re.I))
-
-
-def base_ai_commit_subject(msg: str) -> str:
-    """Prefix base-repo AI auto-commit subjects with ``[base] ``."""
-    if msg.startswith("[base] "):
-        return msg
-    if _is_inside_base_repo(_subproject_root()):
-        return f"[base] {msg}"
-    return msg
+    running_copilot_ = running_copilot()
+    return running_copilot_ and ai_tool != "copilot"
 
 
 def _subproject_root() -> Path:
@@ -107,17 +120,6 @@ def _chdir_to_git_root() -> Path:
         sys.exit(1)
     os.chdir(root)
     return Path(root)
-
-
-def _read_by_issue(subproject: Path, ai_prefix: str) -> str:
-    """Read the issue key from <subproject>/<ai_prefix>/.by-issue.
-
-    Returns the stripped content (e.g. ``PROJ-1234``) or ``""`` when the file
-    is absent or empty."""
-    by_issue = subproject / ai_prefix / ".by-issue"
-    if by_issue.is_file():
-        return by_issue.read_text(encoding="utf-8").strip()
-    return ""
 
 
 def resolve_log_path(default_relpath: str, base_relpath: str) -> Path:
@@ -165,16 +167,6 @@ def _staged_snapshot(relpath: str) -> tuple[Path, Path] | None:
     base_tmp.write_bytes(_git_bytes("cat-file", "blob", head_hash) if head_hash else b"")
     staged_tmp.write_bytes(_git_bytes("cat-file", "blob", staged_hash))
     return base_tmp, staged_tmp
-
-
-def _commit_message(template_relpath: str, default_msg: str) -> str:
-    # Templates live alongside the AI artifacts, so they're subproject-scoped
-    # (relevant in monorepos where cwd is the git root, not the subproject).
-    template = _subproject_root() / template_relpath
-    if not template.is_file():
-        return base_ai_commit_subject(default_msg)
-    text = template.read_text(encoding="utf-8").replace("\n", "").replace("\r", "").strip()
-    return base_ai_commit_subject(text or default_msg)
 
 
 def _restore_staged(snap: tuple[Path, Path], relpath: str) -> None:

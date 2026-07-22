@@ -15,12 +15,35 @@ def _git_root() -> Path:
     return Path.cwd()
 
 
+def _git_dir() -> Path:
+    result = subprocess.run(
+        ["git", "rev-parse", "--git-dir"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0 and result.stdout.strip():
+        path = Path(result.stdout.strip())
+        return path if path.is_absolute() else Path.cwd() / path
+    return Path.cwd() / ".git"
+
+
+def _is_merge_in_progress() -> bool:
+    """True while a merge commit is being written (`git merge` with a real
+    merge base, mid-conflict-resolution, or non-fast-forward). Used to relax
+    the pre-commit sync check: `.local` settings are gitignored and personal,
+    so a merge that only touches the tracked layer shouldn't block on
+    pre-existing local drift."""
+    return (_git_dir() / "MERGE_HEAD").is_file()
+
+
 TRACKED_SHARED = Path("ai/tool-settings/settings.json")
 LOCAL_SHARED = Path("ai/tool-settings/settings.local.json")
 CLAUDE_SETTINGS = Path(".claude/settings.json")
 CLAUDE_LOCAL = Path(".claude/settings.local.json")
 CODEX_HOOKS = Path(".codex/hooks.json")
 CODEX_LOCAL_HOOKS = Path(".codex/hooks.local.json")
+COPILOT_HOOKS = Path(".github/hooks/generated.json")
+COPILOT_LOCAL_HOOKS = Path(".github/hooks/generated.local.json")
 CODEX_CONFIG = Path.home() / ".codex" / "config.toml"
 CODEX_RULES = Path(".codex/rules/generated.rules")
 CODEX_RULES_LOCAL = Path(".codex/rules/generated.local.rules")

@@ -19,12 +19,26 @@ Adopt these rules for every commit made this session:
    - `ai: save decision <slug>` — resolved `AskUserQuestion`
    - `ai: agent <id> results` — subagent result record
    - `ai: record memory <slug>` — memory file written (e.g. `ai: record memory MEMORY`, `ai: record memory feedback_commit_amend_over_reset`)
-   - `ai: Plan …`, `ai: Plan Update …`, `ai: save plan <NNN>_<slug>` — plan files
+   - `ai: save plan <NNN>_<slug>` — plan files
 
    **When to keep a commit separate instead of folding:**
-   - A plan commit is followed by one or more `ai: Plan Update …` commits for the same plan number — folding would erase the revision history of the plan. Keep each version as its own commit.
+   - A plan commit whose plan file content is a genuine, substantive change over the plan it follows — cutting a new version — stays its own commit. Rename it away from the raw hook message per the plan-commit format below.
+   - A plan commit is followed by one or more further plan-file revisions for the *same* plan number — folding any of them would erase the revision history. Keep each version as its own commit (first one `ai: Plan:`, each later one `ai: Plan update:`).
+   - A plan-save commit whose plan file content is **byte-identical** (or near-identical, no real change) to the plan it follows is not a new version — it did not "change" anything — fold it into its implementation like any other lone auto-commit.
+   - Several plan-save commits landing within seconds of each other, with **non-overlapping** edits (e.g. drafting different sections back-to-back rather than revising the same content) — squash those into a single plan commit. They're one drafting burst, not distinct versions; only genuinely separate revision passes (later editing, e.g. after review or a test run surfaced something) earn their own `ai: Plan update:`.
    - A prompt commit (`ai: updated prompt`) represents a clearly new or unrelated topic — it started a different task, not a continuation of the preceding code commit.
-   - When in doubt, fold. The goal is readable history, not preserving every auto-save.
+   - When in doubt, fold. The goal is readable preserved history, not having every auto-save as separate commit.
+
+   **Naming a plan-only commit that is kept separate:** raw hook messages like `ai: save plan <NNN>_<slug>` are placeholders, not final history — rename them to match the summary style used for real work, but with `ai: Plan:` (first version) or `ai: Plan update:` (each later revision of the same plan number) in place of `ai: Run:`:
+   ```md
+   [where] component-or-topic: ai: Plan: <short one-line summary of what the plan proposes><sentence-separator>
+   ```
+   ```md
+   [where] component-or-topic: ai: Plan update: <short one-line summary of what changed in this revision><sentence-separator>
+   ```
+   Leaving the bare `ai: save plan <NNN>_<slug>`/`ai: Plan …` hook message on a commit that's staying in history is not wanted — always rename it once it's confirmed to be a real, kept version cut.
+
+   The plan's summary line should read as basically the same line as the `ai: Run:` commit that eventually implements it, just in **current/imperative tense instead of past tense** — e.g. plan says `ai: Plan: Fix \`get-base.py\` auto mode failing on a fresh repo...`, the implementation says `ai: Run: Fixed \`get-base.py\` auto mode failing on a fresh repo...`. Don't invent a differently-worded plan summary; write the eventual Run summary first (even if only in your head) and de-conjugate it.
 
    If a `git reset --soft HEAD~N` accidentally included commits that should stay separate, restore them with `git reset --soft <original-hash>` before committing.
    Prefer `--amend` over `HEAD~1`.
@@ -53,6 +67,8 @@ Adopt these rules for every commit made this session:
    End every commit summary with a sentence separator: `.`, `:`, `,`, `!`, or `?`.
    Usually use `.` when the summary stands on its own and the body only adds context. Use `:` when the subject needs the body/details that follow to complete the thought.
    Both summary and body may contain pure-markdown for formatting.
+   Code ticks (`` `like this` ``) are allowed in the summary line itself — e.g. to name a function, file, or flag — not just in the body.
+   Do not hard-wrap the body at a fixed column width (e.g. 72 chars). Keep each paragraph or bullet point as one unbroken line, regardless of length; only break where a new paragraph or bullet genuinely starts.
 
    For normal use, multiple `[where]` parts can be written as one bracket with pipes, e.g. `[backend|frontend]`.
 
@@ -68,6 +84,10 @@ Adopt these rules for every commit made this session:
 6. Once this skill is activated, keep commiting after every completed task automatically without asking again.
    If the user responds with a simple `commit` or similar (`commit plz`, `keep commiting`, etc.), this means they want to remind you, to follow the "keep automatically committing" instruction, which you should already anyway.
 
+7. **Never rewrite already-committed history just because you noticed a gap.** If you spot a stray `ai:` auto-commit left un-folded somewhere in existing history (e.g. a leftover `ai: updated prompt` because an unexpected commit landed in between), do not rebase/`reset --soft`/amend it away on your own initiative — ask the user first (e.g. via `AskUserQuestion`) whether they want it cleaned up. Rules 1–6 above are about commits you are making *right now* to finish the current task; they are not standing permission to rewrite arbitrary prior history whenever this skill happens to be active. An explicit cleanup request from the user (e.g. "clean up the commits since last push") still authorizes the full procedure below.
+
+8. **Land a pure code move/rename as its own commit before changing that code further.** When relocating code (e.g. splitting a function into its own module), commit the move with identical content first — so git's diff/rename detection shows it as a move, not a rewrite — then commit the actual behavioral or style change on top. Keeps both diffs small and independently reviewable instead of one large tangle of "what moved" and "what changed."
+
 ## Cleaning up stray `ai:` auto-commits
 
 Use this procedure before merging or review when the branch has stray prompt/decision commits mixed into the history.
@@ -78,7 +98,7 @@ Handles these hook-created commits:
 - **`ai: save decision <slug>`** — one per resolved `AskUserQuestion`; touches only `ai/query.md` or `ai/°base/query.md`. The slug is derived from the first question's text.
 - **`ai: agent <id> results`** — subagent result record; touches only agent result files.
 - **`ai: record memory <slug>`** — memory file written; touches only files under the memory directory.
-- **Plan commits** — `ai: Plan …`, `ai: Plan Update …`, or `ai: save plan <NNN>_<slug>`; touches only `ai/plans/<NNN>_*.md` or `ai/°base/plans/<NNN>_*.md`. Keep separate when there are multiple versions of the same plan (the sequence records how the plan evolved). A lone plan commit with no follow-up updates may be folded into its implementation.
+- **Plan commits** — `ai: Plan …`, `ai: Plan Update …`, or `ai: save plan <NNN>_<slug>`; touches only `ai/plans/<NNN>_*.md` or `ai/°base/plans/<NNN>_*.md`. Keep separate — and renamed to `ai: Plan: …`/`ai: Plan update: …` (never left as the raw hook message) — when the plan file content is a genuine change cutting a new version, or when there are multiple revisions of the same plan number (the sequence records how the plan evolved). A plan commit whose content is unchanged/near-identical to the plan before it, or a lone plan commit with no real content and no follow-up updates, may be folded into its implementation instead.
 
 ### Procedure
 
@@ -94,7 +114,7 @@ done
 **2. Plan groups**
 
 - **`ai: updated prompt`**, **`ai: save decision <slug>`**, **`ai: agent <id> results`**, and **`ai: record memory <slug>`** commits → fix up under the **preceding** code commit by default. Exception: a prompt commit that clearly starts a different/unrelated task should stay as its own `pick`.
-- **Plan commits** → fix up into the implementation commit if the plan was never revised (no `ai: Plan Update …` follow-ups for the same plan number). If the plan was revised multiple times, keep each version as a separate `pick` — the sequence is the history.
+- **Plan commits** → fix up into the implementation commit if the plan was never revised, or if a follow-up plan-save's content turned out unchanged/near-identical (no real "change" happened, so it didn't earn a new version). Plan-saves seconds apart with non-overlapping edits (one drafting burst) squash together into a single plan `pick`. If the plan was genuinely revised in separate passes, keep each version as a separate `pick` and rename it — `ai: Plan: …` for the first, `ai: Plan update: …` for each later revision — instead of leaving the raw `ai: save plan <NNN>_<slug>` hook message. Word each summary as the eventual `ai: Run: …` summary in current tense rather than past tense.
 - **Mislabeled commits** → flag commits whose message does not match the files they actually changed. Rename them as part of the rebase instead of silently folding them the wrong way.
 
 **3. Write renamed commit messages** to `ai/git/rebase-msg-<sha>.md` for any commits needing a label fix.

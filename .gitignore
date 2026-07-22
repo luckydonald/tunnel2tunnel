@@ -969,6 +969,12 @@ coverage/
 # # output folders
 **/ai/output/debug/
 **/ai/°base/output/debug/
+# # `split.py` recovery state output
+**/.rebase-recovery.tmp
+# # commit message
+**/pending-commit.md
+# # rebase messages
+**/rebase-msg*.md
 
 
 ######################################

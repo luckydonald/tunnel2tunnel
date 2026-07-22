@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """UserPromptSubmit hook: append the user's prompt to ai/query.md and commit.
 
+For Codex, also catch up direct user shell-command turns found in the session
+transcript and save their output under ai[/°base]/output/commands/.
+
 Usage: hook.py [ai_tool_name]   (default: unknown)
 
 Task notifications (<task-notification> XML) are intercepted and written as a
@@ -9,6 +12,8 @@ and Explore results to ai/output/explore/NNN.task-id/ (or °base equivalents).
 """
 from __future__ import annotations
 
+import html
+import importlib
 import json
 import re
 import subprocess
@@ -18,9 +23,20 @@ from typing import NamedTuple
 from xml.etree import ElementTree as ET
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from _lib import append_and_commit, base_ai_commit_subject, dump_debug_payload, read_payload, resolve_log_path  # noqa: E402
+import compact_result  # noqa: E402
+from _lib import (  # noqa: E402
+    append_and_commit,
+    base_ai_commit_subject,
+    dump_debug_payload,
+    is_cross_tool_duplicate,
+    read_payload,
+    resolve_log_path,
+    _subproject_root,
+)
 
-PREFIXES = {"claude": "❯", "codex": "›"}
+reffiles_lib = importlib.import_module("°reffiles_lib")
+
+PREFIXES = {"claude": "❯", "codex": "›", "copilot": "◆"}
 DEFAULT_PREFIX = "⩼"
 CODEX_FORWARDED_PLAN_PREFIX = (
     "A previous agent produced the plan below to accomplish the user's task. "
@@ -35,6 +51,21 @@ CLAUDE_GITHUB_WORKER_PREFIX = (
     "Think carefully as you analyze the context and respond appropriately. "
     "Here's the context for your current task:"
 )
+# Copilot CLI's `/plan` mode prepends this literal marker to the submitted
+# prompt rather than having the user type a slash command; rendered using the
+# same `/plan ...` convention already used for Claude's literal `/plan` prompts.
+COPILOT_PLAN_MARKER = "[[PLAN]] "
+# Harness-injected autonomous-continuation nudge, not something the user
+# typed — must never be logged as a real prompt.
+HARNESS_TASK_COMPLETE_REMINDER_PREFIX = (
+    "You have not yet marked the task as complete using the task_complete tool."
+)
+
+
+def _strip_copilot_plan_prompt(prompt: str) -> str:
+    if prompt.startswith(COPILOT_PLAN_MARKER):
+        return "/plan " + prompt[len(COPILOT_PLAN_MARKER):]
+    return prompt
 
 # Single-command prompts we never want to log: internal tooling invocations
 # and the most common "please commit now" reminders.
@@ -49,6 +80,9 @@ SKIP_PROMPTS = {
     "please commit", "pls commit", "plz commit",
     "commit now", "now commit",
     "keep committing", "always commit",
+    # squashing/cleanup
+    "squash", "squash it", "squash it with lplp style",
+    "rebase", "rebase it", "rebase it with lplp style",
     # bumping the AI to continue
     "continue", "go on", "bump",
     # confirmations
@@ -65,6 +99,285 @@ class PromptLogEntry(NamedTuple):
     text: str
     preformatted: bool = False
     extra_paths: tuple[Path, ...] = ()
+
+
+class CommandExecution(NamedTuple):
+    command: str
+    exit_code: str
+    duration: str
+    output: str
+
+
+def _parse_user_shell_command(text: str) -> CommandExecution | None:
+    """Parse Codex's transcript-only direct-shell-command envelope.
+
+    This is intentionally strict: Codex documents transcript_path as a
+    convenience rather than a stable hook interface, so an unfamiliar shape
+    must be ignored instead of producing partial or misleading artifacts.
+    """
+    match = re.fullmatch(
+        r"<user_shell_command>\n"
+        r"<command>\n(.*?)\n</command>\n"
+        r"<result>\n(.*)\n</result>\n"
+        r"</user_shell_command>",
+        text,
+        flags=re.DOTALL,
+    )
+    if not match:
+        return None
+
+    result = re.fullmatch(
+        r"Exit code: ([^\n]*)\n"
+        r"Duration: ([^\n]*)\n"
+        r"Output:\n(.*)",
+        match.group(2),
+        flags=re.DOTALL,
+    )
+    if not result:
+        return None
+    return CommandExecution(
+        command=match.group(1),
+        exit_code=result.group(1),
+        duration=result.group(2),
+        output=result.group(3),
+    )
+
+
+def _user_input_texts(obj: dict) -> tuple[str, list[str]] | None:
+    """Return (turn_id, input_text values) for a transcript user message."""
+    if obj.get("type") != "response_item":
+        return None
+    message = obj.get("payload")
+    if (
+        not isinstance(message, dict)
+        or message.get("type") != "message"
+        or message.get("role") != "user"
+    ):
+        return None
+    content = message.get("content")
+    if not isinstance(content, list):
+        return None
+    texts = [
+        item.get("text", "")
+        for item in content
+        if isinstance(item, dict)
+        and item.get("type") == "input_text"
+        and isinstance(item.get("text"), str)
+    ]
+    metadata = message.get("internal_chat_message_metadata_passthrough")
+    turn_id = metadata.get("turn_id", "") if isinstance(metadata, dict) else ""
+    return turn_id, texts
+
+
+def _commands_before_current_prompt(payload: dict, prompt: str) -> list[CommandExecution]:
+    """Return direct shell commands since the preceding ordinary user prompt."""
+    transcript_path = payload.get("transcript_path")
+    current_turn_id = payload.get("turn_id")
+    if not isinstance(transcript_path, str) or not transcript_path:
+        return []
+    if not isinstance(current_turn_id, str) or not current_turn_id:
+        return []
+
+    pending: list[CommandExecution] = []
+    try:
+        with open(transcript_path, encoding="utf-8") as transcript:
+            for line in transcript:
+                try:
+                    obj = json.loads(line)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+
+                user_message = _user_input_texts(obj)
+                if user_message is not None:
+                    turn_id, texts = user_message
+                    parsed = [
+                        command
+                        for text in texts
+                        if (command := _parse_user_shell_command(text)) is not None
+                    ]
+                    if parsed:
+                        pending.extend(parsed)
+                        continue
+                    if turn_id == current_turn_id and prompt in texts:
+                        return pending
+
+                event = obj.get("payload") if obj.get("type") == "event_msg" else None
+                if isinstance(event, dict) and event.get("type") == "user_message":
+                    # This is the stable transcript marker for an ordinary
+                    # user prompt. Direct shell-command turns have no such
+                    # event, so only commands after this boundary remain.
+                    pending.clear()
+    except OSError:
+        return []
+    return []
+
+
+def _queued_commands_before_current_prompt(payload: dict) -> list[str]:
+    """Return queued/interjected prompt texts sent while Claude was still
+    mid-turn ("type ahead" queueing -- spliced into the ongoing turn's
+    context rather than starting a fresh one) since the last genuine
+    top-level prompt, up to (not including) the current one.
+
+    These never trigger their own UserPromptSubmit event -- the harness
+    doesn't start a new turn for them -- so without this scan they're never
+    seen or logged at all. They show up in the transcript as a
+    `type: "attachment"` record with `attachment.type == "queued_command"`
+    (holding the full text), not as a normal `type: "user"` turn. Mirrors
+    Codex's `_commands_before_current_prompt` above, just for this
+    Claude-specific envelope shape and boundary marker (`promptId` instead of
+    `turn_id`).
+    """
+    transcript_path = payload.get("transcript_path")
+    current_prompt_id = payload.get("prompt_id")
+    if not isinstance(transcript_path, str) or not transcript_path:
+        return []
+    # end if
+    if not isinstance(current_prompt_id, str) or not current_prompt_id:
+        return []
+    # end if
+
+    pending: list[str] = []
+    try:
+        with open(transcript_path, encoding="utf-8") as transcript:
+            for line in transcript:
+                try:
+                    obj = json.loads(line)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                # end try
+
+                if obj.get("type") == "attachment":
+                    attachment = obj.get("attachment")
+                    if isinstance(attachment, dict) and attachment.get("type") == "queued_command":
+                        text = attachment.get("prompt")
+                        if isinstance(text, str) and text.strip():
+                            pending.append(text)
+                        # end if
+                        continue
+                    # end if
+                # end if
+
+                if obj.get("type") == "user" and "promptId" in obj:
+                    if obj.get("promptId") == current_prompt_id:
+                        return pending
+                    # end if
+                    # A genuine top-level prompt turn boundary -- anything
+                    # queued before it already belongs to that turn, already
+                    # captured by save-prompt's own normal logging for it.
+                    pending = []
+                # end if
+            # end for
+        # end with
+    except OSError:
+        return []
+    # end try
+    return []
+# end def
+
+
+def _capture_claude_queued_commands(payload: dict, prefix: str, log_path: Path) -> None:
+    for text in _queued_commands_before_current_prompt(payload):
+        append_and_commit(
+            log_path,
+            f"{prefix} {text}\n\n",
+            commit_template_relpath="ai/commit-templates/prompt",
+            default_commit_msg="ai: updated prompt",
+        )
+    # end for
+# end def
+
+
+def _next_command_number(commands_dir: Path) -> int:
+    if not commands_dir.exists():
+        return 1
+    numbers = [
+        int(match.group(1))
+        for path in commands_dir.iterdir()
+        if path.is_file() and (match := re.fullmatch(r"(\d+)\.log", path.name))
+    ]
+    return max(numbers, default=0) + 1
+
+
+def _code_fence(text: str) -> str:
+    longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
+    return "`" * max(3, longest + 1)
+
+
+def _render_command_execution(
+    prefix: str,
+    execution: CommandExecution,
+    output_file: Path,
+    rel_output: str,
+) -> str:
+    command_lines = execution.command.splitlines() or [""]
+    summary = html.escape(f"$ {command_lines[0]}")
+    if len(command_lines) > 1:
+        summary += " …"
+    fence = _code_fence(execution.command)
+    command_block = "\n".join([f"$ {command_lines[0]}", *command_lines[1:]])
+    output_chars = len(execution.output)
+    return (
+        f"{prefix} Command executed.\n"
+        "> <details><summary>\n"
+        ">\n"
+        f">> <code>{summary}</code>\n"
+        ">\n"
+        "> (click to expand)\n"
+        ">\n"
+        "> </summary>\n"
+        ">\n"
+        ">> **Command**\n"
+        ">\n"
+        f"> {fence}console\n"
+        + "".join(f"> {line}\n" if line else ">\n" for line in command_block.splitlines())
+        + f"> {fence}\n"
+        ">\n"
+        f">> Exit code: <kbd>{html.escape(execution.exit_code)}</kbd>"
+        f" · Duration: `{html.escape(execution.duration)}`\n"
+        f">> {_markdown_file_link('Output', output_chars, _human_size(str(output_file)), rel_output)}\n"
+        ">\n"
+        "> </details>\n"
+        ">\n"
+        "\n"
+    )
+
+
+def _capture_codex_commands(payload: dict, prompt: str, prefix: str, log_path: Path) -> None:
+    commands = _commands_before_current_prompt(payload, prompt)
+    if not commands:
+        return
+
+    commands_dir = log_path.parent / "output" / "commands"
+    commands_dir.mkdir(parents=True, exist_ok=True)
+    first_number = _next_command_number(commands_dir)
+    output_files: list[Path] = []
+    blocks: list[str] = []
+    for offset, execution in enumerate(commands):
+        number = first_number + offset
+        output_file = commands_dir / f"{number:03d}.log"
+        output_file.write_text(execution.output, encoding="utf-8")
+        output_files.append(output_file)
+        blocks.append(
+            _render_command_execution(
+                prefix,
+                execution,
+                output_file,
+                f"output/commands/{output_file.name}",
+            )
+        )
+
+    last_number = first_number + len(commands) - 1
+    if first_number == last_number:
+        commit_message = f"ai: command {first_number:03d} result"
+    else:
+        commit_message = f"ai: commands {first_number:03d}-{last_number:03d} results"
+    append_and_commit(
+        log_path,
+        "".join(blocks),
+        commit_template_relpath="ai/commit-templates/prompt",
+        default_commit_msg=commit_message,
+        extra_paths=tuple(output_files),
+    )
 
 
 def _latest_numbered_plan(plans_dir: Path) -> Path | None:
@@ -495,6 +808,7 @@ def _parse_compact_autoloads(prompt: str) -> str:
 def _handle_compact_prompt(
     prefix: str,
     prompt: str,
+    payload: dict[str, object],
     log_path: Path,
     commit_template_relpath: str,
     default_commit_msg: str,
@@ -504,22 +818,16 @@ def _handle_compact_prompt(
     if not stripped.startswith("/compact") or "⎿" not in stripped:
         return False
 
-    compact_dir = log_path.parent / "output" / "compact"
-    # Sequential numbering for compact dirs (plain NNN, no task-id suffix)
-    if not compact_dir.exists():
-        num = 1
-    else:
-        nums = [
-            int(m.group(1))
-            for d in compact_dir.iterdir()
-            if d.is_dir() and (m := re.match(r"^(\d+)$", d.name))
-        ]
-        num = max(nums, default=0) + 1
-    dir_name = f"{num:03d}"
-    result_dir = compact_dir / dir_name
-    result_dir.mkdir(parents=True, exist_ok=True)
-
     autoloads_text = _parse_compact_autoloads(prompt)
+    result_dir = compact_result.reserve_artifact_directory(
+        log_path,
+        payload,
+        "autoloads.md",
+        autoloads_text,
+    )
+    if result_dir is None:
+        return True
+    dir_name = result_dir.name
     autoloads_file = result_dir / "autoloads.md"
     autoloads_file.write_text(autoloads_text, encoding="utf-8")
 
@@ -564,8 +872,6 @@ def _handle_task_notification(
     prefix: str,
     prompt: str,
     log_path: Path,
-    commit_template_relpath: str,
-    default_commit_msg: str,
 ) -> bool:
     """If prompt contains a task notification, write agent files and a summary entry.
 
@@ -588,15 +894,6 @@ def _handle_task_notification(
         result_file = result_dir / "result.md"
         result_file.write_text(info["result"], encoding="utf-8")
 
-        cwd = Path.cwd()
-        result_rel_abs = str(result_file.relative_to(cwd))
-        subprocess.run(["git", "add", "--", result_rel_abs], capture_output=True)
-        subprocess.run(
-            ["git", "commit", "--no-verify", "--only", result_rel_abs,
-             "-m", base_ai_commit_subject(f"ai: explore {dir_name} result")],
-            capture_output=True,
-        )
-
         rel_result = f"output/explore/{dir_name}/result.md"
         result_chars = len(info["result"])
         log_chars = _char_count(info["output_file"])
@@ -617,8 +914,9 @@ def _handle_task_notification(
         append_and_commit(
             log_path,
             content,
-            commit_template_relpath=commit_template_relpath,
-            default_commit_msg=default_commit_msg,
+            commit_template_relpath="ai/commit-templates/prompt",
+            default_commit_msg=f"ai: explore {dir_name} result",
+            extra_paths=(result_file,),
         )
         return True
 
@@ -643,16 +941,6 @@ def _handle_task_notification(
     prompt_file.write_text(agent_prompt, encoding="utf-8")
     result_file.write_text(result_text, encoding="utf-8")
 
-    cwd = Path.cwd()
-    prompt_rel = str(prompt_file.relative_to(cwd))
-    result_rel = str(result_file.relative_to(cwd))
-    subprocess.run(["git", "add", "--", prompt_rel, result_rel], capture_output=True)
-    subprocess.run(
-        ["git", "commit", "--no-verify", "--only", prompt_rel, result_rel,
-         "-m", base_ai_commit_subject(f"ai: agent {dir_name} results")],
-        capture_output=True,
-    )
-
     rel_prompt = f"output/agents/{dir_name}/prompt.md"
     rel_result = f"output/agents/{dir_name}/result.md"
     query_chars = len(agent_prompt)
@@ -674,8 +962,9 @@ def _handle_task_notification(
     append_and_commit(
         log_path,
         content,
-        commit_template_relpath=commit_template_relpath,
-        default_commit_msg=default_commit_msg,
+        commit_template_relpath="ai/commit-templates/prompt",
+        default_commit_msg=f"ai: agent {dir_name} results",
+        extra_paths=(prompt_file, result_file),
     )
     return True
 
@@ -685,19 +974,30 @@ def main() -> int:
     prefix = PREFIXES.get(ai_tool, DEFAULT_PREFIX)
 
     payload = read_payload()
+    if is_cross_tool_duplicate(ai_tool):
+        return 0
     dump_debug_payload(payload, "save-prompt")
     prompt = payload.get("prompt") or payload.get("user_prompt") or ""
     if not prompt and isinstance(payload.get("tool_input"), dict):
         prompt = payload["tool_input"].get("prompt") or ""
     if not prompt.strip():
         return 0
+    raw_prompt = prompt
+    log_path = resolve_log_path("ai/query.md", "ai/°base/query.md")
+    if ai_tool == "codex":
+        _capture_codex_commands(payload, prompt, prefix, log_path)
+    elif ai_tool == "claude":
+        _capture_claude_queued_commands(payload, prefix, log_path)
     if prompt.strip() in SKIP_PROMPTS:
         return 0
-
-    log_path = resolve_log_path("ai/query.md", "ai/°base/query.md")
+    if prompt.strip().startswith(HARNESS_TASK_COMPLETE_REMINDER_PREFIX):
+        return 0
     preformatted_prompt = False
     entry = PromptLogEntry(prompt)
-    if ai_tool == "codex":
+    if ai_tool == "copilot":
+        prompt = _strip_copilot_plan_prompt(prompt)
+        entry = PromptLogEntry(prompt)
+    elif ai_tool == "codex":
         entry = _strip_codex_forwarded_plan_prompt(prompt, log_path.parent / "plans")
         prompt = entry.text
         preformatted_prompt = entry.preformatted
@@ -711,8 +1011,8 @@ def main() -> int:
             return 0
 
     if _handle_compact_prompt(
-        prefix, prompt, log_path,
-        commit_template_relpath="ai/commit-templates/prompt.md",
+        prefix, prompt, payload, log_path,
+        commit_template_relpath="ai/commit-templates/prompt",
         default_commit_msg="ai: updated prompt",
     ):
         return 0
@@ -723,16 +1023,12 @@ def main() -> int:
             r"<task-notification>.*?</task-notification>", "", prompt, flags=re.DOTALL
         ).strip()
 
-    if _handle_task_notification(
-        prefix, prompt, log_path,
-        commit_template_relpath="ai/commit-templates/prompt.md",
-        default_commit_msg="ai: updated prompt",
-    ):
+    if _handle_task_notification(prefix, prompt, log_path):
         if remaining_after_task:
             append_and_commit(
                 log_path,
                 f"{prefix} {remaining_after_task}\n\n",
-                commit_template_relpath="ai/commit-templates/prompt.md",
+                commit_template_relpath="ai/commit-templates/prompt",
                 default_commit_msg="ai: updated prompt",
             )
         return 0
@@ -741,10 +1037,11 @@ def main() -> int:
     append_and_commit(
         log_path,
         content,
-        commit_template_relpath="ai/commit-templates/prompt.md",
+        commit_template_relpath="ai/commit-templates/prompt",
         default_commit_msg="ai: updated prompt",
         extra_paths=entry.extra_paths,
     )
+    reffiles_lib.handle_referenced_files(raw_prompt, _subproject_root())
     return 0
 
 

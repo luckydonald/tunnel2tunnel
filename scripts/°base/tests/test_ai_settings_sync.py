@@ -61,6 +61,59 @@ class HooksTests(unittest.TestCase):
         self.assertIn("'codex'", command)
         self.assertNotIn("'claude'", command)
 
+    def test_render_codex_rewrites_codex_memory_tool_arg(self):
+        shared = {
+            "hooks": {
+                "Stop": [
+                    {
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": "python3 scripts/°base/ai/hooks/record-codex-memory/hook.py 'claude'",
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+
+        codex = hooks.render_codex_hooks(shared)
+        claude = hooks.render_claude(shared)
+        codex_command = codex["hooks"]["Stop"][0]["hooks"][0]["command"]
+        claude_command = claude["hooks"]["Stop"][0]["hooks"][0]["command"]
+
+        self.assertIn("'codex'", codex_command)
+        self.assertNotIn("'claude'", codex_command)
+        self.assertIn("'claude'", claude_command)
+        self.assertNotIn("'codex'", claude_command)
+
+    def test_render_codex_rewrites_compact_tool_arg(self):
+        shared = {
+            "hooks": {
+                "PostCompact": [
+                    {
+                        "matcher": "manual|auto",
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": "python3 scripts/°base/ai/hooks/save-compact-prompt/hook.py 'claude'",
+                            }
+                        ],
+                    }
+                ]
+            }
+        }
+
+        codex = hooks.render_codex_hooks(shared)
+        claude = hooks.render_claude(shared)
+        codex_command = codex["hooks"]["PostCompact"][0]["hooks"][0]["command"]
+        claude_command = claude["hooks"]["PostCompact"][0]["hooks"][0]["command"]
+
+        self.assertIn("'codex'", codex_command)
+        self.assertNotIn("'claude'", codex_command)
+        self.assertIn("'claude'", claude_command)
+        self.assertNotIn("'codex'", claude_command)
+
     def test_render_codex_rewrites_plan_tool_arg(self):
         shared = {
             "hooks": {
@@ -191,6 +244,111 @@ class HooksTests(unittest.TestCase):
         hook = rendered["hooks"]["SessionStart"][0]["hooks"][0]
 
         self.assertNotIn("async", hook)
+
+    def test_render_copilot_rewrites_tool_arg(self):
+        shared = {
+            "hooks": {
+                "UserPromptSubmit": [
+                    {
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": "python3 scripts/°base/ai/hooks/save-prompt/hook.py 'claude'",
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+
+        rendered = hooks.render_copilot_hooks(shared)
+        command = rendered["hooks"]["UserPromptSubmit"][0]["hooks"][0]["bash"]
+
+        self.assertIn("'copilot'", command)
+        self.assertNotIn("'claude'", command)
+
+    def test_render_copilot_uses_bash_and_timeout_sec(self):
+        shared = {
+            "hooks": {
+                "SessionStart": [
+                    {
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": "python3 hook.py",
+                                "timeout": 5,
+                                "statusMessage": "Doing a thing",
+                                "async": True,
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+
+        rendered = hooks.render_copilot_hooks(shared)
+        hook = rendered["hooks"]["SessionStart"][0]["hooks"][0]
+
+        self.assertEqual(hook["bash"], "python3 hook.py")
+        self.assertNotIn("command", hook)
+        self.assertEqual(hook["timeoutSec"], 5)
+        self.assertNotIn("timeout", hook)
+        self.assertNotIn("statusMessage", hook)
+        self.assertNotIn("async", hook)
+
+    def test_render_copilot_top_level_shape_has_version_and_no_extra_keys(self):
+        shared = {"hooks": {}, "permissions": {"allow": ["Bash(git status:*)"]}}
+
+        rendered = hooks.render_copilot_hooks(shared)
+
+        self.assertEqual(rendered["version"], 1)
+        self.assertEqual(set(rendered.keys()), {"version", "hooks"})
+
+    def test_render_copilot_matches_claude_matcher(self):
+        shared = {
+            "hooks": {
+                "PostToolUse": [
+                    {
+                        "matcher": "Write|Edit|ExitPlanMode|create|edit|exit_plan_mode",
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": "python3 scripts/°base/ai/hooks/save-plan/hook.py 'claude'",
+                            }
+                        ],
+                    }
+                ]
+            }
+        }
+
+        rendered = hooks.render_copilot_hooks(shared)
+        entry = rendered["hooks"]["PostToolUse"][0]
+
+        self.assertEqual(entry["matcher"], "Write|Edit|ExitPlanMode|create|edit|exit_plan_mode")
+        self.assertIn("'copilot'", entry["hooks"][0]["bash"])
+
+    def test_normalize_native_accepts_copilot_bash_and_timeout_sec(self):
+        native = {
+            "hooks": {
+                "Stop": [
+                    {
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "bash": "python3 scripts/°base/ai/hooks/save-plan/hook.py 'copilot'",
+                                "timeoutSec": 7,
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+
+        normalized = hooks._normalize_native(native)
+        hook = normalized["hooks"]["Stop"][0]["hooks"][0]
+
+        self.assertIn("'claude'", hook["command"])
+        self.assertEqual(hook["timeout"], 7)
 
     def test_render_claude_keeps_permissions(self):
         shared = {
@@ -358,6 +516,24 @@ class CommandsTests(unittest.TestCase):
         entry = commands._parse_claude_permission_entry("Bash(git status:*)")
         self.assertEqual(entry, {"type": "bash", "command": "git status:*"})
         self.assertEqual(commands._render_claude_permission_entry(entry), "Bash(git status:*)")
+
+    def test_render_bash_escapes_literal_parens(self):
+        entry = {"type": "bash", "command": 'mv foo ".bar.$(date +%Y-%m-%d).bak"'}
+        self.assertEqual(
+            commands._render_claude_permission_entry(entry),
+            'Bash(mv foo ".bar.$\\(date +%Y-%m-%d\\).bak")',
+        )
+
+    def test_parse_bash_unescapes_literal_parens(self):
+        entry = commands._parse_claude_permission_entry(
+            'Bash(mv foo ".bar.$\\(date +%Y-%m-%d\\).bak")'
+        )
+        self.assertEqual(entry, {"type": "bash", "command": 'mv foo ".bar.$(date +%Y-%m-%d).bak"'})
+
+    def test_parse_render_round_trip_bash_with_parens(self):
+        original = 'Bash(mv foo ".bar.$\\(date +%Y-%m-%d\\).bak")'
+        entry = commands._parse_claude_permission_entry(original)
+        self.assertEqual(commands._render_claude_permission_entry(entry), original)
 
     def test_parse_render_round_trip_read(self):
         entry = commands._parse_claude_permission_entry("Read(**/.env*)")
@@ -811,6 +987,59 @@ class CliLoadLayerTests(unittest.TestCase):
             self.assertEqual(shared["download_link"], {"ide": "pycharm"})
             self.assertNotIn("download_link", hooks.render_claude(shared))
 
+    def test_load_layer_injects_shared_schema(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            shared_path = root / "ai" / "tool-settings" / "settings.json"
+            shared_path.parent.mkdir(parents=True)
+            shared_path.write_text('{"version": 2}', encoding="utf-8")
+
+            shared = cli._load_layer(
+                shared_path,
+                root / ".claude" / "settings.json",
+                root / ".codex" / "hooks.json",
+            )
+
+            self.assertEqual(shared["$schema"], "./settings.schema.json")
+            self.assertNotIn("$schema", hooks.render_claude(shared))
+
+    def test_load_layer_injects_local_schema_and_allows_other_pre_commit_settings(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            shared_path = root / "ai" / "tool-settings" / "settings.local.json"
+            shared_path.parent.mkdir(parents=True)
+            shared_path.write_text(
+                '{"pre_commit": {"other": {"enabled": false}}}',
+                encoding="utf-8",
+            )
+
+            shared = cli._load_layer(
+                shared_path,
+                root / ".claude" / "settings.local.json",
+                root / ".codex" / "hooks.local.json",
+            )
+
+            self.assertEqual(shared["$schema"], "./settings-local.schema.json")
+            self.assertEqual(shared["pre_commit"], {"other": {"enabled": False}})
+            self.assertNotIn("pre_commit", hooks.render_codex_hooks(shared))
+
+    def test_load_layer_rejects_local_yarn_policy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            shared_path = root / "ai" / "tool-settings" / "settings.local.json"
+            shared_path.parent.mkdir(parents=True)
+            shared_path.write_text(
+                '{"pre_commit": {"yarn@4": {"enabled": false}}}',
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "shared repository policy"):
+                cli._load_layer(
+                    shared_path,
+                    root / ".claude" / "settings.local.json",
+                    root / ".codex" / "hooks.local.json",
+                )
+
     def test_load_layer_does_not_leak_legacy_enabled_plugins_as_extra_key(self):
         # Regression test: "enabledPlugins" (the deprecated v1 name for
         # "plugins") must not survive as an opaque extra key alongside the
@@ -1154,6 +1383,49 @@ class CliApplyOrCheckTests(unittest.TestCase):
             second_pass = cli._apply_or_check(shared_path, claude_path, codex_path, True, rules_path, config_path)
             self.assertEqual(second_pass, [])
 
+    def test_content_change_preserves_existing_native_key_order(self):
+        # Regression test: `render_claude` always builds its result dict in a
+        # fixed key order (hooks, permissions, enabledPlugins, ...). Without
+        # preserving the existing file's order, a single unrelated content
+        # change (e.g. one new permission) would reorder every top-level key
+        # in `.claude/settings.json` and turn a one-line diff into a
+        # whole-file rewrite.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            shared_path = root / "ai" / "tool-settings" / "settings.json"
+            claude_path = root / ".claude" / "settings.json"
+            codex_path = root / ".codex" / "hooks.json"
+            rules_path = root / ".codex" / "rules" / "generated.rules"
+            config_path = root / ".codex" / "config.toml"
+
+            shared_path.parent.mkdir(parents=True)
+            shared_path.write_text(
+                '{"version": 1, "hooks": {}, '
+                '"permissions": {"allow": [{"type": "bash", "command": "tree:*"}], "deny": []}, '
+                '"enabledPlugins": {"demo@marketplace": true}}',
+                encoding="utf-8",
+            )
+
+            claude_path.parent.mkdir(parents=True)
+            claude_path.write_text(
+                '{"permissions": {"allow": ["Bash(tree:*)"], "deny": []}, '
+                '"enabledPlugins": {"demo@marketplace": true}, "hooks": {}}',
+                encoding="utf-8",
+            )
+
+            shared_path.write_text(
+                '{"version": 1, "hooks": {}, '
+                '"permissions": {"allow": [{"type": "bash", "command": "tree:*"}, '
+                '{"type": "bash", "command": "ls:*"}], "deny": []}, '
+                '"enabledPlugins": {"demo@marketplace": true}}',
+                encoding="utf-8",
+            )
+
+            cli._apply_or_check(shared_path, claude_path, codex_path, True, rules_path, config_path)
+
+            claude = json.loads(claude_path.read_text(encoding="utf-8"))
+            self.assertEqual(list(claude.keys()), ["permissions", "enabledPlugins", "hooks"])
+
     def test_exact_command_without_wildcard_does_not_duplicate_across_runs(self):
         # Regression test: `render_codex_rules` always emits a prefix rule (no
         # exact-match concept in Codex), so an exact Claude command like
@@ -1240,18 +1512,22 @@ class SkillsTests(unittest.TestCase):
             "SHARED_SKILLS",
             "AGENTS_SKILLS",
             "CLAUDE_SKILLS",
+            "CLAUDE_COMMANDS",
+            "CODEX_COMMANDS",
         ]
         previous = {name: getattr(paths, name) for name in names}
         paths.SHARED_SKILLS = root / "ai" / "skills"
         paths.AGENTS_SKILLS = root / ".agents" / "skills"
         paths.CLAUDE_SKILLS = root / ".claude" / "skills"
+        paths.CLAUDE_COMMANDS = root / ".claude" / "commands"
+        paths.CODEX_COMMANDS = root / ".codex" / "commands"
         try:
             yield
         finally:
             for name, value in previous.items():
                 setattr(paths, name, value)
 
-    def test_sync_skills_imports_new_claude_skill_over_shared_source(self):
+    def test_sync_skills_preserves_shared_source_over_newer_claude_skill(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             shared = root / "ai" / "skills" / "demo" / "SKILL.md"
@@ -1281,9 +1557,37 @@ class SkillsTests(unittest.TestCase):
                 skills._sync_skills(True)
 
             shared_text = shared.read_text(encoding="utf-8")
-            self.assertIn("New Claude skill.", shared_text)
-            self.assertIn("New body.", shared_text)
-            self.assertTrue(claude_skill.is_symlink())
+            self.assertIn("Old shared source.", shared_text)
+            self.assertIn("Old body.", shared_text)
+            self.assertNotIn("New Claude skill.", shared_text)
+            self.assertNotIn("New body.", shared_text)
+            # `_sync_skills` symlinks the whole skill directory (not each file
+            # individually) so multi-file skills mirror completely.
+            self.assertTrue(claude_skill.parent.is_symlink())
+            self.assertEqual(claude_skill.resolve(), shared.resolve())
+
+    def test_sync_skills_imports_claude_skill_when_shared_source_is_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            shared = root / "ai" / "skills" / "demo" / "SKILL.md"
+            claude_skill = root / ".claude" / "skills" / "demo" / "SKILL.md"
+            claude_skill.parent.mkdir(parents=True)
+            claude_skill.write_text(
+                "---\n"
+                "name: demo\n"
+                "description: Claude skill.\n"
+                "---\n\n"
+                "Claude body.\n",
+                encoding="utf-8",
+            )
+
+            with self.patched_skill_paths(root):
+                skills._sync_skills(True)
+
+            shared_text = shared.read_text(encoding="utf-8")
+            self.assertIn("Claude skill.", shared_text)
+            self.assertIn("Claude body.", shared_text)
+            self.assertTrue(claude_skill.parent.is_symlink())
             self.assertEqual(claude_skill.resolve(), shared.resolve())
 
 

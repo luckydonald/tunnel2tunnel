@@ -25,7 +25,10 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from _lib import base_ai_commit_subject, dump_debug_payload, read_payload, resolve_log_path, slugify  # noqa: E402
+from _lib import dump_debug_payload, is_cross_tool_duplicate, read_payload, resolve_log_path, slugify  # noqa: E402
+from importlib import import_module  # noqa: E402
+
+commit_message = import_module("°commit_style_lib").commit_message
 
 _STATE_FILE = Path(tempfile.gettempdir()) / "save-plan-state.json"
 
@@ -69,22 +72,51 @@ def _plan_from_response(tool_response) -> str:
 
 
 def _plan_from_write(tool_input: dict) -> str:
-    """Extract plan text when the Write tool writes to ~/.claude/plans/*.md."""
-    file_path = tool_input.get("file_path") or ""
-    if not re.search(r"/\.claude/plans/[^/]+\.md$", file_path):
+    """Extract plan text when the Write/create tool writes the harness's plan
+    file: Claude's ``~/.claude/plans/*.md`` or Copilot's
+    ``~/.copilot/session-state/<session_id>/plan.md``."""
+    file_path = tool_input.get("file_path") or tool_input.get("path") or ""
+    if not _is_plan_file_path(file_path):
         return ""
-    return (tool_input.get("content") or "").strip()
+    return (tool_input.get("content") or tool_input.get("file_text") or "").strip()
 
 
 def _plan_from_edit(tool_input: dict) -> str:
-    """Extract plan text when the Edit tool patches ~/.claude/plans/*.md."""
-    file_path = tool_input.get("file_path") or ""
-    if not re.search(r"/\.claude/plans/[^/]+\.md$", file_path):
+    """Extract plan text when the Edit/edit tool patches the harness's plan
+    file: Claude's ``~/.claude/plans/*.md`` or Copilot's
+    ``~/.copilot/session-state/<session_id>/plan.md``."""
+    file_path = tool_input.get("file_path") or tool_input.get("path") or ""
+    if not _is_plan_file_path(file_path):
         return ""
     try:
         return Path(file_path).read_text(encoding="utf-8").strip()
     except OSError:
         return ""
+
+
+def _is_plan_file_path(file_path: str) -> bool:
+    """True for Claude's ``~/.claude/plans/*.md`` or Copilot's
+    ``~/.copilot/session-state/<session_id>/plan.md``."""
+    if not file_path:
+        return False
+    return bool(
+        re.search(r"/\.claude/plans/[^/]+\.md$", file_path)
+        or re.search(r"/\.copilot/session-state/[^/]+/plan\.md$", file_path)
+    )
+
+
+def _plan_from_copilot_session(payload: dict) -> str:
+    """Fallback for Copilot's ``exit_plan_mode`` tool: its ``tool_response``
+    doesn't carry the full plan text (that lives in the session's own
+    ``plan.md``, already captured by a prior Write/create event). Read it
+    directly via the session id when the response has no usable plan."""
+    session_id = str(payload.get("session_id") or "").strip()
+    if not session_id:
+        return ""
+    plan_path = Path.home() / ".copilot" / "session-state" / session_id / "plan.md"
+    if not plan_path.is_file():
+        return ""
+    return plan_path.read_text(encoding="utf-8").strip()
 
 
 def _plan_from_codex_stop(payload: dict) -> str:
@@ -197,6 +229,89 @@ def _plan_from_codex_sources(payload: dict) -> str:
 # ---------------------------------------------------------------------------
 # Prefix helpers
 # ---------------------------------------------------------------------------
+# Todo capture
+# ---------------------------------------------------------------------------
+
+_TODO_CHECKBOXES = {
+    "done": "[x]",
+    "completed": "[x]",
+    "in_progress": "[ ]",
+    "pending": "[ ]",
+    "blocked": "[ ]",
+}
+_TODO_SUFFIXES = {
+    "in_progress": " *(in progress)*",
+    "blocked": " *(blocked)*",
+}
+_TODOS_HEADING = "## Todos"
+
+
+def _normalize_todos(tool_input: dict) -> list[dict]:
+    """Normalize a TodoWrite (Claude) / update_todo (Copilot) tool_input into
+    a flat list of ``{"text": str, "status": str}`` items.
+
+    Claude's TodoWrite: ``todos: [{content, status, activeForm}]``.
+    Copilot's update_todo schema isn't pinned down by the docs at
+    implementation time, so several plausible field names are accepted
+    defensively (``items``/``todo_list`` as list containers; ``title``/
+    ``task``/``description`` as text fields).
+    """
+    raw = (
+        tool_input.get("todos")
+        or tool_input.get("items")
+        or tool_input.get("todo_list")
+        or []
+    )
+    if not isinstance(raw, list):
+        return []
+    todos: list[dict] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        text = (
+            item.get("content")
+            or item.get("title")
+            or item.get("task")
+            or item.get("description")
+            or ""
+        ).strip()
+        if not text:
+            continue
+        status = str(item.get("status") or "pending").strip().lower()
+        todos.append({"text": text, "status": status})
+    return todos
+
+
+def _render_todos_markdown(todos: list[dict]) -> str:
+    """Render normalized todos into a ``## Todos`` markdown section (no
+    trailing section separator). Returns "" when there are no todos."""
+    if not todos:
+        return ""
+    lines = [_TODOS_HEADING, ""]
+    for item in todos:
+        status = item["status"]
+        checkbox = _TODO_CHECKBOXES.get(status, "[ ]")
+        suffix = _TODO_SUFFIXES.get(status, "")
+        lines.append(f"- {checkbox} {item['text']}{suffix}")
+    return "\n".join(lines)
+
+
+def _apply_todos_section(plan_text: str, todos_md: str) -> str:
+    """Idempotently replace-or-append the ``## Todos`` section in a saved plan
+    snapshot: replaces an existing section (heading through the next
+    top-level ``## `` heading or EOF), or appends one at the end."""
+    plan_text = plan_text.rstrip("\n")
+    pattern = re.compile(
+        rf"(?ms)^{re.escape(_TODOS_HEADING)}\s*$.*?(?=^## |\Z)"
+    )
+    if pattern.search(plan_text):
+        new_text = pattern.sub(lambda _m: todos_md + "\n", plan_text, count=1)
+    else:
+        new_text = plan_text + "\n\n" + todos_md + "\n"
+    return new_text.rstrip("\n") + "\n"
+
+
+# ---------------------------------------------------------------------------
 
 def _next_prefix(plans_dir: Path) -> str:
     highest = 0
@@ -216,12 +331,100 @@ def _commit(paths: list[str], msg: str) -> None:
         if Path(p).exists():
             subprocess.run(["git", "add", "--", p], capture_output=True)
         # Deleted paths are already staged by _git_rm; no add needed.
-    msg = base_ai_commit_subject(msg)
+    msg = commit_message("ai/commit-templates/plan", msg)
     subprocess.run(["git", "commit", "--no-verify", "--only", *paths, "-m", msg], capture_output=True)
 
 
 def _git_rm(path: str) -> None:
     subprocess.run(["git", "rm", "--force", "--", path], capture_output=True)
+
+
+# ---------------------------------------------------------------------------
+# Todo capture handler
+# ---------------------------------------------------------------------------
+
+def _apply_todos_and_commit(session_id: str, todos: list[dict]) -> int:
+    """Shared tail end of todo capture: inject `todos` into the session's
+    already-saved plan snapshot (if any) as a ``## Todos`` section, and
+    commit. Silently no-ops when there's no session, no saved plan snapshot
+    yet, or no todos to render -- this is a best-effort enrichment, not a
+    plan-creation path.
+
+    Commit message is `ai: Todo added` the first time the section is
+    created, `ai: Todo updated` on every later change.
+    """
+    if not session_id:
+        return 0
+    state = _load_state()
+    session = state.get(session_id)
+    if not session:
+        return 0
+    relpath = session.get("relpath")
+    if not relpath:
+        return 0
+    plan_path = Path(relpath)
+    if not plan_path.is_file():
+        return 0
+
+    todos_md = _render_todos_markdown(todos)
+    if not todos_md:
+        return 0
+
+    current = plan_path.read_text(encoding="utf-8")
+    heading_existed = bool(re.search(rf"(?ms)^{re.escape(_TODOS_HEADING)}\s*$", current))
+    updated = _apply_todos_section(current, todos_md)
+    if updated == current:
+        return 0
+
+    plan_path.write_text(updated, encoding="utf-8")
+    _commit([relpath], "ai: Todo updated" if heading_existed else "ai: Todo added")
+    return 0
+
+
+def _handle_todo_capture(session_id: str, tool_input: dict) -> int:
+    """On TodoWrite/update_todo, inject the current (complete) todo list
+    into the session's saved plan snapshot."""
+    return _apply_todos_and_commit(session_id, _normalize_todos(tool_input))
+
+
+def _handle_task_tool_capture(
+    session_id: str, tool_name: str, tool_input: dict, tool_response: dict
+) -> int:
+    """On TaskCreate/TaskUpdate, accumulate per-session task state.
+
+    Unlike TodoWrite/update_todo (which resend the *entire* current list
+    every call), TaskCreate/TaskUpdate each mutate a single task -- so the
+    full list has to be tracked across calls in the session state file
+    (`tasks: {taskId: {"text": str, "status": str}}`), keyed the same way
+    `prefix`/`relpath` already are.
+    """
+    if not session_id:
+        return 0
+    state = _load_state()
+    session = state.setdefault(session_id, {})
+    tasks: dict = session.setdefault("tasks", {})
+
+    if tool_name == "TaskCreate":
+        task_id = str((tool_response.get("task") or {}).get("id") or "")
+        if not task_id:
+            return 0
+        text = tool_input.get("subject") or (tool_response.get("task") or {}).get("subject") or ""
+        tasks[task_id] = {"text": text, "status": "pending"}
+    else:  # TaskUpdate
+        task_id = str(tool_input.get("taskId") or tool_response.get("taskId") or "")
+        if not task_id:
+            return 0
+        if tool_input.get("status") == "deleted":
+            tasks.pop(task_id, None)
+        else:
+            entry = tasks.setdefault(task_id, {"text": "", "status": "pending"})
+            if tool_input.get("subject"):
+                entry["text"] = tool_input["subject"]
+            if tool_input.get("status"):
+                entry["status"] = tool_input["status"]
+
+    _save_state(state)
+    return _apply_todos_and_commit(session_id, list(tasks.values()))
 
 
 # ---------------------------------------------------------------------------
@@ -231,22 +434,32 @@ def _git_rm(path: str) -> None:
 def main() -> int:
     ai_tool = sys.argv[1] if len(sys.argv) > 1 else "claude"
     payload = read_payload()
+    if is_cross_tool_duplicate(ai_tool):
+        return 0
     dump_debug_payload(payload, "save-plan")
     session_id = payload.get("session_id", "")
     tool_name = payload.get("tool_name", "")
     tool_input = payload.get("tool_input") or {}
 
+    if tool_name in ("TodoWrite", "update_todo"):
+        return _handle_todo_capture(session_id, tool_input)
+    if tool_name in ("TaskCreate", "TaskUpdate"):
+        tool_response = payload.get("tool_response") or {}
+        return _handle_task_tool_capture(session_id, tool_name, tool_input, tool_response)
+
     plan = ""
     if ai_tool == "codex":
         plan = _plan_from_codex_sources(payload)
-    elif tool_name == "Write":
+    elif tool_name in ("Write", "create"):
         plan = _plan_from_write(tool_input)
-    elif tool_name == "Edit":
+    elif tool_name in ("Edit", "edit"):
         plan = _plan_from_edit(tool_input)
-    elif tool_name == "ExitPlanMode":
+    elif tool_name in ("ExitPlanMode", "exit_plan_mode"):
         plan = (tool_input.get("plan") or "").strip()
         if not plan:
             plan = _plan_from_response(payload.get("tool_response"))
+        if not plan:
+            plan = _plan_from_copilot_session(payload)
     # Stop for Claude: no plan extraction — Write/ExitPlanMode already handled it.
 
     if not plan:
@@ -259,11 +472,17 @@ def main() -> int:
     state = _load_state()
     session = state.get(session_id) if session_id else None
     # session shape: {"prefix": "004", "relpath": "ai/°base/plans/004_slug.md",
-    #                 "source": "sprightly-mixing-iverson.md", "done": bool}
+    #                 "source": "sprightly-mixing-iverson.md", "done": bool,
+    #                 "tasks": {taskId: {"text": str, "status": str}}}
+    # `tasks` may exist without `prefix`/`relpath` yet (TaskCreate/TaskUpdate
+    # firing before any plan has been saved this session) -- only a `prefix`
+    # means there's an actual plan snapshot to treat as "the session".
+    if session and not session.get("prefix"):
+        session = None
 
     # When Write fires after ExitPlanMode committed the previous plan (same session),
     # treat it as a brand-new plan and allocate a fresh prefix.
-    if session and tool_name == "Write" and session.get("done"):
+    if session and tool_name in ("Write", "create") and session.get("done"):
         session = None
 
     new_slug = slugify(plan, fallback="plan")
@@ -275,7 +494,7 @@ def main() -> int:
 
         # Skip identical content.
         if old_path.is_file() and old_path.read_text(encoding="utf-8").strip() == plan:
-            if tool_name == "ExitPlanMode" and session_id and session_id in state:
+            if tool_name in ("ExitPlanMode", "exit_plan_mode") and session_id and session_id in state:
                 state[session_id]["done"] = True
                 _save_state(state)
             return 0
@@ -307,14 +526,19 @@ def main() -> int:
         _commit([relpath], f"ai: save plan {prefix}_{new_slug}")
 
         if session_id:
-            # Capture the harness plan filename as metadata.
-            source = Path(tool_input.get("file_path") or "").name
-            state[session_id] = {"prefix": prefix, "relpath": relpath, "source": source}
+            # Capture the harness plan filename as metadata. `.update()`
+            # (not a plain assignment) preserves a `tasks` map that
+            # TaskCreate/TaskUpdate may have already started accumulating
+            # for this session_id before any plan was saved.
+            source = Path(tool_input.get("file_path") or tool_input.get("path") or "").name
+            state.setdefault(session_id, {}).update(
+                {"prefix": prefix, "relpath": relpath, "source": source}
+            )
             _save_state(state)
 
     # After ExitPlanMode fires, mark this plan session done so that a subsequent
     # Write (new /plan command in the same Claude session) allocates a fresh prefix.
-    if tool_name == "ExitPlanMode" and session_id and session_id in state:
+    if tool_name in ("ExitPlanMode", "exit_plan_mode") and session_id and session_id in state:
         state[session_id]["done"] = True
         _save_state(state)
 

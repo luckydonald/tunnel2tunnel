@@ -13,6 +13,28 @@
         ]
       }
     ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/°base/ai/hooks/save-compact-prompt/hook.py\" 'claude'",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "matcher": "manual|auto",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/°base/ai/hooks/save-compact-prompt/hook.py\" 'claude'"
+          }
+        ]
+      }
+    ],
     "SessionStart": [
       {
         "hooks": [
@@ -33,13 +55,19 @@
             "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/°base/ai/hooks/record-memory/hook.py\"",
             "statusMessage": "Syncing memory hardlinks",
             "async": true
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/°base/ai/hooks/record-codex-memory/hook.py\" 'claude'",
+            "statusMessage": "Committing Codex memory",
+            "async": true
           }
         ]
       }
     ],
     "PostToolUse": [
       {
-        "matcher": "AskUserQuestion|request_user_input",
+        "matcher": "AskUserQuestion|request_user_input|ask_user",
         "hooks": [
           {
             "type": "command",
@@ -49,7 +77,7 @@
         ]
       },
       {
-        "matcher": "Write|Edit",
+        "matcher": "Write|Edit|Bash|shell|unified_exec",
         "hooks": [
           {
             "type": "command",
@@ -59,7 +87,27 @@
         ]
       },
       {
-        "matcher": "Write|Edit|ExitPlanMode",
+        "matcher": "Write|Edit|Bash|shell|unified_exec|apply_patch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/°base/ai/hooks/record-codex-memory/hook.py\" 'claude'",
+            "async": true
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|ExitPlanMode|create|edit|exit_plan_mode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/°base/ai/hooks/save-plan/hook.py\" 'claude'",
+            "async": true
+          }
+        ]
+      },
+      {
+        "matcher": "TodoWrite|update_todo|TaskCreate|TaskUpdate",
         "hooks": [
           {
             "type": "command",
@@ -76,6 +124,11 @@
             "type": "command",
             "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/°base/ai/hooks/save-plan/hook.py\" 'claude'",
             "async": true
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/°base/ai/hooks/record-codex-memory/hook.py\" 'claude'",
+            "async": true
           }
         ]
       }
@@ -86,6 +139,51 @@
           {
             "type": "command",
             "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/°base/ai/hooks/save-prompt/hook.py\" 'claude'",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/°base/ai/hooks/debug-log/hook.py\" 'SubagentStop'",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "TaskCreated": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/°base/ai/hooks/debug-log/hook.py\" 'TaskCreated'",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "TaskCompleted": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/°base/ai/hooks/debug-log/hook.py\" 'TaskCompleted'",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "agent_completed",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/°base/ai/hooks/debug-log/hook.py\" 'Notification-agent_completed'",
             "async": true
           }
         ]
@@ -148,6 +246,7 @@
       "Bash(yarn test:e2e:pw:*)",
       "Bash(yarn run test:unit)",
       "Bash(yarn run test:e2e:pw:*)",
+      "Bash(npm view:*)",
       "Bash(cargo check:*)",
       "Bash(corepack yarn@4.9.2 add:*)",
       "Bash(yarn add:*)",
@@ -158,6 +257,12 @@
       "Bash(git diff:*)",
       "Bash(git status:*)",
       "Bash(git show:*)",
+      "Bash(git config user.name)",
+      "Bash(git config user.email)",
+      "Bash(git config --local user.name)",
+      "Bash(git config --local user.email)",
+      "Bash(git config --global user.name)",
+      "Bash(git config --global user.email)",
       "Bash(git branch --show-current)",
       "Bash(git ls-tree:*)",
       "Bash(git check-ignore:*)",
@@ -174,6 +279,9 @@
       "Bash(git rebase --continue)",
       "Bash(pkill -f \"vite\")",
       "Bash(tree)",
+      "Bash(python3 -m json.tool)",
+      "Bash(python -m json.tool)",
+      "Bash(xargs -I{} ls -la {})",
       "Skill(commit-with-lplp-style)",
       "Skill(/commit-with-lplp-style)",
       "Read(ai/skills/commit-with-lplp-style/SKILL.md)",
@@ -194,6 +302,8 @@
       "Bash(env UV_CACHE_DIR=/tmp/uv-cache DOWNLOAD_LINK_LIVE=1 uv run --project scripts/°base python -m unittest scripts/°base/tests/test_download_link_live.py -v)",
       "Bash(env UV_CACHE_DIR=/tmp/uv-cache ./scripts/°base/ai/references/download-link.py:*)",
       "Bash(./scripts/°base/ai/references/download-link.py:*)",
+      "Bash(../scripts/°base/init/link-subproject-claude.sh)",
+      "Bash(mv .claude/settings.local.json \".claude.settings.local.json.$\\(date +%Y-%m-%d\\).bak\")",
       "mcp__bugsink__list_projects",
       "mcp__bugsink__list_issues",
       "mcp__bugsink__get_issue",

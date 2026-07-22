@@ -16,7 +16,7 @@ from pathlib import Path
 from pydantic import BaseModel, StrictBool, StrictInt, computed_field
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from _lib import append_and_commit, dump_debug_payload, read_payload, resolve_log_path, slugify  # noqa: E402
+from _lib import append_and_commit, dump_debug_payload, is_cross_tool_duplicate, read_payload, resolve_log_path, slugify  # noqa: E402
 
 
 class Choice(BaseModel):
@@ -268,10 +268,111 @@ def _parse_codex(payload: dict) -> list[Question]:
     return questions
 
 
-def parse_payload(payload: dict) -> list[Question]:
-    """Dispatch to the correct parser based on tool_name in the hook payload."""
-    if payload.get("tool_name") == "request_user_input":
+def _parse_copilot(payload: dict) -> list[Question]:
+    """Parse a Copilot CLI ask_user payload into a list of Questions.
+
+    Copilot's ask_user schema is much simpler than Claude's AskUserQuestion:
+    a single question, a flat list of choice strings (no label/description/
+    preview), and an allow_freeform flag instead of multiSelect. There is
+    exactly one question per call.
+
+    Two things confirmed only from real hook payloads (not the published
+    docs) and easy to get wrong:
+    - `tool_name` is *always* reported as the Claude-mapped name
+      (`AskUserQuestion`), never the literal `ask_user` runtime name — per
+      hooks-reference.md's runtime→Claude tool name table, PostToolUse
+      payloads always use the Claude name. So this parser must be selected
+      via the CLI `ai_tool` argv (or a payload-shape heuristic), not by
+      checking `tool_name == "ask_user"`.
+    - The answer lives in `tool_result.text_result_for_llm` (a human-readable
+      string), not a Claude-style `tool_response` dict. It is prefixed with
+      "User selected: <label>" when a listed choice was picked, or
+      "User responded: <text>" for a freeform/no-match answer; empty/absent
+      when the question timed out unanswered.
+    """
+    tool_input = payload.get("tool_input") or {}
+    qtext = tool_input.get("question", "")
+    raw_choices = [c for c in (tool_input.get("choices") or []) if isinstance(c, str)]
+    allow_freeform = bool(tool_input.get("allow_freeform", True))
+
+    tool_result = payload.get("tool_result")
+    text_result = tool_result.get("text_result_for_llm", "") if isinstance(tool_result, dict) else ""
+    if not text_result:
+        # Backward/test compatibility with the originally-assumed
+        # `tool_response` shape (a JSON object/string carrying "answer").
+        raw_response = payload.get("tool_response") or ""
+        if isinstance(raw_response, str):
+            try:
+                parsed = json.loads(raw_response)
+            except (json.JSONDecodeError, ValueError):
+                parsed = raw_response
+        else:
+            parsed = raw_response
+        text_result = (
+            parsed.get("answer", "") if isinstance(parsed, dict)
+            else parsed if isinstance(parsed, str)
+            else ""
+        )
+
+    if text_result.startswith("User selected: "):
+        answer = text_result[len("User selected: "):]
+        direct_other = False
+    elif text_result.startswith("User responded: "):
+        answer = text_result[len("User responded: "):]
+        direct_other = True
+    else:
+        answer = text_result
+        direct_other = allow_freeform and bool(answer) and answer not in raw_choices
+
+    choices: list[Choice] = [
+        Choice(
+            label=label,
+            selection=not direct_other and label == answer,
+        )
+        for label in raw_choices
+    ]
+    other_note = answer if direct_other else ""
+    choices.append(Choice(is_other=True, selection=direct_other, note=other_note))
+
+    return [Question(
+        question=qtext,
+        header="",
+        multi_select=False,
+        choices=choices,
+    )]
+
+
+def _looks_like_copilot_payload(payload: dict) -> bool:
+    """Shape-based fallback detector for Copilot's flat ask_user schema, used
+    when no CLI `ai_tool` argv is available to disambiguate (e.g. `--preview`
+    mode or direct/manual payload testing). Copilot's `tool_input` has a
+    singular `question` string and never Claude's nested `questions` list."""
+    tool_input = payload.get("tool_input")
+    return isinstance(tool_input, dict) and "question" in tool_input and "questions" not in tool_input
+
+
+def parse_payload(payload: dict, ai_tool: str | None = None) -> list[Question]:
+    """Dispatch to the correct parser.
+
+    Prefers the CLI `ai_tool` argv (passed by every generated hook config) as
+    the source of truth, since Copilot's PostToolUse payload always reports
+    `tool_name` as the Claude-mapped name (`AskUserQuestion`), making
+    `tool_name` alone insufficient to detect a Copilot `ask_user` call. Falls
+    back to `tool_name`/payload-shape inference when no CLI arg is given
+    (`--preview` mode, tests, or manual invocations).
+    """
+    if ai_tool == "copilot":
+        return _parse_copilot(payload)
+    if ai_tool == "codex":
         return _parse_codex(payload)
+    if ai_tool == "claude":
+        return _parse_claude(payload)
+
+    tool_name = payload.get("tool_name")
+    if tool_name == "request_user_input":
+        return _parse_codex(payload)
+    if tool_name == "ask_user" or _looks_like_copilot_payload(payload):
+        return _parse_copilot(payload)
     return _parse_claude(payload)
 
 
@@ -286,49 +387,17 @@ def _render_preview_block(preview: str, lang: str, out: list[str]) -> None:
     out.append(">     ```\n")
 
 
-def _render_block(questions: list[Question], *, is_codex: bool = False) -> str:
+def _render_block(questions: list[Question], *, tool: str = "claude") -> str:
     total = len(questions)
     out: list[str] = []
-    glyph = "›" if is_codex else "❯"
+    glyph = {"claude": "❯", "codex": "›", "copilot": "◆"}.get(tool, "❯")
     out.append(f"{glyph} Question answered.\n")
     out.append("> <details><summary>\n")
     out.append(">\n")
 
     # --- Summary ---
     for i, q in enumerate(questions, 1):
-        indent = len(str(i)) + 3
-        other = next((c for c in q.choices if c.is_other), None)
-
         out.append(f">> {i}. {q.question}\n")
-
-        if q.multi_select:
-            pred_selected = [c for c in q.selected if not c.is_other]
-            items_to_show = [c.label for c in pred_selected]
-            if other and other.selected:
-                items_to_show.append(
-                    f"_Other_: {other.note}" if other.note else "_Other_"
-                )
-            if items_to_show:
-                for item in items_to_show:
-                    out.append(f">>{'':>{indent}}- {item}\n")
-            else:
-                out.append(f">>{'':>{indent}}-\n")
-        else:
-            if other and other.selected:
-                display = f"_Other_: {other.note}" if other.note else "_Other_"
-            elif q.selected and not q.selected[0].is_other:
-                display = q.selected[0].label
-            else:
-                display = ""
-            out.append(f">>{'':>{indent}}- {display}\n")
-
-            # Preview block (single-select only, when selected choice has a preview)
-            if q.selected and not q.selected[0].is_other and q.selected[0].preview:
-                pi = indent + 2
-                out.append(f">>{'':>{pi}}```text\n")
-                for pline in q.selected[0].preview.splitlines():
-                    out.append(f">>{'':>{pi}}{pline}\n")
-                out.append(f">>{'':>{pi}}```\n")
 
     out.append(">\n")
     out.append("> (click to expand)\n")
@@ -377,14 +446,8 @@ def _render_block(questions: list[Question], *, is_codex: bool = False) -> str:
                 out.append(f">   - > {other.note}\n")
 
         else:
-            # Suppress [x] when the selected choice has a preview —
-            # the preview display serves as the visual selection indicator.
-            selected_has_preview = bool(
-                q.selected and not q.selected[0].is_other and q.selected[0].preview
-            )
-
             for n, choice in enumerate(pred_choices, 1):
-                check = "[x]" if choice.selected and not selected_has_preview else "[ ]"
+                check = "[x]" if choice.selected else "[ ]"
                 out.append(f"> - {check} {n}\\. {choice.label}\n")
                 if choice.description:
                     out.append(f">   - _{choice.description}_\n")
@@ -475,6 +538,22 @@ def _resolve_preview_path(value: str, script_dir: Path, cwd: Path) -> Path:
     )
 
 
+def _infer_tool(payload: dict, ai_tool: str) -> str:
+    """Resolve the rendering/parsing tool identity: prefer the CLI `ai_tool`
+    argv (passed by every generated hook config) since Copilot's PostToolUse
+    payload always reports `tool_name` as the Claude-mapped name
+    (`AskUserQuestion`), never the literal `ask_user` runtime name. Falls
+    back to `tool_name`/payload-shape inference when no CLI arg is given."""
+    if ai_tool in ("claude", "codex", "copilot"):
+        return ai_tool
+    tool_name = payload.get("tool_name")
+    if tool_name == "request_user_input":
+        return "codex"
+    if tool_name == "ask_user" or _looks_like_copilot_payload(payload):
+        return "copilot"
+    return "claude"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("tool_name", nargs="?", default="unknown")
@@ -488,30 +567,32 @@ def main() -> int:
             cwd=Path.cwd(),
         )
         payload = json.loads(path.read_text(encoding="utf-8"))
-        questions = parse_payload(payload)
+        tool = _infer_tool(payload, args.tool_name)
+        questions = parse_payload(payload, ai_tool=tool)
         if not questions:
             print("(no questions parsed)", file=sys.stderr)
             return 1
-        is_codex = payload.get("tool_name") == "request_user_input"
-        sys.stdout.write(_render_block(questions, is_codex=is_codex))
+        sys.stdout.write(_render_block(questions, tool=tool))
         return 0
 
     payload = read_payload()
+    if is_cross_tool_duplicate(args.tool_name):
+        return 0
     dump_debug_payload(payload, "save-decision")
 
-    questions = parse_payload(payload)
+    tool = _infer_tool(payload, args.tool_name)
+    questions = parse_payload(payload, ai_tool=tool)
     if not questions:
         return 0
 
-    is_codex = payload.get("tool_name") == "request_user_input"
-    block = _render_block(questions, is_codex=is_codex)
+    block = _render_block(questions, tool=tool)
     slug = slugify(questions[0].question, fallback="decision")
 
     log_path = resolve_log_path("ai/query.md", "ai/°base/query.md")
     append_and_commit(
         log_path,
         block,
-        commit_template_relpath="ai/commit-templates/decision.md",
+        commit_template_relpath="ai/commit-templates/decision",
         default_commit_msg=f"ai: save decision {slug}",
     )
     return 0

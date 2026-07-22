@@ -2325,3 +2325,2397 @@ I want to have a way to easily call the skill with autocompletion. Codex allows 
 
 ❯ Check out the skill at `ai/skills/bugsink-setup/`, and update it to also include rust via @ai/references/https/docs.sentry.io/platforms/rust.md and @ai/references/https/docs.sentry.io/platforms/rust/
 
+❯ In case of merges, I want the sync check hook not block for the `.local` file variants. Furthermore, in case of merges, automatically sync, but keep a `settings.(local.)bak.YYYY-MM-DD_HH-MM-SS.json` around (similar with the other files)
+
+❯ Update the LPLP style to allow code ticks in the first line of the commit message, and to not add length-based linebreaks to the body text of the commit message - instead keep the paragraphs or bullet points unsplit.
+
+❯ Add a hint to the sentry skill that usually frontend/backend are separate DSNs, and hence need separate env vars.
+
+❯ the settings-to-claude part does not properly escape `{"type": "bash", "command": "…(…)…"}` to `"Bash(…\\(…\\)…)".
+
+❯ Fix the broken test or the reason it breaks.
+
+❯ Fix the reorder of `dae9933490c25c407dcd5fa0d5535140c7e3de08`.
+
+❯ Improve the `scripts/°base/init/link-subproject-claude.sh` to actually link the `.codex` folder and the `ai/tool-settings` folders, too.
+It should also get the same `AGENTS.md` -> `CLAUDE.md` symlink - moving `an possible `AGENTS.md` to `CLAUDE.md` for consistency.
+If files pre-exist, keep them as `{name}.YYYY-MM-DD_HH-MM-SS.bak.{ext}`.
+The symlinks and such shall be `git add`ed.
+Any root files I forgot which are needed for `claude`/`codex` to function in the subfolder shall be symlinked as well.
+
+❯ /plan I need to create a tool for splitting off AI stuff & `base` from a project, as that project is not supposed to have this base or AI mentions in it.
+The general concept is that for a branch, AI versions can exist.
+Generally, there's the clean branch with any name, but examples could be `feature/ABC-123/something/mr1`, `feature/ABC-123_something`, `ABC-1234_foo`, `bugfix/foo-crash` or just `i-did-a-thing`.
+This now gets two additional branches, one for direct work and commits (unclean) and one for tracking commit relations etc. (history)
+
+type | branch name format | purpose
+--- | --- | ---
+clean | `{branch}` | the clean branch, not containing any mention of or commits from this base or anything related to AI assistant usage (prompts, refs, etc.). This one is save to release to the public or the customer.
+unclean | `ai/UNCLEAN/{branch}` | this is the branch to work on. It will allow you to commit ai, non-ai (code), or a mix of both as you want, making actually editing code etc. easier.
+history | `ai/history/{branch}` | this stores the metadata, and ai stuff, basically it's the left overs after you extract the clean parts from the unclean branch. So it contains every change which is not part of the code, so we can still reuse our AI instructions for later branches as well, e.g. `CLAUDE.md`. Also contains all metadata to sync the stripped down **clean** with the other branches.
+
+The general concept is to have those be synced automatically.
+There's also a `ai/history/master` branch (or whatever the repo's main branch is, `master`, `main`, `mane`, etc.),
+which will be holding the history of the AI stuff for after a **clean** variant was merged into the main branch. It then is the base for the next **unclean** and hence also the next **history** branch - while the main branch itself is the base for the new **clean** branch.
+
+#### `update-history-master`
+The script needs a `update-history-master` command, which does create a new base history.
+The master history is constructed like this in terms of commits:
+
+category | sorting | description
+--- | --- | ---
+`master` | comes first | all commits from the origin's current main branch)
+base | after `master` | this are merge commits of `base/base` into the `ai/history/master`.
+**history** | after `master` | commits of all **history** branches which **clean** branches were already merged into master.
+merge | after `master` | this are empty commits marking/referencing the last (= merge) commit merge of an **clean** branch which had **history** into master, so it comes after the rebased commits of that **history** branch.
+
+The difficult part is that after an update of **clean `master`**, the **`master` history** shall be rebased onto that.
+While that `master` is updated, we need to keep track of merges of **clean** branches which have an existing **history** or **unclean** variant, so we can cherry-pick those commits, too.
+
+With that general rebase strategy, and flattening the history of already-merged ai branches, it's gonna be difficult to support merging this `base`, and later on updates to the `base` to it occasionally.
+How can we handle that gracefully?
+
+Additionally, there should be a `--force-merge=<branch name>` option (multiple), which would force a manual history branch merge before it is actually included in the clean master.
+
+It does roughly the following:
+1. checkout `master`
+2. check if `master` is up to date, if not, ask whether we should `git pull` (default: N)
+3. checkout `base`
+4. check if `base` is up to date, if not, ask whether we should `git pull` (default: N)
+5. check out `ai/history/master`
+6. rebase `ai/history/master` onto `master`
+7. merge the most recent `base/base` into `ai/history/master`.
+
+The problem to think about is how we handle `base/base` merges. Merges doesn't really like rebases...
+Maybe the script manually rebases, processing the changes as usual until those would occur, then automatically merge the old merged commit of `base/base` freshly into `ai/history/master` (again), while applying the old conflict resolution once more (so if we can't rebase a merge, we instead recreate it).
+
+#### `sync-splits`
+This subcommand allows to sync **clean**, **unclean** and **history** versions of a branch.
+Those branches not created yet will be added.
+
+##### Generating **clean**
+Take **unclean** and strip all AI content, and outright drop ai-only commits.
+
+A branch's **clean** branch will start on the `master` branch, and add commits to that.
+
+##### Generating **history**
+Take **unclean** and strip all code content, but keep the commits even if empty.
+Add metadata to commits or add specifically crafted metadata commits to store everything needed to sync an **clean** branch with an **history** branch back to **unclean**.
+
+A branch's **history** branch will start on the `ai/history/master`, and add commits to that.
+
+##### Generating **unclean**
+This is the most difficult one, as you need to merge **clean** and **history** back.
+
+Steps:
+1. Start from `history/master` (i.e. the specific commit of `history/master` the branches **history** is based on, so that all the previous AI stuff is contained.
+2. Cherry-pick the commits from **clean** and **history** in order.
+
+In that there can be different commits to process:
+1. code only
+    - the commit exists only in **clean**, and there's no relating **history** for it
+      - e.g. it is a quick commit added after the last sync, i.e. to hotfix something, or if ai was not needed.
+2. history only
+    - this commit exist only in **history** and there's no **clean** commit matching.
+      - e.g. just an update to `CLAUDE.md` without any code changes.
+3. code + history
+   - the commit is in both other branches, and can be merged back into a single commit.
+     - e.g. prompt/query file update + the actually implemented changes.
+
+A branch's **unclean** branch will start on the `ai/history/master`, and add commits to that.
+
+#### `rebase-branches-to-master`
+This one takes all of the three branches and rebases it onto the current `master` variants.
+
+- **clean**
+    - This one will be rebased onto the also **clean** `master` branch.
+- **history**
+    - This will be rebased onto the`ai/history/master` branch.
+- **unclean**
+    - This will be rebased onto the **history** branch just created.
+
+Also think about how to handle one or two of them branches missing.
+
+
+---
+
+Additionally, we need:
+
+1. branch push name check
+   1. do not allow **unclean** or **history** format-named branches to be pushed to a remote called `origin`.
+2. branch push content check
+   1. block ai or ai-containing commits to be pushed if the branch name is not **unclean** format.
+   2. block code or code-containing commits to be pushed if the branch name is not **history** format.
+
+❯ Task Notification:
+> - Task `a1260db04034a4aba` <kbd>completed</kbd>
+> - Tool `toolu_01BRvXudN746k2NDHzP48wjK`
+> - > Agent "Explore existing git tooling scripts in base repo" finished
+> - [Query (`2224` chars, `2.2 KB`)](output/agents/005.a1260db04034a4aba/prompt.md)
+> - [Answer (`11672` chars, `11.5 KB`)](output/agents/005.a1260db04034a4aba/result.md)
+> - [Raw log (`552544` chars, `542 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-base/5f38f4ba-0ce0-4e78-b9e6-2e81d245a371/tasks/a1260db04034a4aba.output)
+> - `28` tools, `108934` tokens, `1.9888 s`
+
+❯ Task Notification:
+> - Task `a8f5227679955d0c4` <kbd>completed</kbd>
+> - Tool `toolu_01FWBHxs5EzwAkLdrAE73Kor`
+> - > Agent "Explore AGENTS.md and base project conventions" finished
+> - [Query (`1971` chars, `1.95 KB`)](output/agents/006.a8f5227679955d0c4/prompt.md)
+> - [Answer (`17316` chars, `17 KB`)](output/agents/006.a8f5227679955d0c4/result.md)
+> - [Raw log (`231070` chars, `228 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-base/5f38f4ba-0ce0-4e78-b9e6-2e81d245a371/tasks/a8f5227679955d0c4.output)
+> - `16` tools, `48001` tokens, `2.19657 s`
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. This is a large feature (4 subcommands + push-protection hooks + a rebase-recreate-merge strategy for history-master). How should I scope the plan?
+>>    - Foundation first (Recommended)
+>>      ```text
+>>      Phase 1 (this plan):
+>>      - branch model + naming helpers
+>>      - AI-vs-code file/commit classifier
+>>      - sync-splits: unclean -> clean, unclean -> history
+>>      - pre-push hook: name + content checks
+>>
+>>      Phase 2 (later plan):
+>>      - update-history-master (rebase + base/base merge recreation)
+>>      - rebase-branches-to-master (all 3 types)
+>>      - unclean reconstruction from clean+history (cherry-pick merge-back)
+>>      ```
+>> 2. How should generated clean/history commits stay correlated so `sync-splits` (unclean generation) can later reassemble them?
+>>    - Git trailer referencing source commit (Recommended)
+>>      ```text
+>>      commit message example:
+>>
+>>      Add export button
+>>
+>>      X-Base-Split-Source: 8f3a1c2
+>>      X-Base-Split-Kind: code
+>>      ```
+>> 3. What should count as "AI content" to strip for clean / keep for history?
+>>    - Path + message convention (Recommended)
+>>      ```text
+>>      AI paths:
+>>        ai/**
+>>        .claude/**
+>>        .codex/**
+>>        ai/tool-settings/**
+>>        .mcp.json
+>>        AGENTS.md (when symlink to CLAUDE.md)
+>>
+>>      AI-only commit if:
+>>        all changed paths in AI paths
+>>        OR subject matches /^(\[.*\]\s*)?ai:/
+>>      ```
+>> 4. Where should this new tool live and how should it be invoked, following repo convention?
+>>    - scripts/°base/git/split.py + °split_lib package (Recommended)
+>>      ```text
+>>      scripts/°base/git/split.py
+>>      scripts/°base/git/°split_lib/
+>>        __init__.py
+>>        cli.py            # argparse subcommands
+>>        branches.py       # naming/detection helpers
+>>        classify.py       # AI-vs-code commit/file classifier
+>>        sync_splits.py
+>>        history_master.py
+>>        push_checks.py
+>>      ```
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Scope** (1/4) <kbd>Single Select</kbd><br>
+>> This is a large feature (4 subcommands + push-protection hooks + a rebase-recreate-merge strategy for history-master). How should I scope the plan?
+> - [ ] 1\. Foundation first (Recommended)
+>   - _Plan+build: branch-type detection, AI-vs-code commit classification, `sync-splits` (clean/history generation from unclean), and push-protection hooks. Defer `update-history-master` and the full `rebase-branches-to-master` cross-branch rebase (the hardest, most conflict-prone pieces) to a follow-up plan once the foundation is proven._
+>   - ```
+>     Phase 1 (this plan):
+>     - branch model + naming helpers
+>     - AI-vs-code file/commit classifier
+>     - sync-splits: unclean -> clean, unclean -> history
+>     - pre-push hook: name + content checks
+>
+>     Phase 2 (later plan):
+>     - update-history-master (rebase + base/base merge recreation)
+>     - rebase-branches-to-master (all 3 types)
+>     - unclean reconstruction from clean+history (cherry-pick merge-back)
+>     ```
+> - [ ] 2\. Full scope in one plan
+>   - _Design all four subcommands (update-history-master, sync-splits, rebase-branches-to-master) and push hooks together now, even though update-history-master's rebase/merge-recreation logic is still conceptually unresolved._
+> - [ ] 3\. _Notes: Add notes on this design._
+>
+>> **Correlation** (2/4) <kbd>Single Select</kbd><br>
+>> How should generated clean/history commits stay correlated so `sync-splits` (unclean generation) can later reassemble them?
+> - [ ] 1\. Git trailer referencing source commit (Recommended)
+>   - _Every generated clean/history commit gets a trailer like `X-Base-Split-Source: <unclean-sha>` pointing back to the original unclean commit it was derived from. Cheap, survives rebases if preserved, greppable, no extra files._
+>   - ```
+>     commit message example:
+>
+>     Add export button
+>
+>     X-Base-Split-Source: 8f3a1c2
+>     X-Base-Split-Kind: code
+>     ```
+> - [ ] 2\. Dedicated metadata commits/files
+>   - _Store the clean<->history<->unclean commit mapping in a tracked metadata file (e.g. JSON) updated via its own commits on the history branch, instead of embedding it in every commit message._
+> - [ ] 3\. _Notes: Add notes on this design._
+>
+>> **AI boundary** (3/4) <kbd>Single Select</kbd><br>
+>> What should count as "AI content" to strip for clean / keep for history?
+> - [ ] 1\. Path + message convention (Recommended)
+>   - _A file is AI content if it's under ai/**, .claude/**, .codex/**, ai/tool-settings/**, .mcp.json, or is an AGENTS.md/CLAUDE.md symlink pair — matching this repo's existing convention. A commit is AI-only if every changed path matches that set, or its subject starts with `ai:` (optionally after a `[where]` tag)._
+>   - ```
+>     AI paths:
+>       ai/**
+>       .claude/**
+>       .codex/**
+>       ai/tool-settings/**
+>       .mcp.json
+>       AGENTS.md (when symlink to CLAUDE.md)
+>
+>     AI-only commit if:
+>       all changed paths in AI paths
+>       OR subject matches /^(\[.*\]\s*)?ai:/
+>     ```
+> - [ ] 2\. Something narrower/different
+>   - _Tell me the exact boundary you want instead (e.g. exclude CLAUDE.md from stripping since consuming projects may want to keep their own instructions, or a different path list)._
+> - [ ] 3\. _Notes: Add notes on this design._
+>
+>> **Entry point** (4/4) <kbd>Single Select</kbd><br>
+>> Where should this new tool live and how should it be invoked, following repo convention?
+> - [ ] 1\. scripts/°base/git/split.py + °split_lib package (Recommended)
+>   - _Thin argparse shim `scripts/°base/git/split.py` delegating to `scripts/°base/git/°split_lib/cli.py`, with subcommands `sync-splits`, `update-history-master`, `rebase-branches-to-master` — mirrors the existing ai/settings/sync.py -> °settings_lib pattern._
+>   - ```
+>     scripts/°base/git/split.py
+>     scripts/°base/git/°split_lib/
+>       __init__.py
+>       cli.py            # argparse subcommands
+>       branches.py       # naming/detection helpers
+>       classify.py       # AI-vs-code commit/file classifier
+>       sync_splits.py
+>       history_master.py
+>       push_checks.py
+>     ```
+> - [ ] 2\. Different location/name
+>   - _Tell me where you'd prefer this to live instead._
+> - [ ] 3\. _Notes: Add notes on this design._
+>
+> </details>
+>
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. Your spec says: (1) block AI-containing commits from push unless branch is unclean-format, and (2) block code-containing commits from push unless branch is history-format. Taken literally, rule (1) would also block a `history`-format branch from pushing its own legitimate AI content (since history branches are supposed to hold AI content), and rule (2) would block a `clean`-format branch from pushing its own legitimate code. Which is correct?
+>>    - Each format has its own allowed content (Recommended)
+>>      ```text
+>>      format   | AI commits | code commits
+>>      ---------|-----------|-------------
+>>      unclean  | allowed    | allowed
+>>      clean    | blocked    | allowed
+>>      history  | allowed    | blocked
+>>      ```
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Push rule fix** (1/1) <kbd>Single Select</kbd><br>
+>> Your spec says: (1) block AI-containing commits from push unless branch is unclean-format, and (2) block code-containing commits from push unless branch is history-format. Taken literally, rule (1) would also block a `history`-format branch from pushing its own legitimate AI content (since history branches are supposed to hold AI content), and rule (2) would block a `clean`-format branch from pushing its own legitimate code. Which is correct?
+> - [ ] 1\. Each format has its own allowed content (Recommended)
+>   - _unclean: AI + code both allowed. clean: code allowed, AI blocked. history: AI allowed, code blocked. i.e. rule (1) really means "blocked unless unclean OR history", rule (2) really means "blocked unless unclean OR clean"._
+>   - ```
+>     format   | AI commits | code commits
+>     ---------|-----------|-------------
+>     unclean  | allowed    | allowed
+>     clean    | blocked    | allowed
+>     history  | allowed    | blocked
+>     ```
+> - [ ] 2\. Literal reading
+>   - _Exactly as written: AI-containing commits are only ever allowed on unclean-format branches (blocked even on history), and code-containing commits are only ever allowed on history-format branches (blocked even on clean). Clean branches could never push anything under this reading, so this would need clean to be exempted from both checks entirely._
+>   - ```text
+>     format   | AI commits | code commits
+>     ---------|-----------|-------------
+>     unclean  | allowed    | allowed
+>     clean    | blocked    | blocked (?)
+>     history  | blocked    | allowed
+>     ```
+> - [ ] 3\. _Notes: Add notes on this design._
+>
+> </details>
+>
+
+❯ Task Notification:
+> - Task `aa0735f78be2cc83e` <kbd>completed</kbd>
+> - Tool `toolu_0117bUZE9ZUXh7wdnwxU6xzf`
+> - > Agent "Design phase-1 git branch-split foundation" finished
+> - [Query (`8412` chars, `8.28 KB`)](output/agents/007.aa0735f78be2cc83e/prompt.md)
+> - [Answer (`14980` chars, `14.7 KB`)](output/agents/007.aa0735f78be2cc83e/result.md)
+> - [Raw log (`395392` chars, `387 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-base/5f38f4ba-0ce0-4e78-b9e6-2e81d245a371/tasks/aa0735f78be2cc83e.output)
+> - `28` tools, `83539` tokens, `7.54358 s`
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. The design agent found that the `ai:`-subject regex we set (`^(\[.*\]\s*)?ai:`) doesn't actually match this repo's real commit convention, e.g. `[base] topic: ai: Run: ...` (topic sits between the bracket and `ai:`). Since this only matters for the edge case of a commit that touches zero AI/base paths but still has an ai-flavored subject, how should the regex work?
+>>    - Match real convention (Recommended)
+>>      ```text
+>>      Matches:
+>>        ai: updated prompt
+>>        [base] topic: ai: Run: ...
+>>        [dumper] init script: ai: Run: ...
+>>
+>>      Doesn't match:
+>>        aisle: fix typo
+>>        said: hello
+>>      ```
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Subject regex** (1/1) <kbd>Single Select</kbd><br>
+>> The design agent found that the `ai:`-subject regex we set (`^(\[.*\]\s*)?ai:`) doesn't actually match this repo's real commit convention, e.g. `[base] topic: ai: Run: ...` (topic sits between the bracket and `ai:`). Since this only matters for the edge case of a commit that touches zero AI/base paths but still has an ai-flavored subject, how should the regex work?
+> - [ ] 1\. Match real convention (Recommended)
+>   - _Loosen the regex to match an optional `[...]` tag, then any text, then `ai:` anywhere in the subject — e.g. `^(\[.*\]\s*)?.*\bai:` — so it correctly flags real commits like `[base] topic: ai: Run: ...`._
+>   - ```
+>     Matches:
+>       ai: updated prompt
+>       [base] topic: ai: Run: ...
+>       [dumper] init script: ai: Run: ...
+>
+>     Doesn't match:
+>       aisle: fix typo
+>       said: hello
+>     ```
+> - [ ] 2\. Keep as originally specified
+>   - _Leave the narrower regex as-is (only matches when `ai:` immediately follows an optional single bracket tag) — it will under-flag real `[where] topic: ai: Run:` commits that touch zero AI/base paths, relying entirely on path-based classification instead._
+> - [ ] 3\. _Notes: Add notes on this design._
+>
+> </details>
+>
+
+❯ /plan part 2 then.
+
+❯ Task Notification:
+> - Task `a80951b12e37c8497` <kbd>completed</kbd>
+> - Tool `toolu_01GXPPahwch5kybFY2SeJ8Y9`
+> - > Agent "Explore trailer/commit-tree precedent for split tool" finished
+> - [Query (`3208` chars, `3.16 KB`)](output/agents/008.a80951b12e37c8497/prompt.md)
+> - [Answer (`10173` chars, `10 KB`)](output/agents/008.a80951b12e37c8497/result.md)
+> - [Raw log (`152465` chars, `150 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-base/5f38f4ba-0ce0-4e78-b9e6-2e81d245a371/tasks/a80951b12e37c8497.output)
+> - `10` tools, `36162` tokens, `0.952283 s`
+
+❯ Task Notification:
+> - Task `ace55d9e6c53fb031` <kbd>completed</kbd>
+> - Tool `toolu_01CHwYsFixW9WmedJbq5imxV`
+> - > Agent "Design sync-splits clean+history generation" finished
+> - [Query (`8184` chars, `8.04 KB`)](output/agents/009.ace55d9e6c53fb031/prompt.md)
+> - [Answer (`35099` chars, `34.4 KB`)](output/agents/009.ace55d9e6c53fb031/result.md)
+> - [Raw log (`244802` chars, `240 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-base/5f38f4ba-0ce0-4e78-b9e6-2e81d245a371/tasks/ace55d9e6c53fb031.output)
+> - `17` tools, `40475` tokens, `3.22585 s`
+
+❯ Task Notification:
+> - Task `a45cbe832fd2cd064` <kbd>completed</kbd>
+> - Tool `toolu_01VM5JmD4pV4M1xkXSh58MTu`
+> - > Agent "Design unclean reconstruction from clean+history" finished
+> - [Query (`8022` chars, `7.88 KB`)](output/agents/010.a45cbe832fd2cd064/prompt.md)
+> - [Answer (`36018` chars, `35.4 KB`)](output/agents/010.a45cbe832fd2cd064/result.md)
+> - [Raw log (`176893` chars, `173 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-base/5f38f4ba-0ce0-4e78-b9e6-2e81d245a371/tasks/a45cbe832fd2cd064.output)
+> - `14` tools, `33254` tokens, `3.16442 s`
+
+❯ Task Notification:
+> - Task `aabee86b159467ae2` <kbd>completed</kbd>
+> - Tool `toolu_01K9T8bepRkJiHvGuwVya682`
+> - > Agent "Design history-master rebase and cross-branch rebase" finished
+> - [Query (`9697` chars, `9.52 KB`)](output/agents/011.aabee86b159467ae2/prompt.md)
+> - [Answer (`19350` chars, `19 KB`)](output/agents/011.aabee86b159467ae2/result.md)
+> - [Raw log (`316336` chars, `310 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-base/5f38f4ba-0ce0-4e78-b9e6-2e81d245a371/tasks/aabee86b159467ae2.output)
+> - `21` tools, `65801` tokens, `5.80757 s`
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. Phase 2 splits into three independently-hard subsystems: (A) sync-splits forward (unclean→clean/history, needs new tree-splitting/trailer machinery), (B) unclean reconstruction (clean+history→unclean, the ordering/correlation problem you called "the most difficult one"), (C) update-history-master + rebase-branches-to-master (the base/base merge-recreation problem). B and C both depend on the trailers that A produces. How much should this plan cover?
+>>    - All three (A+B+C) now
+>> 2. update-history-master needs to detect which clean branches were newly merged into master, to pull in their history. Branch-name-in-merge-commit-subject detection breaks completely for GitHub squash-merges (no second parent, no branch name). How should this be handled?
+>>    - Require a trailer on the merge/squash commit
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Phase 2 scope** (1/2) <kbd>Single Select</kbd><br>
+>> Phase 2 splits into three independently-hard subsystems: (A) sync-splits forward (unclean→clean/history, needs new tree-splitting/trailer machinery), (B) unclean reconstruction (clean+history→unclean, the ordering/correlation problem you called "the most difficult one"), (C) update-history-master + rebase-branches-to-master (the base/base merge-recreation problem). B and C both depend on the trailers that A produces. How much should this plan cover?
+> - [ ] 1\. A only (Recommended)
+>   - _Plan+implement just sync-splits forward generation (unclean→clean, unclean→history): trailer scheme, tree-splitting via git plumbing, cursor tracking, new-branch creation. B and C get their own follow-up plans once A's trailer scheme is proven in practice._
+>   - ```
+>     This plan (A):
+>     - trailers.py, tree_split.py, sync_splits.py (forward only)
+>     - X-Base-Split-Source/-Kind trailer scheme
+>     - commit-by-commit tree-splitting replay
+>     - ref-based cursor tracking
+>
+>     Deferred:
+>     - B: unclean reconstruction (ordering/correlation)
+>     - C: update-history-master + rebase-branches-to-master
+>     ```
+> - [ ] 2\. A + C now, defer B
+>   - _Also plan+implement update-history-master/rebase-branches-to-master now (doesn't depend on reconstruction), leaving only the hardest piece — unclean reconstruction — for later._
+> - [x] 3\. All three (A+B+C) now
+>   - _Plan all three subsystems in this pass, accepting that B and C's designs rest on assumptions about A that haven't been implemented/tested yet._
+> - [ ] 4\. _Notes: Add notes on this design._
+>
+>> **Merge detection** (2/2) <kbd>Single Select</kbd><br>
+>> update-history-master needs to detect which clean branches were newly merged into master, to pull in their history. Branch-name-in-merge-commit-subject detection breaks completely for GitHub squash-merges (no second parent, no branch name). How should this be handled?
+> - [ ] 1\. Require true merges, no squash (Recommended)
+>   - _Document that branches participating in the clean/unclean/history split must be merged via a real merge commit (GitHub "Create a merge commit", not squash/rebase-merge) so the second parent + branch name are reliably detectable. update-history-master relies on this; --force-merge remains the manual recovery path when it's violated._
+>   - ```
+>     GitHub merge button setting:
+>       [x] Allow merge commits
+>       [ ] Allow squash merging   <- disable for split branches
+>       [ ] Allow rebase merging   <- disable for split branches
+>     ```
+> - [x] 2\. Require a trailer on the merge/squash commit
+>   - _Instead of a repo-wide merge-strategy restriction, require whoever merges the PR (or a bot) to add an `X-Base-Split-Clean-Branch: <name>` trailer to the final commit message, working with squash merges too but requiring extra process discipline at merge time._
+> - [ ] 3\. _Notes: Add notes on this design._
+>
+> </details>
+>
+
+❯ Task Notification:
+> - Task `a0787ac1f3d36b67e` <kbd>completed</kbd>
+> - Tool `toolu_016KortWxfxCTQ8bVYV5isDu`
+> - > Agent "Implement sync_splits.py forward direction" finished
+> - [Query (`8423` chars, `8.29 KB`)](output/agents/012.a0787ac1f3d36b67e/prompt.md)
+> - [Answer (`2570` chars, `2.53 KB`)](output/agents/012.a0787ac1f3d36b67e/result.md)
+> - [Raw log (`266676` chars, `261 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-base/5f38f4ba-0ce0-4e78-b9e6-2e81d245a371/tasks/a0787ac1f3d36b67e.output)
+> - `19` tools, `65920` tokens, `3.5276 s`
+
+❯ Task Notification:
+> - Task `aebf39c931242b355` <kbd>completed</kbd>
+> - Tool `toolu_019adApM3cQM8LziVJgneYBR`
+> - > Agent "Implement sync_unclean.py reconstruction direction" finished
+> - [Query (`10326` chars, `10.2 KB`)](output/agents/013.aebf39c931242b355/prompt.md)
+> - [Answer (`3200` chars, `3.15 KB`)](output/agents/013.aebf39c931242b355/result.md)
+> - [Raw log (`533483` chars, `522 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-base/5f38f4ba-0ce0-4e78-b9e6-2e81d245a371/tasks/aebf39c931242b355.output)
+> - `33` tools, `119189` tokens, `11.9324 s`
+
+❯ Task Notification:
+> - Task `a598976ff098d379a` <kbd>completed</kbd>
+> - Tool `toolu_01FtA6Njwzum9mtccE7QsvQk`
+> - > Agent "Implement history_master.py and rebase_to_master.py" finished
+> - [Query (`11126` chars, `10.9 KB`)](output/agents/014.a598976ff098d379a/prompt.md)
+> - [Answer (`3452` chars, `3.4 KB`)](output/agents/014.a598976ff098d379a/result.md)
+> - [Raw log (`886443` chars, `867 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-base/5f38f4ba-0ce0-4e78-b9e6-2e81d245a371/tasks/a598976ff098d379a.output)
+> - `51` tools, `175380` tokens, `16.3696 s`
+
+❯ /plan I guess phase 3 then, I need a way to get it started from a clean branch.
+
+❯ Task Notification:
+> - Task `a2a1e6cb9f6c262e1` <kbd>completed</kbd>
+> - Tool `toolu_01MHgihU8wCkWf5NK3g3ZRp1`
+> - > Agent "Explore reconstruct_unclean bootstrap gap" finished
+> - [Query (`3388` chars, `3.34 KB`)](output/agents/015.a2a1e6cb9f6c262e1/prompt.md)
+> - [Answer (`14933` chars, `14.7 KB`)](output/agents/015.a2a1e6cb9f6c262e1/result.md)
+> - [Raw log (`246471` chars, `241 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-base/5f38f4ba-0ce0-4e78-b9e6-2e81d245a371/tasks/a2a1e6cb9f6c262e1.output)
+> - `12` tools, `53382` tokens, `1.54753 s`
+
+❯ That's good, keep that. However, what I meant is, that if I'm in a clean branch, by definition will not have the scripts available, as they are to be classified AI content (base, to be specific).
+What are my options here?
+
+❯ There's also the case that I might have never even checked out or added `base/base` to an repository, which I feel is related but not exactly the same.
+
+❯ No, for the "no base in project", it would need to go into a possibly new `ai/history/master` anyways - we can't touch the `master`.
+
+❯ What I was thinking was more like one of these `curl raw.github…` kinda snippets which would execute a self-contained python script doing at least the setup - that is, adding & fetching the remote, under an settable `BASE_GIT_USERNAME=luckydonald` (for an `luckydonald@github.com` remote address).
+This script can be just in this base repo, but quickly accessable via network piping magic.
+it would set up the `base` remote, and then execute the rest via local worktree.
+Note it should be possible to spam it in any branch or repo with or without base, and work correctly.
+
+❯ The remote is expected to always be named `base`, to not mix it up with `origin` or any other remote which may have an unrelated branch named `base`.
+
+❯ Explain `curl -fsSL https://raw.githubusercontent.com/luckydonald/base/master/scripts/°base/git/get-base.py | python3 - bootstrap-branch feature`
+
+❯ Add this very explainer to the plan file, that helped.
+
+❯ Similar put in a explainer of `update-history-master --yes` there as well, then we're ready to exit plan mode.
+
+❯ Move that after the curl one, though
+
+❯ /plan The curl command needs to be documented in the `base`'s `README.md`.
+I want a parameterless version where it does the right thing automatically, as I will not remember `bootstrap-branch feature` or `update-history-master --yes`.
+Also it's better to write the full branch, `https://raw.githubusercontent.com/luckydonald/base/refs/heads/base/<path>`, not just trusting `/master` to exist.
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. For the parameterless auto-mode, I've got two cases pinned down from your examples: on the main branch → `update-history-master --yes`; on a clean feature branch → `bootstrap-branch <branch>`. What should it do when you're currently on an `ai/UNCLEAN/*` branch (i.e. you're actively working and just want to push your progress forward)?
+>>    - sync-splits --direction=to-clean-history (Recommended)
+>>      ```text
+>>      on ai/UNCLEAN/feature-x ->
+>>        split.py sync-splits feature-x --direction=to-clean-history
+>>      ```
+>> 2. And when you're on an `ai/history/*` branch directly (not `ai/history/master`)?
+>>    - Same as unclean: forward-sync
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Unclean auto-action** (1/2) <kbd>Single Select</kbd><br>
+>> For the parameterless auto-mode, I've got two cases pinned down from your examples: on the main branch → `update-history-master --yes`; on a clean feature branch → `bootstrap-branch <branch>`. What should it do when you're currently on an `ai/UNCLEAN/*` branch (i.e. you're actively working and just want to push your progress forward)?
+> - [ ] 1\. sync-splits --direction=to-clean-history (Recommended)
+>   - _Treat being on your unclean branch as "I want my latest commits reflected in clean+history now" — runs the forward split for that branch._
+>   - ```
+>     on ai/UNCLEAN/feature-x ->
+>       split.py sync-splits feature-x --direction=to-clean-history
+>     ```
+> - [ ] 2\. Refuse and print usage
+>   - _Don't guess on unclean branches specifically — print available subcommands and exit, since "what to sync" could be ambiguous (maybe you just want to commit more first)._
+> - [ ] 3\. _Notes: Add notes on this design._
+>
+>> **History auto-action** (2/2) <kbd>Single Select</kbd><br>
+>> And when you're on an `ai/history/*` branch directly (not `ai/history/master`)?
+> - [ ] 1\. Refuse and print usage (Recommended)
+>   - _History branches aren't usually where you'd manually be checked out to run a workflow command — refuse rather than guess, print available subcommands._
+>   - ```
+>     on ai/history/feature-x ->
+>       "nothing to auto-run from a history branch; run a subcommand explicitly"
+>     ```
+> - [x] 2\. Same as unclean: forward-sync
+>   - _Treat it the same as being on the corresponding unclean branch and run sync-splits --direction=to-clean-history for that base branch._
+> - [ ] 3\. _Notes: Add notes on this design._
+>
+> </details>
+>
+
+❯ In that URL, encode the `°` as `%C2%B0` just to be sure.
+Can we pipe into `uv`, and would that make sense? Please explain options before continuing.
+
+❯ python 3 is fine then.
+
+❯ /plan You mentionend:
+
+> One thing surfaced during end-to-end testing that's worth your attention separately: chaining bootstrap-branch → forward sync-splits on the same branch currently duplicates
+> that branch's pre-existing commits onto clean. Root cause: reconstruct_unclean tags commits it builds with X-Base-Unclean-Reconstructed-From, not X-Base-Split-Source, so the
+> forward direction doesn't recognize clean's tip as already covered. This is a real, pre-existing gap between Phase 2 and Phase 3, not something introduced today — flagging
+> it rather than fixing it silently since it needs its own decision on the right correlation fix. Want me to plan that next?
+
+Yes, do fix that.
+
+❯ Good. For now keep commiting, using a `[base] [ssp] ` prefix instead only `[base]`.
+
+❯ Add this as a special case to the skill for bugsink.
+
+❯ as an optional separate file.
+
+❯ /plan Additionally I'm not sure if when updating master to the newest version, the `base/base` is pulled in. I believe `update-history-master --yes` should do that after previous steps. So it would be like this:
+0. check out **clean** `master`.
+1. "rebase" of existing commits.
+2. "merge" of other **history** branched now available to **clean** master.
+3. pull in and merge newest `base/base`.
+
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. My last commit (0f52def, the update-history-master checkout-sync fix) landed on `base` because the checkout switched there externally between commits. How should I reconcile this with `feature/unclean-ai-split` (currently at c628817)?
+>>    - Let me handle it myself
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Branch mismatch** (1/1) <kbd>Single Select</kbd><br>
+>> My last commit (0f52def, the update-history-master checkout-sync fix) landed on `base` because the checkout switched there externally between commits. How should I reconcile this with `feature/unclean-ai-split` (currently at c628817)?
+> - [ ] 1\. Cherry-pick onto feature/unclean-ai-split (Recommended)
+>   - _Check out feature/unclean-ai-split and cherry-pick 0f52def onto it, so all of this session's work stays together on one branch. Leaves the commit on `base` as-is too (harmless duplication) unless you'd rather I remove it there._
+>   - ```
+>     git checkout feature/unclean-ai-split
+>     git cherry-pick 0f52def
+>     ```
+> - [ ] 2\. Leave it on base, do nothing
+>   - _The branch switch to `base` was intentional on your end — leave 0f52def where it is and don't touch feature/unclean-ai-split._
+> - [x] 3\. Let me handle it myself
+>   - _Don't touch branches or commits further — you'll sort out the branch state yourself._
+> - [ ] 4\. _Notes: Add notes on this design._
+>
+> </details>
+>
+
+❯
+/plan The scrip shall always collect commands to undo it's operations.
+The scrip shall always collect information/commands to undo it's operations.
+
+Basically at the start it should already display the current state, i.e. the branches it's going touch with its shas.
+This can be properer markdown. Example:
+
+> Branch | Commit before | Commit now |
+> ------ | ------------- | ---------- |
+> `master` | `cb071940ee612b4ff6076771b448abc0843c4ac6` | `c6288170f77af1c7208e9104aeb0148f85e1f90e`
+
+Additionally it should collect the commands to rest that, e.g.
+
+> ```shell
+> git rebase --abort || true
+> git update-ref refs/heads/'ai/history/master' 'c8d15c81cb2afaec9ba0fe1de5a7009e4f67b857'
+> ```
+
+This shall appear under both the output and a file called `.rebase-recovery.tmp`.
+In the file it shall append with markdown headlines for the invocation, so we can append to it multiple times.
+
+> #### Run _YYYY-MM-DD HH:MM:SS_ `scripts/°base/git/split.py foo bar --flags --idk -abc`
+
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. For the recovery log, when should the entry (before-state table + undo commands) actually get written to `.rebase-recovery.tmp` and printed?
+>>    - Before mutating anything (Recommended)
+>>      ```text
+>>      1. snapshot refs
+>>      2. write .rebase-recovery.tmp entry + print it   <- crash-safe point
+>>      3. run the actual operation
+>>      4. print a short before/after summary to stdout
+>>      ```
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Write timing** (1/1) <kbd>Single Select</kbd><br>
+>> For the recovery log, when should the entry (before-state table + undo commands) actually get written to `.rebase-recovery.tmp` and printed?
+> - [ ] 1\. Before mutating anything (Recommended)
+>   - _Snapshot refs and write the full entry (before-state + undo commands) at the very start, before any ref is touched — so recovery info survives even if the process crashes or is killed mid-operation. The 'Commit now' column is filled in with a second, separate summary printed to stdout at the end (file itself isn't rewritten, since undo commands only ever need the 'before' shas)._
+>   - ```
+>     1. snapshot refs
+>     2. write .rebase-recovery.tmp entry + print it   <- crash-safe point
+>     3. run the actual operation
+>     4. print a short before/after summary to stdout
+>     ```
+> - [ ] 2\. After the operation completes
+>   - _Run the operation first, then write one entry showing both 'before' and 'now' columns together in the file and stdout. Simpler (one write, matches your example table exactly with both columns populated), but a crash mid-operation leaves no recovery record at all._
+> - [ ] 3\. _Notes: Add notes on this design._
+>
+> </details>
+>
+
+❯ /plan The query output seems wrong.
+Compare @ai/°base/output/debug/20260708-090957_547762-save-decision.json as input,
+and `ai/°base/query.md:2968-3000` (if still available, that's commit `2892d75a35bb0ed269265436442ceb06109cd70d`).
+
+None of the expandable questions are marked `- [x] `. Though the `<summary>` has it correct.
+
+Additionally, while at it, remove the answers from the summary part, only keep the questions there. It's too verbose for a summary.
+
+
+❯ /plan the prompt-asked ai hook shall check for file mentions in the format @subdir/file.foo or `subdir/file.foo`, and if untracked by git automatically commit them after commiting to `query.md` regularly, with the message `ai: referenced file for task added.`. If already tracked, it shall just be added.
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. When a mentioned file resolves relative to a path — should it be relative to the subproject root (where Claude was launched, e.g. a monorepo subfolder) or the git repo root?
+>> 2. Should the untracked-file commit run even when the referenced file doesn't otherwise change (i.e., commit purely because it was mentioned and exists but was never added to git before)?
+>> 3. For already-tracked mentioned files, "just be added" — should this mean only `git add` (stage, no commit), leaving them staged for the user's next real commit?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Path base** (1/3) <kbd>Single Select</kbd><br>
+>> When a mentioned file resolves relative to a path — should it be relative to the subproject root (where Claude was launched, e.g. a monorepo subfolder) or the git repo root?
+> - [x] 1\. Subproject root (Recommended)
+>   - _Matches how ai artifacts/query.md are already rooted (resolve_log_path uses _subproject_root()) — consistent for monorepo setups where CLAUDE_PROJECT_DIR is a subfolder of the git repo._
+> - [ ] 2\. Git repo root
+>   - _Always resolve relative to the top-level git root, ignoring subproject nesting._
+> - [ ] 3\. _Type something._
+>
+>> **Commit scope** (2/3) <kbd>Single Select</kbd><br>
+>> Should the untracked-file commit run even when the referenced file doesn't otherwise change (i.e., commit purely because it was mentioned and exists but was never added to git before)?
+> - [ ] 1\. Yes — commit any untracked, existing, mentioned file (Recommended)
+>   - _If the path exists on disk, is untracked, and matches the @mention/backtick pattern, git add + commit it in its own commit with message 'ai: referenced file for task added.', right after the query.md commit._
+> - [ ] 2\. Only for files under ai/ or plans
+>   - _Restrict this behavior to files within the AI artifact tree, to avoid accidentally auto-committing arbitrary source files the user only mentioned in passing._
+> - [x] 3\. _Type something:_
+>   - > Yes — commit any untracked, existing, mentioned file (Recommended). For for files under `ai/`, it shall also ignore `.gitignore` rules which could otherwise prevent that.
+>
+>> **Tracked handling** (3/3) <kbd>Single Select</kbd><br>
+>> For already-tracked mentioned files, "just be added" — should this mean only `git add` (stage, no commit), leaving them staged for the user's next real commit?
+> - [x] 1\. git add only, no commit (Recommended)
+>   - _Stage the file so it rides along with whatever commit comes next (matches the literal wording 'shall just be added' vs. the explicit 'commit' instruction for untracked files)._
+> - [ ] 2\. git add and also commit with the same message
+>   - _Treat tracked and untracked mentions identically — always stage AND commit with 'ai: referenced file for task added.'_
+> - [ ] 3\. _Type something._
+>
+> </details>
+>
+
+❯ do not cram more stuff into `scripts/°base/ai/hooks/_lib.py` - instead separate it in multiple files in `scripts/°base/ai/hooks/°*libs`, following the format of e.g. `°split_lib` or `°dllink_lib`.
+
+› The @scripts/°base/git/get-base.py is not printing anything, neither was the `curl` command. Make sure it gives status of what it's currently doing.
+
+› end plan mode
+
+› there should be a exit plan command or similar
+
+› /feedback What the heck. It exit plan mode, lemme confirm the plan.
+
+› /usage
+
+› lemme approve that plan
+
+› Implement @ai/°base/plans/035_add-progress-output-to-get-base-py.md
+
+❯ /plan Fix @ai/°base/errors/18.md (also instruct me how to recover the old branches).
+
+❯ Task Notification:
+> - Task `a5fef80e749eecda7` <kbd>completed</kbd>
+> - Tool `toolu_018813zGGJP8rYH5kN7tQf5T`
+> - > Agent "Explore base-split error handling docs and script" finished
+> - [Query (`2414` chars, `2.37 KB`)](output/agents/016.a5fef80e749eecda7/prompt.md)
+> - [Answer (`10786` chars, `10.6 KB`)](output/agents/016.a5fef80e749eecda7/result.md)
+> - [Raw log (`283754` chars, `278 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-base/1820b956-99ba-4c49-9f3f-6a353c65ed0a/tasks/a5fef80e749eecda7.output)
+> - `18` tools, `63045` tokens, `1.55813 s`
+
+❯ Task Notification:
+> - Task `ac2fe74d5b6ac1a79` <kbd>completed</kbd>
+> - Tool `toolu_01EYDwEpWWnqUr5rfzceKgZd`
+> - > Agent "Check how CLI prints conflict status" finished
+> - [Query (`1781` chars, `1.75 KB`)](output/agents/017.ac2fe74d5b6ac1a79/prompt.md)
+> - [Answer (`11523` chars, `11.3 KB`)](output/agents/017.ac2fe74d5b6ac1a79/result.md)
+> - [Raw log (`179355` chars, `175 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-base/1820b956-99ba-4c49-9f3f-6a353c65ed0a/tasks/ac2fe74d5b6ac1a79.output)
+> - `6` tools, `44160` tokens, `0.874617 s`
+
+❯ Task Notification:
+> - Task `a6b875d1efa581998` <kbd>completed</kbd>
+> - Tool `toolu_016Zag83yWzm2zWHZ5RvMFW4`
+> - > Agent "Find tests covering conflict output and CLI print format" finished
+> - [Query (`1137` chars, `1.12 KB`)](output/agents/018.a6b875d1efa581998/prompt.md)
+> - [Answer (`4833` chars, `4.75 KB`)](output/agents/018.a6b875d1efa581998/result.md)
+> - [Raw log (`292685` chars, `286 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-base/1820b956-99ba-4c49-9f3f-6a353c65ed0a/tasks/a6b875d1efa581998.output)
+> - `33` tools, `58094` tokens, `1.55662 s`
+
+❯ The ways to solve this should be printed clearly by the script, giving you those two options basically (revert first).
+Currently it's kinda spamming you with lotsa stuff, and is super confusing. I guess it needs to be more verbose and tell the user what it's doing - in the log file, too.
+And structure it better somehow, maybe by action.
+
+❯ When you say logger, why not proper logging?
+
+❯ Task Notification:
+> - Task `a7504b235b811d7da` <kbd>completed</kbd>
+> - Tool `toolu_019JJEuCj8tUP4aHLdMuH4XF`
+> - > Agent "Check for existing logging module usage" finished
+> - [Query (`562` chars, `565 B`)](output/agents/019.a7504b235b811d7da/prompt.md)
+> - [Answer (`4647` chars, `4.63 KB`)](output/agents/019.a7504b235b811d7da/result.md)
+> - [Raw log (`114466` chars, `113 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-base/1820b956-99ba-4c49-9f3f-6a353c65ed0a/tasks/a7504b235b811d7da.output)
+> - `6` tools, `33023` tokens, `0.70015 s`
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. Use the stdlib `logging` module for the new narration/recovery output, or keep it consistent with the rest of the codebase (plain `print()`, no logging module anywhere)?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Logging approach** (1/1) <kbd>Single Select</kbd><br>
+>> Use the stdlib `logging` module for the new narration/recovery output, or keep it consistent with the rest of the codebase (plain `print()`, no logging module anywhere)?
+> - [x] 1\. Adopt logging module
+>   - _Set up a logger in cli.py with a StreamHandler (stdout) and FileHandler (.rebase-recovery.tmp) so narration/levels are handled by the stdlib instead of a hand-rolled tee function. Introduces the first use of `logging` in this repo's scripts._
+> - [ ] 2\. Keep plain print() (Recommended)
+>   - _Match the existing convention exactly (zero logging usage anywhere in scripts/°base) with a small tee helper that both print()s and appends to the recovery file. No new dependency/pattern introduced for a single command._
+> - [ ] 3\. _Type something._
+>
+> </details>
+>
+
+❯ Actually I want you to solve that repo's issue and learn from it, hopefully being able to improve the script.
+
+❯ Task Notification:
+> - Task `abb91c76743b67e80` <kbd>completed</kbd>
+> - Tool `toolu_014z4dDRbHWpgug54qkMDk6A`
+> - > Agent "Check git_ops abort helpers and _cleanup_scratch behavior" finished
+> - [Query (`1074` chars, `1.05 KB`)](output/agents/020.abb91c76743b67e80/prompt.md)
+> - [Answer (`5016` chars, `4.92 KB`)](output/agents/020.abb91c76743b67e80/result.md)
+> - [Raw log (`51095` chars, `50 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-base/1820b956-99ba-4c49-9f3f-6a353c65ed0a/tasks/abb91c76743b67e80.output)
+> - `4` tools, `18169` tokens, `0.508317 s`
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. This is a real client repo (ssp/Hansecom) with an actual content conflict on a VGN-789 timeline commit — resolving it means choosing which version of app-specific files (timeline restyle, an application-166 JSON fixture) is correct. How far should I go there?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Scope on ssp repo** (1/1) <kbd>Single Select</kbd><br>
+>> This is a real client repo (ssp/Hansecom) with an actual content conflict on a VGN-789 timeline commit — resolving it means choosing which version of app-specific files (timeline restyle, an application-166 JSON fixture) is correct. How far should I go there?
+> - [x] 1\. Clear stale state + resolve conflict myself (Recommended)
+>   - _Run --abort to clear the orphaned state file, re-run update-history-master, and when it hits the 7afd08be conflict, inspect both sides and resolve it directly so the split actually completes._
+> - [ ] 2\. Clear stale state only, stop at the real conflict
+>   - _Run --abort to fix the orphaned state file and re-run the tool up to the point of the real content conflict, then hand it back to you to resolve (since it needs domain knowledge of the SSP app) — I'll still use what I learn to improve the script._
+> - [ ] 3\. Don't touch ssp at all
+>   - _Only use what I've already observed (the stale-state bug) to improve split.py; leave the ssp repo exactly as-is for you to recover manually._
+> - [ ] 4\. _Type something._
+>
+> </details>
+>
+
+❯ Before part A you should improve the logging substantially, so we have the best possible insights - while still taking readability into account.
+
+❯ Now you dropped learning from B again.
+Here's the steps to do:
+1. add logging.
+2. fix that git manually and/or using/running the script.
+3. see what we can improve in the scripts from the learnings of **2.**.
+
+❯ Task Notification:
+> - Task `bzt003o29` <kbd>completed</kbd>
+> - Tool `toolu_01BtSWcPKRjcHUrK8CWGrykF`
+> - > Background command "Re-run update-history-master against ssp with new logging" completed (exit code 0)
+> - [Query (`102` chars, `102 B`)](output/agents/021.bzt003o29/prompt.md)
+> - [Answer (`3002` chars, `2.93 KB`)](output/agents/021.bzt003o29/result.md)
+> - [Raw log (`3488` chars, `3.41 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-base/1820b956-99ba-4c49-9f3f-6a353c65ed0a/tasks/bzt003o29.output)
+
+❯ Continue fixing the ssp repo split: check the background update-history-master run's output, and proceed to resolve the conflict / verify success per the approved plan (Part B).
+
+❯ Task Notification:
+> - Task `aa82a2c2fa638376c` <kbd>completed</kbd>
+> - Tool `toolu_012SPPbfmG9QxJzdzpsJXTxd`
+> - > Agent "Check design docs for first base-fold handling" finished
+> - [Query (`1574` chars, `1.54 KB`)](output/agents/022.aa82a2c2fa638376c/prompt.md)
+> - [Answer (`6728` chars, `6.61 KB`)](output/agents/022.aa82a2c2fa638376c/result.md)
+> - [Raw log (`304768` chars, `299 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-base/1820b956-99ba-4c49-9f3f-6a353c65ed0a/tasks/aa82a2c2fa638376c.output)
+> - `19` tools, `56600` tokens, `1.76258 s`
+
+❯ Task Notification:
+> - Task `balu7k2gf` <kbd>completed</kbd>
+> - Tool `toolu_016yj8YpNRmH6QBavKUq1AS4`
+> - > Background command "Re-run update-history-master against ssp with the unrelated-histories fix" completed (exit code 0)
+> - [Query (`118` chars, `118 B`)](output/agents/023.balu7k2gf/prompt.md)
+> - [Answer (`8` chars, `8 B`)](output/agents/023.balu7k2gf/result.md)
+> - [Raw log (`8` chars, `8 B`)](/tmp/claude-1000/-home-user-git-luckydonald-base/1820b956-99ba-4c49-9f3f-6a353c65ed0a/tasks/balu7k2gf.output)
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. For CLAUDE.md and README.md, keep ssp's own file entirely and discard base's generic version (base's CLAUDE.md literally instructs this)?
+>> 2. For .editorconfig, .gitignore, and ai/query.md, apply the additive-union resolution described (keep ssp's existing rules/entries, append base's non-overlapping additions)?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Identity files** (1/2) <kbd>Single Select</kbd><br>
+>> For CLAUDE.md and README.md, keep ssp's own file entirely and discard base's generic version (base's CLAUDE.md literally instructs this)?
+> - [ ] 1\. Keep ssp's version (Recommended)
+>   - _Discard base's generic CLAUDE.md/README.md content for both files; ssp's project-specific versions win outright, per base's own documented convention._
+> - [ ] 2\. Let me review first
+>   - _Show the full diff/content before deciding — don't resolve these two files yet._
+> - [x] 3\. _Type something:_
+>   - > `CLAUDE.md` and `README.md` from `base` shall **always** be ignored and overwritten. Config files like `.editorconfig` and `.gitignore` need to be merged manually, to keep both versions. For the `ai/query.md`, if the "headline" instructions from `base` are not there, they go first, then everything from the actual repo's `ai/query.md`. Usually this is only causing merge conflicts later, if lines were added accidentially from the base repo, and hence later on removed again. That net 0 change still is causing a diff "oh now it changed", even if it is the same as before in base, and hence using the repo one would be enough. `ai/scripts` this file is kinda intentional, why is it causing a conflict? Is there a folder there? In that case moving the files to `scripts/` (without `°base`, as that's a project repo).
+>
+>> **Config/log files** (2/2) <kbd>Single Select</kbd><br>
+>> For .editorconfig, .gitignore, and ai/query.md, apply the additive-union resolution described (keep ssp's existing rules/entries, append base's non-overlapping additions)?
+> - [ ] 1\. Apply union merge (Recommended)
+>   - _Keep everything ssp already has in these three files, and additively append base's non-conflicting entries/sections (new .editorconfig override blocks, new .gitignore patterns, base's ai/query.md template appended after ssp's log)._
+> - [ ] 2\. Skip these, leave for manual review
+>   - _Don't resolve these three now — leave the merge conflict markers in place for someone to handle by hand later._
+> - [x] 3\. _Type something:_
+>   - > See question above.
+>
+> </details>
+>
+
+❯ Continue fixing the ssp repo split: check the second update-history-master run's output (should now get past the base-fold step), verify success, and move to Part C (write up learnings) per the approved plan.
+
+❯ That other repo is now at a `detached HEAD` state? That can't be right.
+
+❯ Task Notification:
+> - Task `a07726ef54d981ed7` <kbd>completed</kbd>
+> - Tool `toolu_01MWwTeiStLJipz3HVYQHWZr`
+> - > Agent "Investigate checkout-restoration gap in history_master.py" finished
+> - [Query (`3178` chars, `3.11 KB`)](output/agents/024.a07726ef54d981ed7/prompt.md)
+> - [Answer (`16854` chars, `16.5 KB`)](output/agents/024.a07726ef54d981ed7/result.md)
+> - [Raw log (`189171` chars, `185 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-base/1820b956-99ba-4c49-9f3f-6a353c65ed0a/tasks/a07726ef54d981ed7.output)
+> - `10` tools, `39127` tokens, `1.72633 s`
+
+❯ test
+
+❯ [[PLAN]] I want to create an implementation plan. Please:
+1. Analyze the codebase to understand the current state
+2. Ask clarifying questions if my request is ambiguous
+3. Create a structured plan and save it to the plan file in the session folder
+
+My request: Check out @scripts/°base/ai/hooks/ and make sure those are compatible with Copilot, too
+
+❯ [[PLAN]] You (copilot) said `plan finalized in  plan.md , todos in SQL.`. Can we add those todos to the local plan file, too?
+
+❯ [[PLAN]] I don't want you to mirror it in this very plan, I want the hook to extract them and add them automatically in the future.
+
+❯ You have not yet marked the task as complete using the task_complete tool. If you were planning, stop planning and start implementing. You aren't done until you have fully completed the task.
+
+IMPORTANT: Do NOT call task_complete if:
+- You have open questions or ambiguities - make good decisions and keep working
+- You encountered an error - try to resolve it or find an alternative approach
+- There are remaining steps - complete them first
+
+Keep working autonomously until the task is truly finished, then call task_complete.
+
+❯ Use the skill tool to invoke the "commit-with-lplp-style" skill, then follow the skill's instructions.
+
+◆ commit without amending for now, I will fix this commit manually
+
+❯ commit without amending for now, I will fix this commit manually
+
+◆ [[PLAN]] Have a look at commit `6b46749e304dc8acb6aabca7b9e93378282c0b09` to `4196168d48400370bff9149f3761c8605171f4cf`.
+Those mostly are wrong additions to `query.md` - tool responses which instead should go to the `output/agents` or similar. You can see your own history and compare those.
+Also you can check the last files in `ai/°base/output/debug/*.json` for the specific input. If you find a few representative ones, you many `git add` them, and use them in unit tests.
+While at it, also check the TODO updates earlier (when you marked todos as done), which should cause a commit, too.
+
+❯ [[PLAN]] Have a look at commit `6b46749e304dc8acb6aabca7b9e93378282c0b09` to `4196168d48400370bff9149f3761c8605171f4cf`.
+Those mostly are wrong additions to `query.md` - tool responses which instead should go to the `output/agents` or similar. You can see your own history and compare those.
+Also you can check the last files in `ai/°base/output/debug/*.json` for the specific input. If you find a few representative ones, you many `git add` them, and use them in unit tests.
+While at it, also check the TODO updates earlier (when you marked todos as done), which should cause a commit, too.
+
+◆ The commit `092e22a520dcae1ce329467182922895eff78f12` is surely rather an (Subagent) accidentially commiting it's query.
+
+◆ Alright, squash the branch since `6b46749e304dc8acb6aabca7b9e93378282c0b09` into multiple commits, i.e. keeping a commit for each plan state.
+
+◆ /plan ask me all the types of questions you have available.
+
+◆ Alright, none of those question caused a question added to the `query.md` log.
+
+◆ The verifications - are they automated tests? In that case the jsons need to be added to git.
+
+◆ Question answered.
+> <details><summary>
+>
+>> 1. I tried copying the 3 real debug JSON payloads into a new `scripts/°base/tests/fixtures/save-decision/` directory (with renamed filenames) to use as test fixtures, but both that copy and my attempt to undo it were rejected without details. What would you prefer instead — force-adding the original debug files in place under `ai/°base/output/debug/` (keeping their original timestamped names), or something else?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **** (1/1) <kbd>Single Select</kbd><br>
+>> I tried copying the 3 real debug JSON payloads into a new `scripts/°base/tests/fixtures/save-decision/` directory (with renamed filenames) to use as test fixtures, but both that copy and my attempt to undo it were rejected without details. What would you prefer instead — force-adding the original debug files in place under `ai/°base/output/debug/` (keeping their original timestamped names), or something else?
+> - [ ] 1\. Force-add the original files in place under ai/°base/output/debug/ (Recommended)
+> - [ ] 2\. Copy them into a new tests/fixtures/save-decision/ dir with renamed files
+> - [ ] 3\. Let me clarify what I want instead
+> - [x] 4\. _Type something:_
+>   - > `git add` it, not `move` it.
+>
+> </details>
+>
+
+❯ /plan fix @ai/°ai/°base/errors/19.md
+
+❯ Task Notification:
+> - Task `aa37767ddf7b415bd` <kbd>completed</kbd>
+> - Tool `toolu_01FbqQPesnTKr83YD2GhB3Ld`
+> - > Agent "Find get-base.py and split.py bootstrap-branch logic" finished
+> - [Query (`1942` chars, `1.91 KB`)](output/agents/025.aa37767ddf7b415bd/prompt.md)
+> - [Answer (`12830` chars, `12.6 KB`)](output/agents/025.aa37767ddf7b415bd/result.md)
+> - [Raw log (`370303` chars, `362 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-base/bd057432-52a3-4fad-8478-454be4c9c79e/tasks/aa37767ddf7b415bd.output)
+> - `22` tools, `66822` tokens, `2.07957 s`
+
+❯ /commit-with-lplp-style, but this time properly clean up the commits since last push. This means that features shall be stay separate commits, and once a plan is changed, that cuts a new version. Only if there's edits to the plan file within second, and those don't overlap, those plan commits may be squashed into one.
+
+❯ if it's basically planning only for the upcoming code commit, instead of `ai: Run: fixed foobar` name it `ai: Plan: fix foobar`, and any additional plan updates `ai: Plan update: fix foobar`. Having those raw `ai:` auto-commits is usually not wanted.
+
+❯ If there's edits to the plan file within seconds, and those don't overlap, those plan commits may be squashed into one.
+The plan shall have basically the same line as the later commit but in _current tense_ instead of _past tense_.
+
+❯ If you detect that there's a gap of auto-ai commits before some commits, ask the user if they want that cleaned up, do NOT automatically attempt it, just because the skill is loaded.
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. There's a stray `ai: updated prompt` commit (6dad7c4) sitting between 0058c60 and your latest commit, left over from an unexpected `[base] manual changes.` auto-commit. Want it folded in?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Stray commit** (1/1) <kbd>Single Select</kbd><br>
+>> There's a stray `ai: updated prompt` commit (6dad7c4) sitting between 0058c60 and your latest commit, left over from an unexpected `[base] manual changes.` auto-commit. Want it folded in?
+> - [ ] 1\. Yes, fold it in
+>   - _Squash 6dad7c4's query.md diff into the latest commit (0f7a306), same as the other auto-commit folds done this session._
+> - [ ] 2\. No, leave it
+>   - _Leave history as-is; don't touch it._
+> - [x] 3\. _Type something:_
+>   - > a) yes, applies here too, I guess, but, b) this was meant to be an update for the SKILL.
+>
+> </details>
+>
+
+❯ Add that memory to the the SKILL, instead.
+
+❯ /plan Fix the memory hook only removing the file from the index in `bf76179ea117de82dd2cd27c128ce27a206bb68e` (and the squash result right now), but never actually commiting the file deletion of `ai/°base/memory/feedback_lplp_ask_before_cleanup.md` (introduced in ``, but dropped by the squash) - but while `/.claude/projects/-home-user-git-luckydonald-base/memory/feedback_lplp_ask_before_cleanup.md` was deleted next to that edit, it never got mirrored/synced to the repo state (just again this time conviniently dropped by rebase). Instead it should hook into the delete of that file, and properly delete it in the repo mirror as well.
+
+❯ Task Notification:
+> - Task `acb3eb64e8e459679` <kbd>failed</kbd>
+> - Tool `toolu_01Wn1N3vekPjZBpwEwvKwAvm`
+> - > Agent "Design fix for memory-deletion sync gap" failed: Agent stalled: no progress for 600s (stream watchdog did not recover)
+> - [Query (`9228` chars, `9.06 KB`)](output/agents/026.acb3eb64e8e459679/prompt.md)
+> - [Answer (`0` chars, `0 B`)](output/agents/026.acb3eb64e8e459679/result.md)
+> - [Raw log (`200084` chars, `196 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-base/b443bb16-52ce-4a19-8c5c-54541da80236/tasks/acb3eb64e8e459679.output)
+
+❯ Here are some changes:
+- Do not add/use `_lib.py`, instead use the `°*_lib` format already used otherwhere, do not use underscore function names.
+- Regarding tests, the `rm` will be outside of this/current repo, instead `$HOME/.claude/projects/*/memory/*.md`, so that should be handled.
+
+❯ adjust the commits following after `a9ec8a9d2a4a92254e86ad5ecf9c39b88312c503` to also use the new `git config --local user.email`.
+
+❯ /plan Some minor changes:
+1. Why is `a930d821373bae4ff8c59d7c6e63048b46567588` having the wrong number in filename of the commit message?
+2. Commits like `0fd297d03c48169567a4a99edfbd77c3dadcebd2` (`ai: agent \d+\.[a-e0-9]+ results`) should also immediately contain the changes to `query.md` (`887a4ffa6ac4a69ba7e9b652627b7a3410a4529b`, `ai: updated prompt`) in the same commit, instead of separately.
+
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. For point 3: the progress list you saw came from the newer Task tool (TaskCreate/TaskUpdate/TaskList), which isn't hooked into anything today — only the older TodoWrite/update_todo tools are (save-plan/hook.py already injects those into a `## Todos` section inside the plan .md itself, e.g. `041_foo.md`). How should the new capture work?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Todo capture** (1/1) <kbd>Single Select</kbd><br>
+>> For point 3: the progress list you saw came from the newer Task tool (TaskCreate/TaskUpdate/TaskList), which isn't hooked into anything today — only the older TodoWrite/update_todo tools are (save-plan/hook.py already injects those into a `## Todos` section inside the plan .md itself, e.g. `041_foo.md`). How should the new capture work?
+> - [ ] 1\. Separate .todo.md file (as you suggested)
+>   - _New companion file `<NNN>_<slug>.todo.md` next to the plan, rewritten on every TaskCreate/TaskUpdate for that session — keeps the plan file itself unchanged._
+> - [ ] 2\. Reuse the existing inline `## Todos` section
+>   - _Extend the current TodoWrite/update_todo hook matcher and normalizer to also handle TaskCreate/TaskUpdate, writing into the same in-plan section — no new file, one mechanism for both tools._
+> - [ ] 3\. Both
+>   - _Write the separate `.todo.md` file for Task-tool events, keep the existing inline section behavior for TodoWrite/update_todo untouched._
+> - [x] 4\. _Type something:_
+>   - > Update (create) the `## Todos` section in `<NNN>_<slug>.md`, with a distinct commit message (`ai: Todo added`, `ai: Todo updated`).
+>
+> </details>
+>
+
+❯ Note that in **2.**, the commit message still shall be the more interesting results commit message.
+
+❯ close the  `ai:` commit gap
+
+› Improve @scripts/°base/ai/references/download-link.py to have `--no-ide` and `--no-ide-open` as alias to `--no-open-ide`, and `--no-git` and `--no-add-git` be the same as `--no-git-add`. `--open`, `--ide`, `--ide-open` as alias to `--open-ide`, too.
+
+❯ create a Skill for coolify deployments (`docker-compose.coolify.yml`), based on @ai/references/https/github.com/coollabsio/coolify-docs/blob/dd06387b1d489750940094f0d1b162c179d06be0/content/docs/
+
+❯ /skill-creator:skill-creator
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. Skill already built (SKILL.md + 2 reference files, symlinked). What next?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Next step** (1/1) <kbd>Single Select</kbd><br>
+>> Skill already built (SKILL.md + 2 reference files, symlinked). What next?
+> - [x] 1\. Run test/eval loop (Recommended)
+>   - _Spawn test prompts with/without skill, review outputs+benchmark in viewer, iterate._
+> - [ ] 2\. Optimize trigger description only
+>   - _Generate eval queries, run description-optimizer loop against real usage phrasing._
+> - [ ] 3\. Good as-is, stop here
+>   - _Skip evals, treat skill done._
+> - [ ] 4\. _Type something._
+>
+> </details>
+>
+
+❯ Task Notification:
+> - Task `a5b739b6ae2a0ff83` <kbd>completed</kbd>
+> - Tool `toolu_01LooUd9N8FDnVenKeoN3WWr`
+> - > Agent "migration-healthcheck with-skill run" finished
+> - [Query (`831` chars, `833 B`)](output/agents/027.a5b739b6ae2a0ff83/prompt.md)
+> - [Answer (`1858` chars, `1.82 KB`)](output/agents/027.a5b739b6ae2a0ff83/result.md)
+> - [Raw log (`54026` chars, `52.9 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-base/917e0f49-ebe6-41d0-a097-306cf13c6346/tasks/a5b739b6ae2a0ff83.output)
+> - `3` tools, `27178` tokens, `0.436417 s`
+
+› Alright, if we have a `.by-issue` file, use that as prefix for commits: `f'{by_issue}: '` + `'[base] '`
+
+› Obviously both `[base] ` and `prefix: ` are optional.
+
+› I misspoke, `[base] ` must come first (if needed).
+
+› Do not edit the original, commit as fix.
+
+❯ Does `./scripts/°base/git/split.py sync-splits --direction to-clean-history --direction to-clean-history` sync only the current branch? i.e. `ai/UNCLEAN/feature/foo`?
+
+❯ It always fails with something lile @ai/°base/errors/21.txt
+
+❯ $ git cat-file -t ab1d3b5a8020622115f29ee272937909c6fc1b84
+commit
+$ git cat-file -t ab1d3b5a8020622115f29ee272937909c6fc1b84
+commit
+
+❯ $ git cat-file -t 092bf2822bb4132ff5dee8472797bf4de0a0a70b
+tree
+
+❯ patch the script to print the error
+
+› \! echo "/plan I want to log the raw execution of commands to \`ai[/°base]/query.md\`, too. Not only normal prompts."
+
+› Question answered.
+> <details><summary>
+>
+>> 1. Which command executions should be added to query.md?
+>> 2. How should each direct command execution appear in query.md?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Commands** (1/2) <kbd>Single Select</kbd><br>
+>> Which command executions should be added to query.md?
+> - [x] 1\. Direct user commands (Recommended)
+>   - _Log only shell commands run directly from the Codex prompt via the shell-command shortcut, matching your reproduction._
+> - [ ] 2\. All shell commands
+>   - _Also log commands executed by the AI through Bash/unified_exec, which can make query.md very large and hook coverage is currently incomplete._
+> - [ ] 3\. _Type something._
+>
+>> **Rendering** (2/2) <kbd>Single Select</kbd><br>
+>> How should each direct command execution appear in query.md?
+> - [ ] 1\. Exact raw block (Recommended)
+>   - _Fence and preserve the complete user_shell_command XML payload, including command, exit code, duration, and output._
+> - [x] 2\. Console-style block
+>   - _Render a cleaner command-plus-result block while preserving all values and output._
+>   - > Probably the details should be `<details>` (hah!). Similar to questions. The output shall be `output/commands/*.log`, similar to `output/agents/*/result.md`.
+> - [ ] 3\. Command only
+>   - _Log the executed command without exit code, duration, or output._
+> - [ ] 4\. _Type something._
+>
+> </details>
+>
+
+› Question answered.
+> <details><summary>
+>
+>> 1. Which timing contract should the implementation use?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Timing** (1/1) <kbd>Single Select</kbd><br>
+>> Which timing contract should the implementation use?
+> - [x] 1\. Next prompt catch-up (Recommended)
+>   - _At the next ordinary Codex prompt, append all intervening direct commands in order, then log that prompt; no background process is introduced._
+> - [ ] 2\. Background watcher
+>   - _Start and manage a per-session transcript watcher for near-immediate commits, adding lifecycle, concurrency, and stale-process handling._
+> - [ ] 3\. _Type something._
+>
+> </details>
+>
+
+> › Implement the [Plan](./plans/043_log-direct-codex-shell-executions.md).
+
+❯ /plan Check why commit `121ab69c8e849bb837fd5a89b66f5e460412bb36`(via ai agent hook) changed the `MEMORY.md` but not deleted the referenced files?
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. Now that we know why (see explanation below), what should the plan do about the two orphaned memory files (feedback_commit_prefix_ssp_tag.md, feedback_lib_naming_convention.md)?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Orphan fix** (1/1) <kbd>Single Select</kbd><br>
+>> Now that we know why (see explanation below), what should the plan do about the two orphaned memory files (feedback_commit_prefix_ssp_tag.md, feedback_lib_naming_convention.md)?
+> - [ ] 1\. Restore MEMORY.md index lines (Recommended)
+>   - _Both files still look valid and relevant (neither reads as stale/superseded). Just re-add their two lines to MEMORY.md so they're indexed again — no content changes to the memory files themselves._
+> - [ ] 2\. Properly delete them
+>   - _Run the sanctioned flow (scripts/°base/ai/memory/delete.py) to actually remove both the repo file and Claude source file, with a correct `Deleted Memory: <name>` marker commit — use this if you actually intended to forget them._
+> - [ ] 3\. Leave as-is, just wanted the explanation
+>   - _No file changes — you just wanted to understand why the commit behaved this way, not fix anything right now._
+> - [x] 4\. _Type something:_
+>   - > Why did claude remove the lines? Did it try to delete the original files, too? Check the last entries of `ai/°base/output/debug/` (big folder!), and see if you can figure out from the hook payloads.
+>
+> </details>
+>
+
+❯ /plan Alright, I want a full unittest run for @scripts/°base/git/split.py like the following:
+
+For all of those commit per repo (= test variant) you should create a list of the commits made,
+```
+{
+    "commit": "<hash>",
+    "merge": None | {
+        "branch": "empty/init", # remote&branch merged in
+        "commit_theirs": "<hash>", # commit of that branch we merged in
+        "commit_ours": "<hash>", # commit of our branch before merge (a bit redundant, lol)
+        "is_allowed_merge": bool,  # it was merged as part of preparation/setup, and not by running the script.
+    },
+    "code": bool,  # contains stuff outside of AI folders/files
+    "ai": bool,  # contains changes inside AI files/folders
+    "msg": "commit message until\nthe trailers",
+    "trailer": "X-foo: asdf\nX-bar: fghj",
+}
+```
+so you can later track/check references for the "history" branch and so on.
+
+1. prepare temporary repo (master/main branch is to be named `mane` there) with the following variations:
+   1. a few random commits
+   2. starting with the initial commit from `empty/init` (add origin as in `README.md`), then random commits
+   3. commit a few commits, and then also write a `README.md` and `.gitignore` (can be short, just to test conflict behavior)
+   4. starting with a branch based on the most recent commit of this `base/base` (checkout by cloning from this direrctory, not online), and then a few random commits
+   5. random commits + `empty/init` merge + `base/base` merge + random commits (see `README.md`and again, `base` is via dir, not github)
+   6. Similar to **1.5.** above, but then merge `base/base` a second time into `mane` (`--no-ff`), and commit a few more commits, including some into `ai` (see **2.8.** below)
+2. check out branches with the following variations:
+   1. stay on `mane`
+   2. `mane` + couple commits
+   3. new branch `feature/foobar` + couple random commits
+   4. new branch `test_idk_lol` + couple random commits
+   5. new branch `ai/UNCLEAN/feature/batz` + couple code commits
+   6. new branch `ai/UNCLEAN/feature/batz` + couple ai-folder commits
+   7. new branch `ai/UNCLEAN/feature/batz` + couple both-in-same-commit commits.
+   8. new branch `ai/UNCLEAN/feature/batz` + couple ai-folder, couple code + couple both-in-same-commit commits + ai + code + both.
+   9. new branch `ai/history/mane` + 2 "ai"-only commits + **2.8.**
+3. Now apply the script via "fake curl" from this repo (again, online version on github might not be in sync)
+4. It shall be merging cleanly (`README.md` and `.gitignore` shall be handled by the script automatically after all)
+5. create `ai/UNCLEAN/feature/test-eins` branch, and commits as described in **2.8.**.
+6. use the script to generate `feature/test-eins` from it.
+7. Check that `feature/test-eins` exits and contains:
+   1. no `base/base` merge:
+      1. no `base/base` at all (**1.1.** through **1.3.**)
+      2. only the original `base/base`, not a second merge (**1.4.**, **1.5.**)
+      3. only the original two merges with `base/base`, not a third merge (**1.6.**)
+   2. No commits touching `ai/**` or similar.
+   3. Only the code & "both" commits from `ai/UNCLEAN/feature/test-eins`
+   4. For the "both" commits they shall only contain the "code" half, nothing from "ai".
+8. Check that `ai/history/feature/test-eins` exists and contains:
+   1. All commits from `ai/UNCLEAN/feature/test-eins` in the same order and with the same commit metadata (except the trailers)
+      - check the commit hashes in the trailers to be correct.
+      - no newly introduced commits in-between
+   2. The commits do not contain "code"
+      1. "ai" -> "ai" (unchanged)
+      2. "both" -> "ai" (no code)
+      3. "code" -> "none" (empty commit)
+9. Commit 2 commits to `mane`
+10. Have the script rebase the branches
+11. check `ai/UNCLEAN/feature/test-eins` and `ai/history/feature/test-eins`
+    - They should be based on the newest `mane` now.
+    - Except **2.9.**,
+      - there the `ai/history/mane` should be base on the new `mane`,
+      - and `ai/UNCLEAN/feature/test-eins` and `ai/history/feature/test-eins` shall be based on that `ai/history/mane`.
+
+❯ Task Notification:
+> - Task `aa1c51f1a7fdc8b7b` <kbd>completed</kbd>
+> - Tool `toolu_01YSfWh6J1xuh7f9muFizvpU`
+> - > Agent "Explore existing test conventions in repo" finished
+> - [Query (`1824` chars, `1.79 KB`)](output/agents/028.aa1c51f1a7fdc8b7b/prompt.md)
+> - [Answer (`17367` chars, `17.1 KB`)](output/agents/028.aa1c51f1a7fdc8b7b/result.md)
+> - [Raw log (`551978` chars, `540 KB`)](/private/tmp/claude-501/-Users-user-Documents-programming-Python-base/fd0dc788-965b-4351-8698-7a6506a28528/tasks/aa1c51f1a7fdc8b7b.output)
+> - `30` tools, `104687` tokens, `2.60112 s`
+
+❯ Task Notification:
+> - Task `aa7b4db50dbed948d` <kbd>completed</kbd>
+> - Tool `toolu_01MwuiWFZLzDFP9ijiGeNKw5`
+> - > Agent "Explore split.py library implementation" finished
+> - [Query (`3192` chars, `3.14 KB`)](output/agents/029.aa7b4db50dbed948d/prompt.md)
+> - [Answer (`33647` chars, `33.1 KB`)](output/agents/029.aa7b4db50dbed948d/result.md)
+> - [Raw log (`679051` chars, `664 KB`)](/private/tmp/claude-501/-Users-user-Documents-programming-Python-base/fd0dc788-965b-4351-8698-7a6506a28528/tasks/aa7b4db50dbed948d.output)
+> - `37` tools, `129785` tokens, `3.43525 s`
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. Section 1 lists 6 repo-preparation variants, section 2 lists 9 branch-checkout variants, then sections 5-11 describe one deep trailer/rebase-verification flow on a `feature/test-eins` branch. How should these compose?
+>> 2. Step 4 says README.md/.gitignore conflicts 'shall be handled by the script automatically.' I read all of °split_lib and found this is only true for RE-creating an already-resolved base/base merge after a rebase (recreate_base_merge reuses the original merge's resolved blob per path). A brand-new first-time base/base fold that conflicts with a repo's own pre-existing README.md/.gitignore (as variant 1.3 sets up) is NOT auto-resolved — it surfaces as a manual conflict requiring --continue/--abort. Which did you mean?
+>> 3. How literally should the 'fake curl' invocation (step 3) simulate `curl -fSL <github-url> | python3 -`?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Test matrix scope** (1/3) <kbd>Single Select</kbd><br>
+>> Section 1 lists 6 repo-preparation variants, section 2 lists 9 branch-checkout variants, then sections 5-11 describe one deep trailer/rebase-verification flow on a `feature/test-eins` branch. How should these compose?
+> - [x] 1\. Full 6×9 smoke matrix + deep flow once per repo variant
+>   - _Run steps 2-4 (checkout + apply script + assert clean merge) for all 54 repo×branch combinations as a lightweight smoke test. Separately, run the full steps 5-11 deep flow (trailers, ai/history verification, mane-advance + rebase) once for each of the 6 repo variants. Most thorough, but a large test suite and slow to run._
+>   - ```
+>     54 smoke combos (repo 1.1-1.6 x branch 2.1-2.9)
+>       -> assert: script runs, no crash, clean merge
+>
+>     6 deep flows (one per repo variant)
+>       -> feature/test-eins + ai/UNCLEAN/... (2.8 pattern)
+>       -> assert: trailers, ai/history/feature/test-eins content,
+>          mane-advance + rebase-branches-to-master behavior
+>     ```
+> - [ ] 2\. Full 6x9 smoke matrix only; deep flow runs once total
+>   - _Run all 54 combinations for the lightweight clean-merge smoke check (steps 2-4). Run the detailed steps 5-11 trailer/rebase verification exactly once, on a single canonical repo (the most complete one: 1.5, with empty/init + base/base merge + random commits)._
+>   - ```
+>     54 smoke combos (repo 1.1-1.6 x branch 2.1-2.9)
+>       -> assert: script runs, no crash, clean merge
+>
+>     1 deep flow (repo variant 1.5 only)
+>       -> feature/test-eins + ai/UNCLEAN/... (2.8 pattern)
+>       -> assert: trailers, ai/history/feature/test-eins content,
+>          mane-advance + rebase-branches-to-master behavior
+>     ```
+> - [ ] 3\. Targeted smoke pairs, not full cross product
+>   - _Skip the full 54-combo cross product (slow, largely redundant since branch-checkout logic doesn't usually interact with repo-history shape). Instead pick a handful of representative (repo variant, branch variant) pairs that actually stress distinct code paths, run steps 2-4 on those, and run the deep steps 5-11 flow once per repo variant._
+>   - ```text
+>     ~12-15 targeted (repo, branch) pairs
+>       -> assert: script runs, no crash, clean merge
+>
+>     6 deep flows (one per repo variant)
+>       -> feature/test-eins + ai/UNCLEAN/... (2.8 pattern)
+>       -> assert: trailers, ai/history/feature/test-eins content,
+>          mane-advance + rebase-branches-to-master behavior
+>     ```
+> - [ ] 4\. _Notes: Add notes on this design._
+>
+>> **Auto-conflict semantics** (2/3) <kbd>Single Select</kbd><br>
+>> Step 4 says README.md/.gitignore conflicts 'shall be handled by the script automatically.' I read all of °split_lib and found this is only true for RE-creating an already-resolved base/base merge after a rebase (recreate_base_merge reuses the original merge's resolved blob per path). A brand-new first-time base/base fold that conflicts with a repo's own pre-existing README.md/.gitignore (as variant 1.3 sets up) is NOT auto-resolved — it surfaces as a manual conflict requiring --continue/--abort. Which did you mean?
+> - [ ] 1\. Only re-creation is expected to auto-resolve (recommended)
+>   - _The first-ever base/base merge (done during repo preparation, marked is_allowed_merge=true) is expected to conflict on README.md/.gitignore and our test fixture code resolves it manually as part of setup (not asserted as 'automatic'). Only a later recreation of that merge (triggered by rebase-branches-to-master / update-history-master after mane advances) is asserted to auto-resolve via the existing blob-reuse mechanism. This matches existing, already-tested split.py behavior — no code changes needed._
+> - [x] 2\. First-time conflicts should also auto-resolve
+>   - _You want the very first base/base fold (when mane already has its own conflicting README.md/.gitignore) to also resolve without manual intervention. This is a real feature gap — split.py has no such logic today, so this would require implementing new conflict-resolution behavior in split.py, not just writing tests for existing behavior._
+> - [ ] 3\. _Type something._
+>
+>> **Fake curl method** (3/3) <kbd>Single Select</kbd><br>
+>> How literally should the 'fake curl' invocation (step 3) simulate `curl -fSL <github-url> | python3 -`?
+> - [x] 1\. Pipe local get-base.py into python3 via stdin (recommended)
+>   - _Run `cat scripts/°base/git/get-base.py | python3 -  <args>` from this repo's checked-out working copy, with the temp repo's `base` remote pointed at a local path (this repo's directory) instead of GitHub. Exercises the exact same stdin-script code path as the documented curl one-liner, with zero network access and no dependency on GitHub being in sync._
+> - [ ] 2\. Spin up a local HTTP server and literally curl it
+>   - _Serve get-base.py's bytes via a background http.server thread and shell out to a real `curl http://127.0.0.1:PORT/... | python3 -`. Maximum fidelity to the literal documented command, at the cost of extra test infrastructure (thread lifecycle, port allocation) for no behavioral difference over stdin piping._
+> - [ ] 3\. _Type something._
+>
+> </details>
+>
+
+❯ Good analysis, but how can the tool do that automatically and correctly?
+
+❯ In fact, wouldn't it be better to copy the repo variant to the claude dir, then?
+
+❯ Yes, do it.
+
+❯ Task Notification:
+> - Task `a383589befc66723d` <kbd>completed</kbd>
+> - Tool `toolu_014jMcNbd5m18zjtTG9kiLdb`
+> - > Agent "Design split.py e2e test plan" finished
+> - [Query (`15346` chars, `15 KB`)](output/agents/030.a383589befc66723d/prompt.md)
+> - [Answer (`46693` chars, `45.7 KB`)](output/agents/030.a383589befc66723d/result.md)
+> - [Raw log (`634759` chars, `621 KB`)](/private/tmp/claude-501/-Users-user-Documents-programming-Python-base/fd0dc788-965b-4351-8698-7a6506a28528/tasks/a383589befc66723d.output)
+> - `27` tools, `118260` tokens, `5.65305 s`
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. Repo variant 1.6 says to merge `base/base` into `mane` a second time (`--no-ff`). But git's real behavior: `git merge --no-ff <ref>` on a ref that's already fully merged prints 'Already up to date' and creates NO commit at all, regardless of --no-ff. So a literal second merge of the same base/base tip is a no-op — variant 1.6 as written wouldn't actually produce two merge commits. How should the fixture create a genuine second merge?
+>> 2. Step 11 says rebased branches should be based on the new `mane` — "Except 2.9", where `ai/history/mane` (pre-seeded with 2 ai-only commits before the deep flow's own commits) should itself be based on the new `mane`, and `feature/test-eins`'s branches based on that. But the deep flow (steps 5-11) builds its own fresh `ai/UNCLEAN/feature/test-eins` off `mane` directly — it doesn't naturally combine with branch-checkout variant 2.9 (which is a separate smoke-matrix-only axis). How should this be covered?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Second base merge** (1/2) <kbd>Single Select</kbd><br>
+>> Repo variant 1.6 says to merge `base/base` into `mane` a second time (`--no-ff`). But git's real behavior: `git merge --no-ff <ref>` on a ref that's already fully merged prints 'Already up to date' and creates NO commit at all, regardless of --no-ff. So a literal second merge of the same base/base tip is a no-op — variant 1.6 as written wouldn't actually produce two merge commits. How should the fixture create a genuine second merge?
+> - [x] 1\. Use two different pinned commits (recommended)
+>   - _Pin two different commits from this repo's real `base` branch — an earlier ancestor for the first merge, a later one for the second — so the second merge has real new content to bring in and produces a genuine second merge commit. Slight deviation from 'merge base/base twice' (it's technically two different tips of the same branch), but behaviorally correct and matches how real repos actually get a second base update over time._
+> - [ ] 2\. Force a structurally-real but content-empty second merge
+>   - _Build the second merge commit directly via `git commit-tree` with parents [current_tip, base_sha] and the same tree as current_tip — a real 2-parent commit that changes nothing. Closer to a literal 'merge the exact same base/base tip again' reading, but it's fixture-constructed plumbing rather than an actual `git merge` invocation, and doesn't exercise real merge-conflict machinery a second time._
+> - [ ] 3\. _Type something._
+>
+>> **2.9 deep-flow coverage** (2/2) <kbd>Single Select</kbd><br>
+>> Step 11 says rebased branches should be based on the new `mane` — "Except 2.9", where `ai/history/mane` (pre-seeded with 2 ai-only commits before the deep flow's own commits) should itself be based on the new `mane`, and `feature/test-eins`'s branches based on that. But the deep flow (steps 5-11) builds its own fresh `ai/UNCLEAN/feature/test-eins` off `mane` directly — it doesn't naturally combine with branch-checkout variant 2.9 (which is a separate smoke-matrix-only axis). How should this be covered?
+> - [ ] 1\. Add a 7th deep-flow case pre-seeding ai/history/mane (recommended)
+>   - _Run the standard steps 5-11 deep flow six times (once per repo variant, as already planned), plus one extra 7th run where, before step 5, ai/history/mane is manually pre-created with 2 ai-only commits (mirroring branch-checkout 2.9) on top of just one repo variant (e.g. variant 1, the simplest). This exercises the case where ai/history/mane already exists before the tool's first run, as opposed to the tool creating it fresh — a genuinely different code path worth its own dedicated assertion._
+> - [x] 2\. Treat it as the same general rule, no extra case needed
+>   - _Interpret the 'except 2.9' clause as just restating the general, always-true dependency chain (unclean rebases onto history's rebased tip; history-master is updated via update-history-master, not rebase-branches-to-master) that the standard 6 deep-flow runs already exercise via the explicit two-call sequence (update-history-master --yes, then rebase-branches-to-master). No additional case._
+> - [ ] 3\. _Type something._
+>
+> </details>
+>
+
+❯ Commit it via LPLP style. Do not amend anything, no resets. Make sure your commit contains only the files and changes you did for this, as another agent (writing tests) might have changed files in the meantime, too.
+
+❯ Can you see my comments on the plan?
+
+❯ Here's my comments:
+
+1. > Repo variant 1.6 needs a second, genuinely different base/base merge
+   1. Yes, but this shall just be now -2 and now.
+
+❯ continued:
+###### 2
+> repo-variant 5/6's base/base merges are done as plain git merge --no-ff during test-fixture preparation (is_allowed_merge: true), not by running split.py — so they never carry an X-Base-History-Merge-Kind trailer (only merges _fold_base/recreate_base_merge themselves perform get that trailer)
+
+* Correct.
+###### 3
+> Step 7's "no new base/base merge on feature/test-eins" check therefore can't be a trailer lookup (there'd be zero matches even correctly) — it must count actual 2-parent merge commits reachable from feature/test-eins whose second parent traces into the pinned base branch history, and assert that count against what mane already had before feature/test-eins forked.
+
+* This we need to talk about, as I'm not following.
+
+Alright, that's all of them for now.
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. Does that explanation for the step-7 "no new base/base merge" check make sense now, or is there still something off?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Step 7 check** (1/1) <kbd>Single Select</kbd><br>
+>> Does that explanation for the step-7 "no new base/base merge" check make sense now, or is there still something off?
+> - [ ] 1\. Makes sense, proceed
+>   - _The two checks (known base-merge shas still ancestors of feature/test-eins, plus unchanged merge-commit count) are clear and sufficient. Ready to finalize the plan._
+> - [ ] 2\. Still unclear / want to discuss more
+>   - _Something about this still doesn't click — explain further or reconsider the approach before finalizing._
+> - [x] 3\. _Type something:_
+>   - > But what if the user did merge the base into some UNCLEAN branch? It is allowed there after all. History should kinda follow suit. Later rebases should also restore those, merging in the same commit and solving the conflicts the same way.
+>
+> </details>
+>
+
+❯ <!-- attach -->
+> The problem: repo variants 5/6 merge base/base into mane before feature/test-eins even exists. Those merges are ordinary git merge --no-ff calls we run ourselves during fixture setup — they never get the X-Base-History-Merge-Kind trailer (only _fold_base/recreate_base_merge add that, and those only ever touch ai/history/{main}, never mane). So by the time sync-splits creates feature/test-eins off mane, those merge commits are just ordinary ancestry with no marker distinguishing them as "base merges" — a trailer lookup would find nothing, correctly, but that tells us nothing useful either.
+
+Yes, but the script must still work even if there's already `base/base` in the history before we started the splittidui - in that case rather warn that we can't remove the previous ones, but at least keep everything of this branch clean..
+
+(also I was too slow to answer the choice question)
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. Which scenario does "warn that we can't remove the previous ones, but keep this branch clean" refer to?
+>> 2. You mentioned being too slow to answer the earlier scope question about merging base/base directly INTO an ai/UNCLEAN/* branch (a separate, bigger gap: sync_splits.py's replay walk isn't first-parent-only, so it would try to individually replay every commit of base/base's own history rather than treating the merge as one atomic step). How should that be scoped?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Which scenario** (1/2) <kbd>Single Select</kbd><br>
+>> Which scenario does "warn that we can't remove the previous ones, but keep this branch clean" refer to?
+> - [ ] 1\. history_master.py's own replay hitting an untagged old merge
+>   - _When update-history-master later needs to replay/rebase ai/history/{main}'s first-parent chain and encounters an old base/base merge that was done as plain prep (no X-Base-History-Merge-Kind trailer, so is_base_merge() doesn't recognize it), it currently tries to git cherry-pick that merge commit directly -- which git rejects outright (a merge commit needs -m <n>, plain cherry-pick errors immediately). This is a real crash-risk bug in the replay loop itself, not a design question -- fix: detect "this replay step is a merge git can't cherry-pick" and skip it with a warning (leaving it as inherited ancestry) instead of crashing, while everything the tool adds afterward stays correctly split._
+> - [x] 2\. feature/test-eins inheriting mane's pre-existing base merges
+>   - _When a clean branch (feature/test-eins) forks off mane and mane already has base/base merged in (ordinary ancestry, by design -- that's what adopting base via merge means for a main branch), the clean branch naturally inherits that ancestry too. This is expected/by-design, not a gap -- push_checks.py's clean-content policy only ever applied to a branch's own new commits, never to inherited history. No warning needed here since nothing is broken; my step-7 manifest-based check (already in the plan) already accounts for this correctly._
+> - [ ] 3\. _Type something._
+>
+>> **Unclean-merge scope** (2/2) <kbd>Single Select</kbd><br>
+>> You mentioned being too slow to answer the earlier scope question about merging base/base directly INTO an ai/UNCLEAN/* branch (a separate, bigger gap: sync_splits.py's replay walk isn't first-parent-only, so it would try to individually replay every commit of base/base's own history rather than treating the merge as one atomic step). How should that be scoped?
+> - [ ] 1\. Design + implement merge-aware sync-splits now (bigger)
+>   - _Treat this as in-scope: design how sync_splits.py detects a merge commit in the unclean branch's replay range, replays it as one atomic step onto both clean+history (not unrolling ancestry), and how rebase_to_master.py recreates it on rebase (reusing prior conflict resolution, mirroring history_master.recreate_base_merge). Becomes a third, substantial implementation part -- expect this plan to grow significantly._
+> - [ ] 2\. Defer it -- scope this test suite to the currently-supported case only
+>   - _Treat 'merge base/base directly into an UNCLEAN branch' as a known, separate gap for a later follow-up plan. For this task, don't construct that scenario in the test fixtures -- base/base only ever gets merged into mane itself (variants 1.4/1.5/1.6, which sync-splits never touches), keeping the current plan's scope intact._
+> - [ ] 3\. Add it as a documented negative/guard test only
+>   - _Don't implement merge-aware replay now, but add one small regression test asserting sync-splits' current behavior (whatever it turns out to be -- likely unrolling base's whole history flat, or erroring) when an UNCLEAN branch contains a merge, so the gap is visible and tracked without taking on the full implementation now._
+> - [x] 4\. _Type something:_
+>   - > Defer + Detact & Abort: Don't really implement it - but detect it. Instead of then doing fancy things, error. Give the user the choice to "fake" the merge - i.e. a  commit with all the metadata of the merge in the message, and all file changes contained, but not a "real" merge.
+b) attempt to merge it, hopefully there's no conflicts (lol likely there are - at least handle README and .gitignore etc. automatically) - failure returns to this question, without b)
+c) the user shall merge it (print merge command to that very commit), and wait for enter, then check for the merge to appear, else return to menu
+d) Abort (print revert instructions)
+>
+> </details>
+>
+
+❯ push
+
+❯ Task Notification:
+> - Task `b57zvjm00` <kbd>completed</kbd>
+> - Tool `toolu_01RrmVYaQE88dWc8E3qNyRYS`
+> - > Background command "Wait for deep-flow verification to finish" completed (exit code 0)
+> - [Query (`86` chars, `86 B`)](output/agents/031.b57zvjm00/prompt.md)
+> - [Answer (`32` chars, `32 B`)](output/agents/031.b57zvjm00/result.md)
+> - [Raw log (`32` chars, `32 B`)](/private/tmp/claude-501/-Users-user-Documents-programming-Python-base/fd0dc788-965b-4351-8698-7a6506a28528/tasks/b57zvjm00.output)
+
+❯ First commit
+
+❯ What's the state of the tests?
+
+❯ Check on the background smoke-matrix verification run (task bp00rudws) — read its output file, summarize pass/fail results, and continue the split.py e2e test suite implementation task (final verification and reporting to user).
+
+❯ Task Notification:
+> - Task `bng0u4mti` <kbd>killed</kbd>
+> - Tool `toolu_01JdHnQGUWgBGh7YXEk7YPRT`
+> - > Background command "Wait for smoke matrix verification process to complete" was stopped
+> - [Query (`0` chars, `0 B`)](output/agents/032.bng0u4mti/prompt.md)
+> - [Answer (`0` chars, `0 B`)](output/agents/032.bng0u4mti/result.md)
+> - [Raw log (`0` chars, `0 B`)](/private/tmp/claude-501/-Users-user-Documents-programming-Python-base/fd0dc788-965b-4351-8698-7a6506a28528/tasks/bng0u4mti.output)
+
+❯ Task Notification:
+> - Task `b7696k6l9` <kbd>killed</kbd>
+> - Tool `toolu_01Pc32fe7jzXJ8W5swkUdVMJ`
+> - > Background command "Continue waiting for smoke matrix to finish" was stopped
+> - [Query (`0` chars, `0 B`)](output/agents/034.b7696k6l9/prompt.md)
+> - [Answer (`0` chars, `0 B`)](output/agents/034.b7696k6l9/result.md)
+> - [Raw log (`0` chars, `0 B`)](/private/tmp/claude-501/-Users-user-Documents-programming-Python-base/fd0dc788-965b-4351-8698-7a6506a28528/tasks/b7696k6l9.output)
+
+❯ Task Notification:
+> - Task `bcbe63mxw` <kbd>killed</kbd>
+> - Tool `toolu_01XJixduwDfSBke63dDL8q9T`
+> - > Background command "Wait for the clean smoke-matrix verification to finish" was stopped
+> - [Query (`0` chars, `0 B`)](output/agents/034.bcbe63mxw/prompt.md)
+> - [Answer (`0` chars, `0 B`)](output/agents/034.bcbe63mxw/result.md)
+> - [Raw log (`0` chars, `0 B`)](/private/tmp/claude-501/-Users-user-Documents-programming-Python-base/fd0dc788-965b-4351-8698-7a6506a28528/tasks/bcbe63mxw.output)
+
+❯ Task Notification:
+> - Task `bp00rudws` <kbd>killed</kbd>
+> - Tool `toolu_01Vhrd1bgDHWpXrvPxWZbv4H`
+> - > Background command "Wait for smoke matrix verification to complete" was stopped
+> - [Query (`0` chars, `0 B`)](output/agents/033.bp00rudws/prompt.md)
+> - [Answer (`0` chars, `0 B`)](output/agents/033.bp00rudws/result.md)
+> - [Raw log (`0` chars, `0 B`)](/private/tmp/claude-501/-Users-user-Documents-programming-Python-base/fd0dc788-965b-4351-8698-7a6506a28528/tasks/bp00rudws.output)
+
+❯ Task Notification:
+> - Task `b23t1r586` <kbd>killed</kbd>
+> - Tool `toolu_01GPphF9HzmuxNrBFWbo2QYM`
+> - > Background command "Wait for final completion and show tail of results" was stopped
+> - [Query (`0` chars, `0 B`)](output/agents/032.b23t1r586/prompt.md)
+> - [Answer (`0` chars, `0 B`)](output/agents/032.b23t1r586/result.md)
+> - [Raw log (`0` chars, `0 B`)](/private/tmp/claude-501/-Users-user-Documents-programming-Python-base/fd0dc788-965b-4351-8698-7a6506a28528/tasks/b23t1r586.output)
+
+❯ Task Notification:
+> - Task `blgfkjd0l` <kbd>completed</kbd>
+> - Tool `toolu_01KfDmbXZXAUfpo5tRTj1RYC`
+> - > Background command "Single clean wait for smoke matrix completion" completed (exit code 0)
+> - [Query (`90` chars, `90 B`)](output/agents/035.blgfkjd0l/prompt.md)
+> - [Answer (`480` chars, `480 B`)](output/agents/035.blgfkjd0l/result.md)
+> - [Raw log (`480` chars, `480 B`)](/private/tmp/claude-501/-Users-user-Documents-programming-Python-base/fd0dc788-965b-4351-8698-7a6506a28528/tasks/blgfkjd0l.output)
+
+❯ Check now
+
+❯ Task Notification:
+> - Task `bn8k1tjvn` <kbd>killed</kbd>
+> - Tool `toolu_01GkkSXePZ4NbJ2DmEkkeQqW`
+> - > Background command "Wait for full test discovery to finish" was stopped
+> - [Query (`0` chars, `0 B`)](output/agents/036.bn8k1tjvn/prompt.md)
+> - [Answer (`0` chars, `0 B`)](output/agents/036.bn8k1tjvn/result.md)
+> - [Raw log (`0` chars, `0 B`)](/private/tmp/claude-501/-Users-user-Documents-programming-Python-base/fd0dc788-965b-4351-8698-7a6506a28528/tasks/bn8k1tjvn.output)
+
+❯ Task Notification:
+> - Task `b53kmva33` <kbd>killed</kbd>
+> - Tool `toolu_01LNXcwJSWprNj57crjVMbdH`
+> - > Background command "Run complete test discovery suite as final check" was stopped
+> - [Query (`0` chars, `0 B`)](output/agents/036.b53kmva33/prompt.md)
+> - [Answer (`0` chars, `0 B`)](output/agents/036.b53kmva33/result.md)
+> - [Raw log (`0` chars, `0 B`)](/private/tmp/claude-501/-Users-user-Documents-programming-Python-base/fd0dc788-965b-4351-8698-7a6506a28528/tasks/b53kmva33.output)
+
+❯ Task Notification:
+> - Task `bhsfts9tr` <kbd>killed</kbd>
+> - Tool `toolu_01JYaVPuP5KKn8KK7vAmunzw`
+> - > Background command "Run complete test discovery suite, tracked natively by the harness" was stopped
+> - [Query (`0` chars, `0 B`)](output/agents/037.bhsfts9tr/prompt.md)
+> - [Answer (`0` chars, `0 B`)](output/agents/037.bhsfts9tr/result.md)
+> - [Raw log (`0` chars, `0 B`)](/private/tmp/claude-501/-Users-user-Documents-programming-Python-base/fd0dc788-965b-4351-8698-7a6506a28528/tasks/bhsfts9tr.output)
+
+❯ Ah, the `.gitattributes` of the repo must be kept, as otherwise there'll be horrible git LFS effects. Especially if there are PNGs etc. already in the history. Check if there are file maches and in that case even delete the base version of that if it were to merge without issue.
+
+❯ /login
+
+❯ /commit-with-lplp-style fix up the ai commits to group them into useful commits.
+
+❯ I just rebased on a fresh pull, please check the remaining commits.
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. How would you like me to handle the now-duplicated split.py commits (my earlier cleanup vs. origin's already-pushed equivalent) and the raw ai: commits still sitting underneath origin's clean copy?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Cleanup scope** (1/1) <kbd>Single Select</kbd><br>
+>> How would you like me to handle the now-duplicated split.py commits (my earlier cleanup vs. origin's already-pushed equivalent) and the raw ai: commits still sitting underneath origin's clean copy?
+> - [ ] 1\. Full cleanup: drop local duplicates, fold everything, rebase onto origin's clean tip (recommended)
+>   - _Drop my local branch's now-redundant split.py commits (content-identical to what's already on origin), fold all the raw ai: bookkeeping commits (both the ones already on origin and any new ones) the same way as before, and end up with a small, clean set of commits for: the by-issue work, the commit_tree stderr fix, and whatever else is genuinely local-only — all rebased cleanly on top of origin's current tip. Will need a force-push afterward since origin's tip itself gets rewritten._
+> - [ ] 2\. Just report, no further rewriting
+>   - _Leave history as-is for now. You've confirmed no data was lost and tests still pass — stop here and let the user decide separately whether/when to clean up, since this now touches already-shared history across multiple machines._
+> - [ ] 3\. Clean up only my local-only unpushed commits, leave origin's shared history alone
+>   - _Fold/rename only the commits that are genuinely local-only (by-issue work, commit_tree fix, memory/npm-view/LFS commits, the newest prompts) without touching or rebasing away anything that's already reachable from origin — avoids rewriting shared history at all, at the cost of leaving the duplicate split.py commits and origin's own raw commit pile untouched._
+> - [x] 4\. _Type something:_
+>   - > Origin of this branch (`feature/full-test-and-memory-recording-fix`) is out of date and to be overwritten/force-pushed anyway. Pay that no regards.
+>
+> </details>
+>
+
+❯ /commit-with-lplp-style commit bugsink-triage/enable,SKILL.md with good explaining commit message (ammending this ai auto-commit)
+
+› In this base, how can I best provide code style guidelines without spamming every subproject with unneeded tokens - especially if they don't use that language?
+
+› Here's my python rules:
+Do not use `_` prefixes. We don't do "private" classes/functions here. Instead separate stuff out in modules where it makes sense.
+End logical indetion with an `# end <word>`, i.e. `# end if`: `if`, `with`, `for`, `while`, `def`, `class`. No repeating of the class/func name. Just a simple comment based closing bracket basically, to enhance readability.
+
+› `async def foo():` => `# end def`
+
+› Alright, do that and commit LPLP style
+
+› apply `curl -fSL https://raw.githubusercontent.com/luckydonald/base/refs/heads/base/scripts/%C2%B0base/git/get-base.py | python3 -` (but via local `cat get-base.py | python3`) to `/path/to/<redacted>/frontend` - to see if we have any outstanding bugs.
+
+› Alright, fix the stale `base-tools` by deleting & recreating it. Call it `luckydonald/base#get-base.py`, so it's unique enough that we wouldn't hit (and delete) user workspaces accidentally.
+
+› Also show propper git stderr instead of showing only an unhelpful CalledProcessError traceback.
+
+› When moving those bases around, _backup_ the previous ones by tagging the commits with `bak/split/YYYY-MM-DD_HH-MM-SS/{clean,UNCLEAN,history}`. That date is the same for the same run.
+
+› We need a way to configure the `✨❯ Lucky Lucy` name, and the email.
+
+› Question answered.
+> <details><summary>
+>
+>> 1. Where should the generated-commit name and email be configured?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Config source** (1/1) <kbd>Single Select</kbd><br>
+>> Where should the generated-commit name and email be configured?
+> - [ ] 1\. Git config (Recommended)
+>   - _Use `base.split.name` and `base.split.email`, supporting normal local/global Git config precedence per target repository._
+> - [ ] 2\. Environment variables
+>   - _Use `BASE_SPLIT_NAME` and `BASE_SPLIT_EMAIL`, convenient for one shell or CI run but less durable per repository._
+> - [x] 3\. Both sources
+>   - _Support environment overrides above Git config above current defaults, with a larger interface and test surface._
+>   - > Also, add a simple check, that if a email it's not ending with `@luckydonald.de`, the commit will not be touched.
+> - [ ] 4\. _Type something._
+>
+> </details>
+>
+
+› [
+  {
+    "internal_id": "row-001",
+    "full_name": "Ada Lovelace",
+    "age": 36,
+    "score": 98.5,
+    "active": true,
+    "tags": [
+      "math",
+      "computing",
+      "pioneer"
+    ],
+    "metadata": {
+      "source": "manual-entry",
+      "verified": true
+    },
+    "salary": 8500,
+    "created_at": "2024-01-15T10:30:00",
+    "birth_date": "1815-12-10",
+    "phone": "+49123456789",
+    "email": "ada@example.com",
+    "website": "https://example.com/ada",
+    "avatar_icon": "https://upload.wikimedia.org/wikipedia/commons/1/1f/Example_en.svg",
+    "status_icon": "check",
+    "external_link_pds": "https://example.com/reports/ada",
+    "external_link_custom": "https://example.com/profile/ada",
+    "department_group": "S-1-5-21-1234567890-1234567890-1234567890-1001",
+    "assigned_user": "admin",
+    "actions": {
+      "edit_action": "https://example.com/edit/1",
+      "view_action": "https://example.com/view/1",
+      "remove_action": "https://example.com/remove/1"
+    }
+  },
+  {
+    "internal_id": "row-002",
+    "full_name": "Alan Turing",
+    "age": 41,
+    "score": 87.25,
+    "active": false,
+    "tags": [
+      "cryptography",
+      "logic"
+    ],
+    "metadata": {
+      "source": "import",
+      "verified": false
+    },
+    "salary": 7200,
+    "created_at": "2024-03-02T08:15:00",
+    "birth_date": "1912-06-23",
+    "phone": "+441234567890",
+    "email": "alan@example.com",
+    "website": "https://example.com/alan",
+    "avatar_icon": "https://upload.wikimedia.org/wikipedia/commons/8/8f/Example_image.svg",
+    "status_icon": "close",
+    "external_link_pds": "https://example.com/reports/alan",
+    "external_link_custom": "https://example.com/profile/alan",
+    "department_group": "S-1-5-21-1234567890-1234567890-1234567890-1002",
+    "assigned_user": "alanturing",
+    "actions": {
+      "edit_action": "https://example.com/edit/2",
+      "view_action": "https://example.com/view/2",
+      "remove_action": "https://example.com/remove/2"
+    }
+  }
+]
+
+› It should at any case remove the claude/codex/copilot committer/author. (also btw, Co-authored-by, must be removed as well). Here's what the commit author/commiter will be set to:
+
+Direct Overrides (in any case it's ai):
+1. environment variable we "invented" earlier
+2. special git config we "invented" earlier
+If any matches we're done, use that email.
+
+Now, it shall try to get an email from the following sources and decide based on it ending with `@luckydonald.de`
+1. the "remaining" email of the commit (if author & commiter differ - and are non-ai)
+2. git config for normal commits
+If either of tem is, replace with the values as before (Lucky Lucy)
+
+If neither is, just replace with the winner from before ("remaining" or config).
+
+› apply `curl -fSL https://raw.githubusercontent.com/luckydonald/base/refs/heads/base/scripts/%C2%B0base/git/get-base.py | python3 -` (but via local `cat get-base.py | python3`) to `/path/to/<redacted>/frontend` - to see if we have any outstanding bugs.
+
+› the backup tags should contain the name, too. I forgot. Fix for next time with a commit. `bak/split/<name>/YYYY-MM-DD_HH-MM-SS/{clean,UNCLEAN,history}`, where name can contain slashes.
+
+› it's pushed now.
+
+› Now do the same for `/path/to/redacted/gb/`
+
+› restore; then fix bug and $commit-with-lplp-style
+
+› please investigate a issue with `get-base.py` and the stuff it calls:
+It is applied to the project `/path/to/<redacted>`, please clone that into `/tmp/`, checkout the **UNCLEAN** branch on `cc6a7ba707569322b4d66d1652e00050d7542b08` and delete existing **clean** or **history** branches for that branch (not **ai/history/master** though).
+Run `get-base.py` without parameters in auto mode.
+Observe that **clean** branch will get two empty commits, `ai: actually call apis instead of the mock.` (e.g. `b83ce54612a431fffa3e89593d8fa506d6f35f1e`) and `Revert "ai: Attempt to fix the expander being in both rows somehow."` (e.g. `acb858aafe13fafe73e3f343adc33a7ab72a12c9`), followed by the actual expected code commit `49967ded6ef2dbaa1b57572c6d6468d4cac5a2a0` (Source aka. unclean: `336441f25222e3a25826bcfb95f4eaf974b7206f`).
+
+› Question answered.
+> <details><summary>
+>
+>> 1. The two source commits are already empty in `ai/UNCLEAN/*`; their filtered clean trees therefore equal `master`. Should the fix remove only their generated clean commits, while preserving empty history commits for timeline/provenance?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **History behavior** (1/1) <kbd>Single Select</kbd><br>
+>> The two source commits are already empty in `ai/UNCLEAN/*`; their filtered clean trees therefore equal `master`. Should the fix remove only their generated clean commits, while preserving empty history commits for timeline/provenance?
+> - [x] 1\. Clean only (Recommended)
+>   - _Keep history’s current per-source timeline; skip only no-op clean projections._
+> - [ ] 2\. Skip both branches
+>   - _Suppress no-op generated commits from both clean and history, changing existing history behavior._
+> - [ ] 3\. _Type something._
+>
+> </details>
+>
+
+› Additionally, the trailers
+```text
+X-Base-Split-Source: 336441f25222e3a25826bcfb95f4eaf974b7206f
+X-Base-Split-Kind: code
+```
+must be stripped on **clean**.
+
+› Actually, all of those trailers, not just the above examples.
+
+› Question answered.
+> <details><summary>
+>
+>> 1. Should trailer-free clean commits include the separately-added `X-Base-Split-Clean-Branch` merge marker, or only provenance trailers generated while projecting `ai/UNCLEAN/*` into a clean branch?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Clean scope** (1/1) <kbd>Single Select</kbd><br>
+>> Should trailer-free clean commits include the separately-added `X-Base-Split-Clean-Branch` merge marker, or only provenance trailers generated while projecting `ai/UNCLEAN/*` into a clean branch?
+> - [ ] 1\. Projection provenance only (Recommended)
+>   - _Strip all `sync-splits` provenance from generated clean commits; retain the merge marker used by history-master integration._
+> - [x] 2\. No X-Base trailers
+>   - _Require every clean commit, including merge markers, to be free of all `X-Base-*` trailers._
+>   - > If this needs to be stored, add that to **history** somehow. Possibly a specific empty commit with a json payload as message, or with annotation on the history commits themselves.
+> - [ ] 3\. _Type something._
+>
+> </details>
+>
+
+› Question answered.
+> <details><summary>
+>
+>> 1. With all clean/master trailers forbidden, how should `update-history-master` identify a clean branch that was squash-merged (its clean tip is not an ancestor of `master`)?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Squash merges** (1/1) <kbd>Single Select</kbd><br>
+>> With all clean/master trailers forbidden, how should `update-history-master` identify a clean branch that was squash-merged (its clean tip is not an ancestor of `master`)?
+> - [x] 1\. Explicit registration (Recommended)
+>   - _Auto-detect merge/fast-forward integrations from history manifests; require an explicit branch-and-master-SHA registration for squash merges._
+> - [ ] 2\. Merge only
+>   - _Support only merge/fast-forward integrations automatically; report squash merges as unsupported._
+> - [ ] 3\. Keep a master trailer
+>   - _Retain one integration trailer on master, despite the clean trailer-free rule._
+> - [ ] 4\. _Type something._
+>
+> </details>
+>
+
+› Question answered.
+> <details><summary>
+>
+>> 1. Should this rewrite existing clean/master history to remove old trailers, or enforce trailer-free output only for newly generated/rebuilt clean commits?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Existing history** (1/1) <kbd>Single Select</kbd><br>
+>> Should this rewrite existing clean/master history to remove old trailers, or enforce trailer-free output only for newly generated/rebuilt clean commits?
+> - [x] 1\. New output only (Recommended)
+>   - _Avoid rewriting published clean/master history; read legacy trailers only as a migration fallback._
+> - [ ] 2\. Rewrite generated refs
+>   - _Rebuild local generated clean refs to remove historical trailers, but do not rewrite master._
+> - [ ] 3\. Rewrite all clean history
+>   - _Also rewrite master and published clean history, requiring coordinated force-pushes._
+> - [ ] 4\. _Type something._
+>
+> </details>
+>
+
+> › Implement the [Plan](./plans/045_make-clean-branches-trailer-free-while-preserving-split-meta.md).
+
+❯ Fix the unpushed commits still containing unsquashed ai commits
+
+❯ I still don't see a commit implementing `86311138e3eadc40b7a6fa69b75c3741a18d9671`, or is that actually kinda part of `230b59efb747a39e26d2ef9a673db5f3a808a4ad`?
+
+❯ Check that none of the commits (including ai/query.md etc.) include repo names outside of the `luckydonald/` namespace. These need to be redacted. (rule for base)
+
+❯ Make that a memory for the base repository.
+
+❯ ...apply that memory ... on that memory, please ...
+
+❯ Add to also check on `ai/°base/errors/*.*` files.
+
+❯ squash it
+
+❯ /plan I want you to store `/compact` commands.
+This should create `[\`/compact\` possible prompt](./ouput/compacted/NNN.md`.
+`hoass_plugin-template` just ran a `/compact` with custom prompt.
+
+❯ Task Notification:
+> - Task `aae065ad4cee0cf27` <kbd>completed</kbd>
+> - Tool `toolu_01W5BCsrV5Gvcikz7z3x7o6h`
+> - > Agent "Find compact hook and existing save-pattern conventions" finished
+> - [Query (`1979` chars, `1.95 KB`)](output/agents/038.aae065ad4cee0cf27/prompt.md)
+> - [Answer (`12156` chars, `12 KB`)](output/agents/038.aae065ad4cee0cf27/result.md)
+> - [Raw log (`427330` chars, `419 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-base/0dcdee12-bcc8-4ffa-8679-7f88974e2f82/tasks/aae065ad4cee0cf27.output)
+> - `20` tools, `87295` tokens, `1.98165 s`
+
+❯ Task Notification:
+> - Task `a8c7257388c9674a1` <kbd>completed</kbd>
+> - Tool `toolu_01PwmDqdZYU7rdTtUTPMQaTx`
+> - > Agent "Design PreCompact hook for saving /compact custom prompts" finished
+> - [Query (`7639` chars, `7.53 KB`)](output/agents/039.a8c7257388c9674a1/prompt.md)
+> - [Answer (`11435` chars, `11.2 KB`)](output/agents/039.a8c7257388c9674a1/result.md)
+> - [Raw log (`336290` chars, `329 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-base/0dcdee12-bcc8-4ffa-8679-7f88974e2f82/tasks/a8c7257388c9674a1.output)
+> - `25` tools, `68995` tokens, `4.44922 s`
+
+❯ Separately commit `ai/°base/errors/{21,22}.txt` after redacting it.
+
+❯ Fix @ai/°base/errors/22.txt
+
+❯ Task Notification:
+> - Task `a126e722df9270728` <kbd>completed</kbd>
+> - Tool `toolu_01CwWxAGvUM1aNUqAMMbDsAE`
+> - > Agent "Investigate update-history-master dirty-worktree check bug" finished
+> - [Query (`2620` chars, `2.57 KB`)](output/agents/040.a126e722df9270728/prompt.md)
+> - [Answer (`7601` chars, `7.47 KB`)](output/agents/040.a126e722df9270728/result.md)
+> - [Raw log (`201112` chars, `197 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-base/0dcdee12-bcc8-4ffa-8679-7f88974e2f82/tasks/a126e722df9270728.output)
+> - `17` tools, `44421` tokens, `2.79425 s`
+
+❯ Task Notification:
+> - Task `btthel3bo` <kbd>completed</kbd>
+> - Tool `toolu_01PgGUxxuZ5HV5dfVMeThLQy`
+> - > Background command "cd /home/user/git/luckydonald/base
+python3.12 -m unittest discover -s "scripts/°base/tests" -p "test_git_split*.py" 2>&1 | tail -15" completed (exit code 0)
+> - [Query (`176` chars, `177 B`)](output/agents/041.btthel3bo/prompt.md)
+> - [Answer (`544` chars, `544 B`)](output/agents/041.btthel3bo/result.md)
+> - [Raw log (`544` chars, `544 B`)](/tmp/claude-1000/-home-user-git-luckydonald-base/0dcdee12-bcc8-4ffa-8679-7f88974e2f82/tasks/btthel3bo.output)
+
+❯ Task Notification:
+> - Task `b1l17xnf1` <kbd>completed</kbd>
+> - Tool `toolu_018ztrCgzoFEN4hwGu52TxuC`
+> - > Background command "cd /home/user/git/luckydonald/base
+python3.12 -m unittest discover -s "scripts/°base/tests" -p "test_git_split*.py" 2>&1 | grep -B2 "^FAIL:" " completed (exit code 0)
+> - [Query (`186` chars, `187 B`)](output/agents/042.b1l17xnf1/prompt.md)
+> - [Answer (`230` chars, `230 B`)](output/agents/042.b1l17xnf1/result.md)
+> - [Raw log (`230` chars, `230 B`)](/tmp/claude-1000/-home-user-git-luckydonald-base/0dcdee12-bcc8-4ffa-8679-7f88974e2f82/tasks/b1l17xnf1.output)
+
+❯ Extract the language constraints from `ai/query.md` to `ai/skills/code-style/references/{language-extension}.md` (mentioning them in `SKILL.md`)
+
+❯ Task Notification:
+> - Task `a7e4912738d979980` <kbd>completed</kbd>
+> - Tool `toolu_01LhyEmpuV5tiFrEjMQV3p7j`
+> - > Agent "Find language style constraints scattered in query.md" finished
+> - [Query (`1735` chars, `1.71 KB`)](output/agents/043.a7e4912738d979980/prompt.md)
+> - [Answer (`3457` chars, `3.4 KB`)](output/agents/043.a7e4912738d979980/result.md)
+> - [Raw log (`165481` chars, `162 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-base/0dcdee12-bcc8-4ffa-8679-7f88974e2f82/tasks/a7e4912738d979980.output)
+> - `20` tools, `33256` tokens, `1.54388 s`
+
+❯ I think you analyized the wrong `query.md`. I meant the section under `#### General AI development guidelines` in `ai/query.md`; not the whole log of `ai/°base/query.md`.
+
+❯ Extract testing, too.
+
+❯ Add to the `py.md` that there shouldn't be "private" function, classes or files starting with `_`.
+Rather look into extracting functions as a module to import from.
+
+❯ Planning should ask once per session if lplp commit style should be enabled for the implementation (choices: yes, no)
+
+› Add `ai/skills/code-style/references/yarn.md` and reference it from `ts.md`.
+It should describe in detail how to set up `yarn@4` aka. `yarn berry`.
+You can inspect `../../littlepipslittleparty/pipbuck` for that `yarn` usage — docker (compose), github actions, project usage, `package.json`, lock files, `.yarn`, `.yarnrc`, `.gitignore`, `.pnp.*`, `corepack`, commit history, etc.
+Add a pre-commit hook, which if enabled in `settings.json`, prevents old yarn version files (especially the common v2) to be commited accidentially (I can think of at least the lock files, and a `node_modules/` dir — though a gitignred (default) `node_modules/` dir shall only emit a warning).
+
+› Question answered.
+> <details><summary>
+>
+>> 1. How should a consuming repository enable the Yarn 4 pre-commit check in `ai/tool-settings/settings.json`?
+>> 2. Which staged-state violations should make the hook fail?
+>> 3. When should an ignored local `node_modules/` directory emit its non-blocking warning?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Opt-in key** (1/3) <kbd>Single Select</kbd><br>
+>> How should a consuming repository enable the Yarn 4 pre-commit check in `ai/tool-settings/settings.json`?
+> - [x] 1\. pre_commit.yarn_4 (Recommended)
+>   - _Use `"pre_commit": {"yarn_4": {"enabled": true}}`, keeping Git policy separate from AI hooks._
+> - [ ] 2\. yarn.version
+>   - _Use `"yarn": {"version": 4}`, where declaring the required major implicitly enables the check._
+> - [ ] 3\. packageManager only
+>   - _Infer enablement from a root `package.json` containing `"packageManager": "yarn@4..."` and add no settings key._
+> - [ ] 4\. _Type something._
+>
+>> **Blocking** (2/3) <kbd>Single Select</kbd><br>
+>> Which staged-state violations should make the hook fail?
+> - [x] 1\. Strict Yarn 4 (Recommended)
+>   - _Require Yarn 4 packageManager/lock signatures and block legacy rc/releases plus any tracked or staged node_modules paths._
+>   - > but it should remain silent if there's no node/npm usage at all, so the `base` default can be enabled, to be disabled if you really need legacy stuff.
+> - [ ] 2\. Known old files
+>   - _Block only provably old lock formats, legacy rc/release files, and tracked or staged node_modules paths._
+> - [ ] 3\. Lock plus modules
+>   - _Only validate yarn.lock as Yarn 4 and block tracked or staged node_modules paths._
+> - [ ] 4\. _Type something._
+>
+>> **Warnings** (3/3) <kbd>Single Select</kbd><br>
+>> When should an ignored local `node_modules/` directory emit its non-blocking warning?
+> - [x] 1\. Every commit (Recommended)
+>   - _Warn whenever the opt-in is enabled and an ignored node_modules directory exists, making the mismatch continuously visible._
+> - [ ] 2\. Yarn changes only
+>   - _Warn only when the commit stages Yarn/package files, reducing noise during unrelated commits._
+> - [ ] 3\. Respect linker
+>   - _Warn whenever found under PnP/default, but suppress it when `.yarnrc.yml` explicitly uses `nodeLinker: node-modules`._
+> - [ ] 4\. _Type something._
+>
+> </details>
+>
+
+› Machine-local settings setting that config is an error.
+Adapt the json schema as well, so it's direcly detected in the IDE.
+
+› Having `pre_commit` key in local is fine, just `yarn_4` is not. Also call that key `yarn@4`.
+The tests shall be automated, not manual.
+
+> › Implement the [Plan](./plans/047_yarn-4-guidance-schemas-and-commit-guard.md).
+
+› yes (fix: this should be a user question dialog, not a normal ai agent text)
+
+› Then fix the guidence for asking for enabling to be explicitly inside the /plan mode. Also you can assume `yes` for a `luckydonald/*` and `littlepipslittleparty/*` repository.
+
+› We worked on storing the `/compact` result with hooks earlier.
+Here's the debug output of one of such claude events, which should allow you to finish implementation:
+@ai/°base/output/debug/20260719-144246_742508-save-compact-prompt.json
+@ai/°base/output/debug/20260719-144722_782032-record-memory.json
+
+› I want it to include auto-compact, too, marked as such.
+For the hooks, you can prefer the locally downloaded @ai/references/https/code.claude.com/docs/en/hooks.md if needed.
+Possibly the folder name be `NNN.prompt_id`.
+
+› Question answered.
+> <details><summary>
+>
+>> 1. How should compact-result directories use the hook’s `prompt_id`?
+>> 2. Where should an automatically generated compact result be marked as automatic?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Folder name** (1/2) <kbd>Single Select</kbd><br>
+>> How should compact-result directories use the hook’s `prompt_id`?
+> - [x] 1\. NNN.prompt_id (Recommended)
+>   - _Use the full UUID, falling back to plain NNN only for older payloads without a prompt ID._
+> - [ ] 2\. NNN only
+>   - _Keep the current numeric directory convention and use the prompt ID only internally for deduplication._
+> - [ ] 3\. Short prompt ID
+>   - _Use NNN plus a shortened UUID prefix for more compact paths, with a small collision risk._
+> - [ ] 4\. _Type something._
+>
+>> **Auto marker** (2/2) <kbd>Single Select</kbd><br>
+>> Where should an automatically generated compact result be marked as automatic?
+> - [ ] 1\. Query badge (Recommended)
+>   - _Keep result.md verbatim and add an `<kbd>auto</kbd>` badge to its Conversation compacted entry._
+> - [ ] 2\. Result heading
+>   - _Prepend an automatic-compaction heading to result.md, so the stored summary is no longer byte-for-byte exact._
+> - [x] 3\. Badge + metadata
+>   - _Keep result.md exact, add the query badge, and write a metadata sidecar containing trigger and IDs._
+>   - > Badge + metadata, but in the `prompt.md` file.
+> - [ ] 4\. _Type something._
+>
+> </details>
+>
+
+› Question answered.
+> <details><summary>
+>
+>> 1. Should the existing saved `/compact <instructions>` artifact move into the same `NNN.<prompt_id>` directory as its result?
+>> 2. How should `prompt.md` represent trigger metadata and manual instructions?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Prompt layout** (1/2) <kbd>Single Select</kbd><br>
+>> Should the existing saved `/compact <instructions>` artifact move into the same `NNN.<prompt_id>` directory as its result?
+> - [ ] 1\. Unify directory (Recommended)
+>   - _Replace output/compacted/NNN.md with output/compact/NNN.prompt_id/{prompt.md,result.md}; prompt.md records trigger metadata and any custom instructions._
+> - [ ] 2\. Keep both
+>   - _Retain output/compacted/NNN.md and additionally create prompt.md beside result.md, duplicating manual instructions._
+> - [ ] 3\. Metadata only
+>   - _Keep manual instructions in output/compacted and use the new prompt.md only for trigger and ID metadata._
+> - [x] 4\. _Type something:_
+>   - > Oops, I meant the `ai[/base]/query.md`.
+>
+>> **Prompt format** (2/2) <kbd>Single Select</kbd><br>
+>> How should `prompt.md` represent trigger metadata and manual instructions?
+> - [ ] 1\. Markdown fields (Recommended)
+>   - _Write labeled Markdown fields for trigger, prompt ID, and session ID, then a Custom instructions section when non-empty._
+> - [ ] 2\. YAML front matter
+>   - _Store trigger and IDs as YAML front matter followed by the raw custom instructions body._
+> - [x] 3\. Minimal trigger
+>   - _Write only `manual` or `auto`, followed by custom instructions when present._
+> - [ ] 4\. _Type something._
+>
+> </details>
+>
+
+› Question answered.
+> <details><summary>
+>
+>> 1. Which metadata should each `query.md` compaction entry show alongside its result link?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Query entry** (1/1) <kbd>Single Select</kbd><br>
+>> Which metadata should each `query.md` compaction entry show alongside its result link?
+> - [ ] 1\. Trigger + prompt ID (Recommended)
+>   - _Show `<kbd>auto</kbd>` or `<kbd>manual</kbd>` plus the full prompt UUID; session ID stays out of the log._
+> - [ ] 2\. Trigger only
+>   - _Show the manual/auto badge; the prompt UUID remains visible only in the directory path._
+> - [ ] 3\. All IDs
+>   - _Show trigger, prompt ID, and session ID in every query entry._
+> - [x] 4\. _Type something:_
+>   - > Trigger, message. The id will be in the local-relative link to that markdown file with the prompt result.
+>
+> </details>
+>
+
+> › Implement the [Plan](./plans/048_capture-manual-and-automatic-compact-results.md).
+
+› do the same for codex.
+
+› Download it to ~/git/openai/codex/
+
+› I did place it there for you.
+
+› repeat the summary.
+
+› Explain me that issue in `SkillsTests.test_sync_skills_imports_new_claude_skill_over_shared_source`.
+
+› Implement the correct tests then
+
+› /plan Alright, pulled in the newest `base/base`. Please test again with `/path/to/<redacted>/frontend/`.
+
+› Question answered.
+> <details><summary>
+>
+>> 1. How should I run the frontend test from this detached master tip?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Test mode** (1/1) <kbd>Single Select</kbd><br>
+>> How should I run the frontend test from this detached master tip?
+> - [ ] 1\. Restore master, then run (Recommended)
+>   - _Attach the existing `master` ref at the current commit, then run `cat get-base.py | python3 -`; preserves all files._
+> - [ ] 2\. Run explicit update
+>   - _Keep detached HEAD and run `update-history-master --yes` explicitly, bypassing auto branch detection._
+> - [ ] 3\. Only diagnose
+>   - _Do not mutate refs; report that auto mode cannot run while detached._
+> - [x] 4\. _Type something:_
+>   - > I checked out `ai/history/master`, which was the state to test.
+>
+> </details>
+>
+
+> › Implement the [Plan](./plans/049_test-get-base-py-on-ai-history-master.md).
+
+› Solve that conflict or the script or both. (btw do not leak that redacted path into the planning document)
+
+> › Implement the [Plan](./plans/049_resolve-replay-conflicts-for-commits-already-present-upstrea.md).
+
+› IT still seems to be not work cleanly.
+
+› It is pushed, but you can sync the repo with here directly, if that helps.
+
+› Wait a second, is `--skip` correct here for empty commits? shouldn't it be `--allow-empty` to keep the history refernces (X-…) in tact?
+
+› but is blindly running `git rm` good? shouldn't we guard that with a check fo exactly that case?
+
+› document your learnings
+
+› The crated memory was not auto-commited by the memory ai hook it seems, please fix.
+
+› Question answered.
+> <details><summary>
+>
+>> 1. How should the hook auto-commit changes in the global Codex memory repository?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Codex memory** (1/1) <kbd>Single Select</kbd><br>
+>> How should the hook auto-commit changes in the global Codex memory repository?
+> - [ ] 1\. Stop + SessionStart (Recommended)
+>   - _Reconcile and commit only when a Codex turn starts/ends, catching direct edits such as apply_patch without needing a file-write event._
+> - [ ] 2\. PostToolUse only
+>   - _Commit immediately after supported write/edit tools, but direct filesystem edits that do not emit a hook payload can be missed._
+> - [ ] 3\. Dedicated file watcher
+>   - _Commit nearly immediately via a background watcher, but adds a persistent process and more operational complexity._
+> - [x] 4\. _Type something:_
+>   - > Stop + SessionStart + PostToolUse: I want to make sure I'm catching them for sure.
+>
+> </details>
+>
+
+> › Implement the [Plan](./plans/050_auto-commit-codex-global-memory.md).
+
+› As this is now a session start, I expect the file to be commited here.
+
+› Ignore the fact that .codex is under version control - that's just my personal backup. The goal is to sync that file into this very repository.
+
+› No; it is not the only source of truth! It must sync properly, just like the claude one does.
+
+› I mean it's a bit more difficult as the codex memory seems to be only global for all projects, so I guess we need to listen to explicit add/update/delete commands/hooks to make sure we're getting it right?
+
+› Uh oh, `• Running 24 PostToolUse hooks`, which end up in `• PostToolUse hook (failed)` with `error: hook timed out after 600s`. Something wrong with the script?
+
+› I want to test the compact feature specifically.
+
+› Hi
+
+› Like calude I'd also like you, codex, to save the sumary after running  `/compact`.
+
+› This must be done via `ai/settings/`
+
+› Have a look at commit `04031d4aea018778b52b98c619f45383463befff62b494c272f979c7eb9a8f68` (seems to be rebased as `7d1218a9975fa6e8151f683b182b6eb33294596e`) in `../../openai/codex`, which should be most insightful of how codex is storing memory files - so we can bring it's sync to the repo's memory update system (claude's is very good, take that as reference for your codex implementation.)
+
+› Question answered.
+> <details><summary>
+>
+>> 1. Codex’s native workspace is global, while the current hook mirrors every `extensions/ad_hoc/*.md` into whichever repo runs it. Which project-scope contract should the replacement use?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Codex scope** (1/1) <kbd>Single Select</kbd><br>
+>> Codex’s native workspace is global, while the current hook mirrors every `extensions/ad_hoc/*.md` into whichever repo runs it. Which project-scope contract should the replacement use?
+> - [x] 1\. Scoped import (Recommended)
+>   - _Store only notes explicitly attributed to the current repo in a Codex extension resource with `scope.json`, then mirror those into that repo._
+>   - > Is that the way how codex does it for the migrated claude ones?
+> - [ ] 2\. Keep global mirror
+>   - _Continue mirroring all global ad-hoc notes into every repo that opens a Codex session._
+> - [ ] 3\. One-way export
+>   - _Export scoped Codex notes into the repo, but never let repo-side edits update the global Codex workspace._
+> - [ ] 4\. _Type something._
+>
+> </details>
+>
+
+› Question answered.
+> <details><summary>
+>
+>> 1. Upstream keeps imported project resources as source material and tells Codex consolidation never to edit them. For this repo integration, should scoped notes follow that upstream one-way rule or be a true Claude-style two-way mirror?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Write direction** (1/1) <kbd>Single Select</kbd><br>
+>> Upstream keeps imported project resources as source material and tells Codex consolidation never to edit them. For this repo integration, should scoped notes follow that upstream one-way rule or be a true Claude-style two-way mirror?
+> - [x] 1\. Two-way, repo wins (Recommended)
+>   - _Use a scoped mapping and Claude’s conflict rule: an existing tracked repo copy restores the Codex-side copy on divergence; only new scoped Codex notes are imported._
+>   - > Two way. Is that sub-folder free text? I.e. could we add our non-local notes to `extensions/base_synced/`? That way we could quite easily see which ones codex would be modifying, and which one came from a different computer/ai agent.
+> - [ ] 2\. Codex to repo only
+>   - _Export newly scoped Codex notes to the repo; repo edits never change Codex’s memory workspace._
+> - [ ] 3\. Repo to Codex only
+>   - _Import repo memory into Codex for consolidation, following upstream migration semantics exactly._
+> - [ ] 4\. _Type something._
+>
+> </details>
+>
+
+› Question answered.
+> <details><summary>
+>
+>> 1. Which repository memory tree should the new scoped `base_synced` resource mirror?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Mirror boundary** (1/1) <kbd>Single Select</kbd><br>
+>> Which repository memory tree should the new scoped `base_synced` resource mirror?
+> - [ ] 1\. Whole project memory (Recommended)
+>   - _Synchronize `ai/°base/memory/` (or `ai/memory/`) including its `MEMORY.md` registry, so Claude and Codex share one scoped project record._
+> - [ ] 2\. Codex-only subtree
+>   - _Synchronize only `ai/.../memory/codex/`; existing Claude memory stays outside Codex’s scoped resources._
+> - [ ] 3\. Ad-hoc notes only
+>   - _Keep the current narrow note export, but move it from global `ad_hoc` into `base_synced`._
+> - [x] 4\. _Type something:_
+>   - > On repo side, I don'T really like the `ai[/°base]/memory/codex/**` layout, it should be the same as claude, and ideally merge them properly into `MEMORY.md`, too.
+>
+> </details>
+>
+
+› Question answered.
+> <details><summary>
+>
+>> 1. When a newly attributed Codex note enters the shared project memory directory, how should its `MEMORY.md` entry be maintained?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Registry merge** (1/1) <kbd>Single Select</kbd><br>
+>> When a newly attributed Codex note enters the shared project memory directory, how should its `MEMORY.md` entry be maintained?
+> - [x] 1\. Auto-link, then curate (Recommended)
+>   - _The hook adds a deterministic filename link immediately; Codex consolidation later improves the title/summary and global routing._
+>   - > You say "link", as in symlink. I'm not sure if that's the right way; I believe the claude one copies the file? What do you mean with consolidation/curation? Please reword the problem.
+> - [ ] 2\. Curator only
+>   - _The hook copies the note but only warns; a Codex/Claude memory pass must add the index entry._
+> - [ ] 3\. Full automatic summary
+>   - _The hook derives a title and summary from the note text, accepting heuristic and untrusted-content risks._
+> - [ ] 4\. _Type something._
+>
+> </details>
+>
+
+› Question answered.
+> <details><summary>
+>
+>> 1. For a new Codex note synced into `ai/.../memory/`, should the hook automatically add a basic Markdown index entry to that directory’s `MEMORY.md`?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Memory index** (1/1) <kbd>Single Select</kbd><br>
+>> For a new Codex note synced into `ai/.../memory/`, should the hook automatically add a basic Markdown index entry to that directory’s `MEMORY.md`?
+> - [x] 1\. Add basic entry (Recommended)
+>   - _Keep every new file discoverable immediately with a filename-based Markdown entry; later AI work may improve the wording._
+>   - > Having a "todo: summarize this file" kind of text makes sense. The filename is in there for the label, just strip the common prefix of `feedback_` (prepare a list for those) In case of codex, the first line of the markdown, `# <title>` might be a better source though, as it for example does not contain the date.
+> - [ ] 2\. Warn only
+>   - _Preserve `MEMORY.md` for manual/AI editing and print an actionable warning until an index entry is added._
+> - [ ] 3\. _Type something._
+>
+> </details>
+>
+
+› Question answered.
+> <details><summary>
+>
+>> 1. Where should the initial unsummarized entries live in `MEMORY.md`?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Pending notes** (1/1) <kbd>Single Select</kbd><br>
+>> Where should the initial unsummarized entries live in `MEMORY.md`?
+> - [ ] 1\. Dedicated list (Recommended)
+>   - _Add a `## Needs summary` section containing links plus `TODO: summarize this file`; move entries out only after a curator adds a real summary._
+> - [x] 2\. Normal index
+>   - _Place each new link in its eventual topic section with a `TODO: summarize this file` suffix._
+>   - > Yeah, but that should rather be the text after `- […](…) — `.
+> - [ ] 3\. _Type something._
+>
+> </details>
+>
+
+› Question answered.
+> <details><summary>
+>
+>> 1. When should the two-way Codex/project reconciliation run?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Sync timing** (1/1) <kbd>Single Select</kbd><br>
+>> When should the two-way Codex/project reconciliation run?
+> - [ ] 1\. Session boundaries (Recommended)
+>   - _Run at SessionStart and Stop only; this avoids per-tool timeout pressure and still catches every persisted change on the next boundary._
+> - [x] 2\. Writes plus boundaries
+>   - _Also run after write-like tools for faster mirroring, accepting more hook invocations and contention._
+>   - > I believe the claude hooks do this, too.
+> - [ ] 3\. Explicit command only
+>   - _Provide a manual sync command; no automatic reconciliation hooks._
+> - [ ] 4\. _Type something._
+>
+> </details>
+>
+
+› Question answered.
+> <details><summary>
+>
+>> 1. How should a newly created native Codex `extensions/ad_hoc/*.md` note enter the shared project memory?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Native notes** (1/1) <kbd>Single Select</kbd><br>
+>> How should a newly created native Codex `extensions/ad_hoc/*.md` note enter the shared project memory?
+> - [x] 1\. Attribute current repo (Recommended)
+>   - _When a note first changes during this repo’s write/boundary hook, link it into this repo’s scoped `base_synced` resource and shared memory index._
+>   - > For the tool use that totally makes sense; and you can probably already add this json file thingo if missing, while at it. For files just suddenly appearing, not writen directly by a tool, it's more difficult. Maybe add stdout print with instructions for the AI: Ask the ai, and if unclear, it shall ask the user, if we want to add this file to this project, or not. Include the command for that script to "manually" add it. Either the AI can run it, or if the user/ai determine it's a different project, the ai can instruct the user to execute that in the other repo where the memory is from. Do those json config files allow blacklisting ourself, so we wouldn't ask every time?
+> - [ ] 2\. Explicit import only
+>   - _Add a dedicated command that names the target project; no automatic attribution risk._
+> - [ ] 3\. Do not import ad-hoc
+>   - _Synchronize only notes already placed in `base_synced`; native Codex ad-hoc notes remain global._
+> - [ ] 4\. _Type something._
+>
+> </details>
+>
+
+› Plan updates:
+- _per-file hardlink-first, symlink-fallback strategy_ this should be extracted to a helper file, if not yet.
+- _Keep `source-map.json` in `base_synced` to record native `extensions/ad_hoc/*.md` ownership and ignored files._ Is that a file we create or codex creates? It should also exist in our version control, either way. (is it just ignore lists? the thought is about running it on a different computer, to make sure there are no conflicts - or that conflicts are trivial (save, understandable) to solve (i.e. with a computer id/hostname?)
+- _run scripts/°base/ai/memory/import-codex.py <note> from the correct repository_ - which may not be ours. If it is ours, the AI shall be allowed to do it automatically (which needs to be in the print/echo for the AI)
+- The tests shall be automated - but save to run (i.e. doing it's stuff in /tmp/, not live data)
+
+> › Implement the [Plan](./plans/051_scoped-two-way-codex-memory-sync.md).
+

@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import importlib
+import importlib.util
 import re
 import subprocess
 import sys
@@ -13,8 +15,9 @@ from _lib import (  # noqa: E402
     _chdir_to_git_root,
     _is_inside_base_repo,
     _subproject_root,
-    base_ai_commit_subject,
 )
+
+memory_lib = importlib.import_module("°memory_lib")
 
 
 def _encoded_project_dir(subproject: Path) -> Path:
@@ -33,21 +36,19 @@ def _git_text(*args: str) -> str:
     return (result.stdout or "").strip()
 
 
-def _tracked(path: str) -> bool:
-    result = subprocess.run(
-        ["git", "ls-files", "--error-unmatch", "--", path],
-        capture_output=True,
-    )
-    return result.returncode == 0
-
-
-def _unlink(path: Path) -> None:
-    if path.is_symlink() or path.exists():
-        path.unlink()
-
-
 def _usage() -> str:
     return "Usage: python3 scripts/°base/ai/memory/delete.py <filename-or-path>"
+
+
+def _codex_hook() -> object:
+    hook = Path(__file__).resolve().parents[1] / "hooks" / "record-codex-memory" / "hook.py"
+    specification = importlib.util.spec_from_file_location("record_codex_memory", hook)
+    if specification is None or specification.loader is None:
+        raise RuntimeError(f"cannot load {hook}")
+    # end if
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -65,26 +66,27 @@ def main(argv: list[str] | None = None) -> int:
     src_dir, dst_dir = _memory_dirs(subproject)
     _chdir_to_git_root()
 
-    dst = dst_dir / name
-    dst_rel = str(dst.relative_to(Path.cwd()))
-    if not _tracked(dst_rel):
+    dst_dir_rel = str(dst_dir.relative_to(Path.cwd()))
+    dst_rel = f"{dst_dir_rel}/{name}"
+    if not memory_lib.is_tracked(dst_rel):
         print(f"Memory is not tracked: {dst_rel}", file=sys.stderr)
         return 1
 
-    _unlink(dst)
-    _unlink(src_dir / name)
+    if not memory_lib.delete_memory(name, src_dir=src_dir, dst_dir=dst_dir, dst_dir_rel=dst_dir_rel):
+        print(f"Failed to commit deletion of {dst_rel}", file=sys.stderr)
+        return 1
 
-    subprocess.run(["git", "add", "--", dst_rel], check=True)
-    subject = base_ai_commit_subject(f"ai: delete memory {Path(name).stem}")
-    marker = f"Deleted Memory: {name}"
-    result = subprocess.run(
-        ["git", "commit", "--only", dst_rel, "-m", subject, "-m", marker],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        sys.stderr.write(result.stderr or result.stdout)
-        return result.returncode
+    try:
+        hook = _codex_hook()
+        repository = hook.codex_memory_repo()
+        if repository is not None:
+            changed = hook.delete_scoped_memory(repository, subproject, name)
+            hook.commit_project_memory(subproject, changed)
+        # end if
+    except (OSError, RuntimeError) as exc:
+        print(f"Deleted repo/Claude memory but could not remove Codex mirror: {exc}", file=sys.stderr)
+        return 1
+    # end try
 
     commit = _git_text("rev-parse", "--short", "HEAD")
     print(f"Deleted memory {name} in {commit}")

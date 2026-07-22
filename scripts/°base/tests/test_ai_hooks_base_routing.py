@@ -20,6 +20,8 @@ def _encode_project_path(p: Path) -> str:
 PROMPT_HOOK = ROOT / "scripts" / "°base" / "ai" / "hooks" / "save-prompt" / "hook.py"
 PLAN_HOOK = ROOT / "scripts" / "°base" / "ai" / "hooks" / "save-plan" / "hook.py"
 MEMORY_HOOK = ROOT / "scripts" / "°base" / "ai" / "hooks" / "record-memory" / "hook.py"
+CODEX_MEMORY_HOOK = ROOT / "scripts" / "°base" / "ai" / "hooks" / "record-codex-memory" / "hook.py"
+COMPACT_PROMPT_HOOK = ROOT / "scripts" / "°base" / "ai" / "hooks" / "save-compact-prompt" / "hook.py"
 
 
 def run_git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -52,6 +54,13 @@ def run_hook(
 ) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["CLAUDE_PROJECT_DIR"] = str(repo.resolve())
+    # Don't let this test process's own (possibly Copilot CLI) ambient
+    # environment leak into simulated hook invocations: tests exercise
+    # specific tool identities via CLI args/payloads and must not be skipped
+    # by the cross-tool-duplicate guard just because the *test runner*
+    # happens to be running under Copilot CLI.
+    env.pop("COPILOT_CLI", None)
+    env.pop("COPILOT_AGENT_SESSION_ID", None)
     if extra_env:
         env.update(extra_env)
     result = subprocess.run(
@@ -105,6 +114,50 @@ def long_plan(title: str = "Saved Plan") -> str:
     return "\n".join(lines) + "\n"
 
 
+def transcript_user_message(text: str, turn_id: str) -> dict:
+    return {
+        "type": "response_item",
+        "payload": {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": text}],
+            "internal_chat_message_metadata_passthrough": {"turn_id": turn_id},
+        },
+    }
+
+
+def transcript_user_event(message: str) -> dict:
+    return {"type": "event_msg", "payload": {"type": "user_message", "message": message}}
+
+
+def transcript_shell_command(
+    command: str,
+    *,
+    turn_id: str,
+    exit_code: int = 0,
+    duration: str = "0.125 seconds",
+    output: str = "",
+) -> dict:
+    text = (
+        "<user_shell_command>\n"
+        f"<command>\n{command}\n</command>\n"
+        "<result>\n"
+        f"Exit code: {exit_code}\n"
+        f"Duration: {duration}\n"
+        f"Output:\n{output}\n"
+        "</result>\n"
+        "</user_shell_command>"
+    )
+    return transcript_user_message(text, turn_id)
+
+
+def write_transcript(path: Path, records: list[dict]) -> None:
+    path.write_text(
+        "".join(json.dumps(record, ensure_ascii=False) + "\n" for record in records),
+        encoding="utf-8",
+    )
+
+
 def claude_github_worker_prompt(
     *,
     title: str,
@@ -148,6 +201,256 @@ def claude_github_worker_prompt(
 
 
 class AiHooksBaseRoutingTests(unittest.TestCase):
+    def test_codex_prompt_catches_up_direct_shell_commands_with_output_artifacts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "base"
+            init_repo(repo, "https://luckydonald@github.com/luckydonald/base.git")
+            transcript = Path(tmp) / "rollout.jsonl"
+            current_prompt = "Investigate both failures"
+            write_transcript(
+                transcript,
+                [
+                    transcript_user_message("Earlier prompt", "turn-earlier"),
+                    transcript_user_event("Earlier prompt"),
+                    transcript_shell_command(
+                        "printf 'first\\n'",
+                        turn_id="turn-command-1",
+                        output="first\n",
+                    ),
+                    transcript_shell_command(
+                        "git pull\necho after",
+                        turn_id="turn-command-2",
+                        exit_code=1,
+                        duration="1.0816 seconds",
+                        output="fatal: failed\nsecond line\n",
+                    ),
+                    # Context fragments share the current turn id but are not
+                    # ordinary prompt boundaries and must not clear commands.
+                    transcript_user_message(
+                        "<environment_context>test</environment_context>",
+                        "turn-current",
+                    ),
+                    transcript_user_message(current_prompt, "turn-current"),
+                ],
+            )
+
+            run_hook(
+                repo,
+                PROMPT_HOOK,
+                {
+                    "prompt": current_prompt,
+                    "turn_id": "turn-current",
+                    "transcript_path": str(transcript),
+                },
+                "codex",
+            )
+
+            commands_dir = repo / "ai" / "°base" / "output" / "commands"
+            self.assertEqual((commands_dir / "001.log").read_text(encoding="utf-8"), "first\n")
+            self.assertEqual(
+                (commands_dir / "002.log").read_text(encoding="utf-8"),
+                "fatal: failed\nsecond line\n",
+            )
+            query = (repo / "ai" / "°base" / "query.md").read_text(encoding="utf-8")
+            self.assertEqual(query.count("› Command executed."), 2)
+            self.assertLess(
+                query.index("output/commands/001.log"),
+                query.index("output/commands/002.log"),
+            )
+            self.assertLess(query.index("output/commands/002.log"), query.index(current_prompt))
+            self.assertIn("<code>$ git pull …</code>", query)
+            self.assertIn("Exit code: <kbd>1</kbd> · Duration: `1.0816 seconds`", query)
+            self.assertIn("› Investigate both failures\n\n", query)
+            subjects = run_git(repo, "log", "--pretty=%s").stdout.strip().splitlines()
+            self.assertEqual(
+                subjects[:2],
+                [
+                    "[base] ai: updated prompt",
+                    "[base] ai: commands 001-002 results",
+                ],
+            )
+            command_commit_files = run_git(
+                repo,
+                "-c",
+                "core.quotepath=false",
+                "show",
+                "--pretty=",
+                "--name-only",
+                "HEAD~1",
+            ).stdout.strip().splitlines()
+            self.assertEqual(
+                command_commit_files,
+                [
+                    "ai/°base/output/commands/001.log",
+                    "ai/°base/output/commands/002.log",
+                    "ai/°base/query.md",
+                ],
+            )
+
+    def test_codex_command_catchup_uses_latest_prompt_boundary_and_next_number(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "base"
+            init_repo(repo, "https://github.com/luckydonald/base.git")
+            transcript = Path(tmp) / "rollout.jsonl"
+            records = [
+                transcript_shell_command("old command", turn_id="turn-old", output="old\n"),
+                transcript_user_message("Previous prompt", "turn-previous"),
+                transcript_user_event("Previous prompt"),
+                transcript_shell_command("new command", turn_id="turn-new", output="new\n"),
+                transcript_user_message("Current prompt", "turn-current"),
+            ]
+            write_transcript(transcript, records)
+
+            run_hook(
+                repo,
+                PROMPT_HOOK,
+                {
+                    "prompt": "Current prompt",
+                    "turn_id": "turn-current",
+                    "transcript_path": str(transcript),
+                },
+                "codex",
+            )
+
+            commands_dir = repo / "ai" / "°base" / "output" / "commands"
+            self.assertEqual((commands_dir / "001.log").read_text(encoding="utf-8"), "new\n")
+            self.assertFalse((commands_dir / "002.log").exists())
+            query = (repo / "ai" / "°base" / "query.md").read_text(encoding="utf-8")
+            self.assertNotIn("old command", query)
+            self.assertIn("new command", query)
+
+            records.extend(
+                [
+                    transcript_user_event("Current prompt"),
+                    transcript_shell_command("second new command", turn_id="turn-next-command"),
+                    transcript_user_message("Next prompt", "turn-next"),
+                ]
+            )
+            write_transcript(transcript, records)
+            run_hook(
+                repo,
+                PROMPT_HOOK,
+                {
+                    "prompt": "Next prompt",
+                    "turn_id": "turn-next",
+                    "transcript_path": str(transcript),
+                },
+                "codex",
+            )
+
+            self.assertEqual((commands_dir / "002.log").read_text(encoding="utf-8"), "")
+            query = (repo / "ai" / "°base" / "query.md").read_text(encoding="utf-8")
+            self.assertEqual(query.count("<code>$ new command</code>"), 1)
+            self.assertEqual(query.count("<code>$ second new command</code>"), 1)
+            self.assertEqual(query.count("output/commands/001.log"), 1)
+            self.assertEqual(query.count("output/commands/002.log"), 1)
+
+    def test_codex_skipped_prompt_still_flushes_direct_command(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "base"
+            init_repo(repo, "https://github.com/luckydonald/base.git")
+            transcript = Path(tmp) / "rollout.jsonl"
+            write_transcript(
+                transcript,
+                [
+                    transcript_shell_command("pwd", turn_id="turn-command", output="/tmp\n"),
+                    transcript_user_message("yes", "turn-current"),
+                ],
+            )
+
+            run_hook(
+                repo,
+                PROMPT_HOOK,
+                {
+                    "prompt": "yes",
+                    "turn_id": "turn-current",
+                    "transcript_path": str(transcript),
+                },
+                "codex",
+            )
+
+            query = (repo / "ai" / "°base" / "query.md").read_text(encoding="utf-8")
+            self.assertIn("<code>$ pwd</code>", query)
+            self.assertNotIn("› yes", query)
+            self.assertEqual(last_subject(repo), "[base] ai: command 001 result")
+
+    def test_codex_command_output_follows_consumer_by_issue_routing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "myproject"
+            init_repo(repo, "https://github.com/example/consumer.git")
+            issue_file = repo / "ai" / ".by-issue"
+            issue_file.parent.mkdir(parents=True)
+            issue_file.write_text("DEMO-42\n", encoding="utf-8")
+            transcript = Path(tmp) / "rollout.jsonl"
+            write_transcript(
+                transcript,
+                [
+                    transcript_shell_command("pwd", turn_id="turn-command", output="/repo\n"),
+                    transcript_user_message("Continue", "turn-current"),
+                ],
+            )
+
+            run_hook(
+                repo,
+                PROMPT_HOOK,
+                {
+                    "prompt": "Continue",
+                    "turn_id": "turn-current",
+                    "transcript_path": str(transcript),
+                },
+                "codex",
+            )
+
+            issue_dir = repo / "ai" / "by-issue" / "DEMO-42"
+            self.assertEqual(
+                (issue_dir / "output" / "commands" / "001.log").read_text(encoding="utf-8"),
+                "/repo\n",
+            )
+            query = (issue_dir / "query.md").read_text(encoding="utf-8")
+            self.assertIn("output/commands/001.log", query)
+            self.assertEqual(last_subject(repo), "DEMO-42: ai: updated prompt")
+
+    def test_codex_malformed_or_missing_transcript_is_ignored(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "base"
+            init_repo(repo, "https://github.com/luckydonald/base.git")
+            transcript = Path(tmp) / "rollout.jsonl"
+            write_transcript(
+                transcript,
+                [
+                    transcript_user_message(
+                        "<user_shell_command>changed shape</user_shell_command>",
+                        "command",
+                    ),
+                    transcript_user_message("Normal prompt", "turn-current"),
+                ],
+            )
+
+            run_hook(
+                repo,
+                PROMPT_HOOK,
+                {
+                    "prompt": "Normal prompt",
+                    "turn_id": "turn-current",
+                    "transcript_path": str(transcript),
+                },
+                "codex",
+            )
+            run_hook(
+                repo,
+                PROMPT_HOOK,
+                {
+                    "prompt": "Another prompt",
+                    "turn_id": "turn-another",
+                    "transcript_path": str(Path(tmp) / "missing.jsonl"),
+                },
+                "codex",
+            )
+
+            query = (repo / "ai" / "°base" / "query.md").read_text(encoding="utf-8")
+            self.assertEqual(query, "› Normal prompt\n\n› Another prompt\n\n")
+            self.assertFalse((repo / "ai" / "°base" / "output" / "commands").exists())
+
     def test_codex_prompt_in_base_repo_with_only_origin_routes_and_prefixes(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "base"
@@ -161,6 +464,55 @@ class AiHooksBaseRoutingTests(unittest.TestCase):
             )
             self.assertFalse((repo / "ai" / "query.md").exists())
             self.assertEqual(last_subject(repo), "[base] ai: updated prompt")
+
+    def test_codex_prompt_in_base_repo_prefixes_base_marker_before_by_issue(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "base"
+            init_repo(repo, "https://luckydonald@github.com/luckydonald/base.git")
+            issue_file = repo / "ai" / "°base" / ".by-issue"
+            issue_file.parent.mkdir(parents=True)
+            issue_file.write_text("BASE-123\n", encoding="utf-8")
+
+            run_hook(repo, PROMPT_HOOK, {"prompt": "Capture this prompt"}, "codex")
+
+            self.assertEqual(
+                (repo / "ai" / "°base" / "by-issue" / "BASE-123" / "query.md").read_text(
+                    encoding="utf-8",
+                ),
+                "› Capture this prompt\n\n",
+            )
+            self.assertFalse((repo / "ai" / "°base" / "query.md").exists())
+            self.assertEqual(last_subject(repo), "[base] BASE-123: ai: updated prompt")
+
+    def test_codex_prompt_in_base_repo_accepts_optional_existing_prefix_pieces(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "base"
+            init_repo(repo, "https://luckydonald@github.com/luckydonald/base.git")
+            issue_file = repo / "ai" / "°base" / ".by-issue"
+            issue_file.parent.mkdir(parents=True)
+            issue_file.write_text("BASE-123\n", encoding="utf-8")
+            template = repo / "ai" / "commit-templates" / "prompt.md"
+            template.parent.mkdir(parents=True)
+            template.write_text("BASE-123: ai: templated prompt", encoding="utf-8")
+
+            run_hook(repo, PROMPT_HOOK, {"prompt": "Capture this prompt"}, "codex")
+
+            self.assertEqual(last_subject(repo), "[base] BASE-123: ai: templated prompt")
+
+    def test_codex_prompt_in_base_repo_normalizes_reversed_existing_prefix_pieces(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "base"
+            init_repo(repo, "https://luckydonald@github.com/luckydonald/base.git")
+            issue_file = repo / "ai" / "°base" / ".by-issue"
+            issue_file.parent.mkdir(parents=True)
+            issue_file.write_text("BASE-123\n", encoding="utf-8")
+            template = repo / "ai" / "commit-templates" / "prompt.md"
+            template.parent.mkdir(parents=True)
+            template.write_text("BASE-123: [base] ai: templated prompt", encoding="utf-8")
+
+            run_hook(repo, PROMPT_HOOK, {"prompt": "Capture this prompt"}, "codex")
+
+            self.assertEqual(last_subject(repo), "[base] BASE-123: ai: templated prompt")
 
     def test_codex_prompt_logs_plan_link_for_exact_forwarded_plan(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -501,7 +853,11 @@ class AiHooksBaseRoutingTests(unittest.TestCase):
                 "> - `6` tools, `67643` tokens, `1.16395 s`\n"
                 "\n",
             )
-            self.assertEqual(last_subject(repo), "[base] ai: updated prompt")
+            self.assertEqual(last_subject(repo), "[base] ai: agent 001.a6f364ce63ffebb84 results")
+            self.assertEqual(
+                run_git(repo, "log", "--oneline").stdout.strip().count("\n"), 1,
+                "artifact files and query.md must land in a single commit, not two",
+            )
 
     def test_claude_task_notification_usage_line_with_hyphen_tags(self):
         """<usage> children with hyphenated tag names (production format) still produce the usage line."""
@@ -629,7 +985,11 @@ class AiHooksBaseRoutingTests(unittest.TestCase):
                 "> - `33` tools · `46.9k` tokens · `1m 41s`\n"
                 "\n",
             )
-            self.assertEqual(last_subject(repo), "[base] ai: updated prompt")
+            self.assertEqual(last_subject(repo), "[base] ai: explore 001.b5dyyqcfr result")
+            self.assertEqual(
+                run_git(repo, "log", "--oneline").stdout.strip().count("\n"), 1,
+                "the result file and query.md must land in a single commit, not two",
+            )
 
     def test_codex_plan_in_base_repo_routes_and_prefixes(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -893,6 +1253,295 @@ class AiHooksBaseRoutingTests(unittest.TestCase):
             self.assertEqual(dst.read_text(encoding="utf-8"), "useful tip\n")
             self.assertEqual(last_subject(repo), "ai: record memory tip")
 
+    def test_codex_memory_hook_commits_and_is_idempotent(self):
+        with tempfile.TemporaryDirectory(dir="/tmp") as tmp:
+            project = Path(tmp) / "project"
+            codex_home = Path(tmp) / "codex"
+            memory_repo = codex_home / "memories"
+            init_repo(project, "https://github.com/user/project.git")
+            memory_repo.mkdir(parents=True)
+            run_git(memory_repo, "init")
+            run_git(memory_repo, "config", "user.email", "tester@example.com")
+            run_git(memory_repo, "config", "user.name", "Test User")
+            (memory_repo / "MEMORY.md").write_text("# Memories\n", encoding="utf-8")
+            run_git(memory_repo, "add", "MEMORY.md")
+            run_git(memory_repo, "commit", "-m", "init memory")
+
+            note = memory_repo / "extensions" / "ad_hoc" / "note.md"
+            note.parent.mkdir(parents=True)
+            note.write_text("remember this\n", encoding="utf-8")
+
+            run_hook(
+                project,
+                CODEX_MEMORY_HOOK,
+                {"hook_event_name": "PostToolUse", "tool_name": "apply_patch"},
+                "codex",
+                extra_env={"CODEX_HOME": str(codex_home)},
+            )
+
+            self.assertEqual(last_subject(memory_repo), "ai: record codex memory")
+            mirror = project / "ai" / "memory" / "note.md"
+            self.assertTrue(mirror.exists())
+            self.assertEqual(last_subject(project), "ai: sync codex memory")
+            index = project / "ai" / "memory" / "MEMORY.md"
+            self.assertIn("[note](note.md) — TODO: summarize this file.", index.read_text())
+            encoded = _encode_project_path(project.resolve())
+            resource = memory_repo / "extensions" / "base_synced" / "resources" / encoded
+            self.assertEqual(
+                json.loads((resource / "scope.json").read_text(encoding="utf-8")),
+                {"cwd": str(project.resolve())},
+            )
+            self.assertTrue((project / "ai" / "memory" / ".codex-sync.json").is_file())
+            self.assertEqual(
+                run_git(memory_repo, "log", "--oneline").stdout.count("ai: record codex memory"),
+                1,
+            )
+            run_hook(
+                project,
+                CODEX_MEMORY_HOOK,
+                {"hook_event_name": "Stop"},
+                "codex",
+                extra_env={"CODEX_HOME": str(codex_home)},
+            )
+            self.assertEqual(run_git(memory_repo, "log", "-1", "--pretty=%s").stdout.strip(), "ai: record codex memory")
+            self.assertTrue(note.exists())
+            self.assertEqual(
+                run_git(memory_repo, "log", "--oneline").stdout.count("ai: record codex memory"),
+                1,
+            )
+
+    def test_codex_memory_boundary_reports_unassigned_note(self):
+        with tempfile.TemporaryDirectory(dir="/tmp") as tmp:
+            project = Path(tmp) / "project"
+            codex_home = Path(tmp) / "codex"
+            memory_repo = codex_home / "memories"
+            init_repo(project, "https://github.com/user/project.git")
+            memory_repo.mkdir(parents=True)
+            run_git(memory_repo, "init")
+            run_git(memory_repo, "config", "user.email", "tester@example.com")
+            run_git(memory_repo, "config", "user.name", "Test User")
+            (memory_repo / "MEMORY.md").write_text("# Memories\n", encoding="utf-8")
+            note = memory_repo / "extensions" / "ad_hoc" / "later.md"
+            note.parent.mkdir(parents=True)
+            note.write_text("# Later\n", encoding="utf-8")
+            run_git(memory_repo, "add", ".")
+            run_git(memory_repo, "commit", "-m", "seed")
+
+            result = run_hook(
+                project,
+                CODEX_MEMORY_HOOK,
+                {"hook_event_name": "Stop"},
+                "codex",
+                extra_env={"CODEX_HOME": str(codex_home)},
+            )
+
+            self.assertIn("unassigned native note", result.stdout)
+            self.assertIn("import-codex.py later.md", result.stdout)
+            self.assertFalse((project / "ai" / "memory" / "later.md").exists())
+
+    def _seed_memory_pair(self, repo: Path, home: Path, name: str) -> Path:
+        """Seed a repo-tracked mirror file plus a matching external source
+        file under the fake `$HOME`. Returns the external source path."""
+        memory_file = repo / "ai" / "°base" / "memory" / name
+        memory_file.parent.mkdir(parents=True, exist_ok=True)
+        memory_file.write_text(f"{name} content\n", encoding="utf-8")
+        run_git(repo, "add", str(memory_file.relative_to(repo)))
+        run_git(repo, "commit", "-m", f"seed {name}")
+
+        encoded = _encode_project_path(repo.resolve())
+        src_file = home / ".claude" / "projects" / encoded / "memory" / name
+        src_file.parent.mkdir(parents=True, exist_ok=True)
+        src_file.write_text(f"{name} content\n", encoding="utf-8")
+        return src_file
+
+    def test_memory_bash_rm_of_source_file_deletes_repo_mirror(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "base"
+            home = Path(tmp) / "home"
+            init_repo(repo, "https://luckydonald@github.com/luckydonald/base.git")
+            src_file = self._seed_memory_pair(repo, home, "gone.md")
+            src_file.unlink()  # the Bash tool already ran `rm` by the time we fire PostToolUse
+
+            run_hook(
+                repo,
+                MEMORY_HOOK,
+                {
+                    "hook_event_name": "PostToolUse",
+                    "tool_name": "Bash",
+                    "tool_input": {"command": f'rm "{src_file}"'},
+                },
+                extra_env={"HOME": str(home)},
+            )
+
+            self.assertFalse((repo / "ai" / "°base" / "memory" / "gone.md").exists())
+            message = run_git(repo, "log", "-1", "--pretty=%B").stdout
+            self.assertIn("Deleted Memory: gone.md", message.splitlines())
+
+    def test_memory_bash_rm_outside_source_dir_is_noop(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "base"
+            home = Path(tmp) / "home"
+            init_repo(repo, "https://luckydonald@github.com/luckydonald/base.git")
+            self._seed_memory_pair(repo, home, "keep.md")
+            unrelated = home / "elsewhere" / "keep.md"
+            unrelated.parent.mkdir(parents=True)
+            unrelated.write_text("not a memory\n", encoding="utf-8")
+            unrelated.unlink()
+
+            run_hook(
+                repo,
+                MEMORY_HOOK,
+                {
+                    "hook_event_name": "PostToolUse",
+                    "tool_name": "Bash",
+                    "tool_input": {"command": f'rm "{unrelated}"'},
+                },
+                extra_env={"HOME": str(home)},
+            )
+
+            self.assertTrue((repo / "ai" / "°base" / "memory" / "keep.md").exists())
+            self.assertEqual(last_subject(repo), "seed keep.md")
+
+    def test_memory_bash_non_rm_command_mentioning_md_is_noop(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "base"
+            home = Path(tmp) / "home"
+            init_repo(repo, "https://luckydonald@github.com/luckydonald/base.git")
+            src_file = self._seed_memory_pair(repo, home, "keep.md")
+
+            run_hook(
+                repo,
+                MEMORY_HOOK,
+                {
+                    "hook_event_name": "PostToolUse",
+                    "tool_name": "Bash",
+                    "tool_input": {"command": f'cat "{src_file}"'},
+                },
+                extra_env={"HOME": str(home)},
+            )
+
+            self.assertTrue((repo / "ai" / "°base" / "memory" / "keep.md").exists())
+            self.assertTrue(src_file.exists())
+            self.assertEqual(last_subject(repo), "seed keep.md")
+
+    def test_memory_bash_rm_of_untracked_source_is_noop(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "base"
+            home = Path(tmp) / "home"
+            init_repo(repo, "https://luckydonald@github.com/luckydonald/base.git")
+            encoded = _encode_project_path(repo.resolve())
+            src_file = home / ".claude" / "projects" / encoded / "memory" / "untracked.md"
+            src_file.parent.mkdir(parents=True)
+            src_file.write_text("never committed\n", encoding="utf-8")
+            src_file.unlink()
+
+            run_hook(
+                repo,
+                MEMORY_HOOK,
+                {
+                    "hook_event_name": "PostToolUse",
+                    "tool_name": "Bash",
+                    "tool_input": {"command": f'rm "{src_file}"'},
+                },
+                extra_env={"HOME": str(home)},
+            )
+
+            self.assertEqual(last_subject(repo), "init")
+
+    def test_memory_bash_rm_chained_command_still_detected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "base"
+            home = Path(tmp) / "home"
+            init_repo(repo, "https://luckydonald@github.com/luckydonald/base.git")
+            src_file = self._seed_memory_pair(repo, home, "chained.md")
+            src_file.unlink()
+
+            run_hook(
+                repo,
+                MEMORY_HOOK,
+                {
+                    "hook_event_name": "PostToolUse",
+                    "tool_name": "Bash",
+                    "tool_input": {"command": f'rm "{src_file}" && echo done'},
+                },
+                extra_env={"HOME": str(home)},
+            )
+
+            self.assertFalse((repo / "ai" / "°base" / "memory" / "chained.md").exists())
+            message = run_git(repo, "log", "-1", "--pretty=%B").stdout
+            self.assertIn("Deleted Memory: chained.md", message.splitlines())
+
+    def test_memory_session_start_content_mismatch_repo_wins(self):
+        """When both copies exist but diverge, the repo (git-tracked) copy is
+        authoritative: the untracked Claude source gets overwritten from the
+        repo, not the other way around, and nothing new is committed."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "base"
+            home = Path(tmp) / "home"
+            init_repo(repo, "https://luckydonald@github.com/luckydonald/base.git")
+            src_file = self._seed_memory_pair(repo, home, "drift.md")
+            src_file.write_text("untracked local drift\n", encoding="utf-8")
+
+            run_hook(
+                repo,
+                MEMORY_HOOK,
+                {"hook_event_name": "SessionStart"},
+                extra_env={"HOME": str(home)},
+            )
+
+            self.assertEqual(src_file.read_text(encoding="utf-8"), "drift.md content\n")
+            self.assertEqual(last_subject(repo), "seed drift.md")
+
+    def test_memory_session_start_warns_on_orphaned_repo_file(self):
+        """A repo memory file with no MEMORY.md entry should warn, not vanish
+        or get silently re-indexed."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "base"
+            home = Path(tmp) / "home"
+            init_repo(repo, "https://luckydonald@github.com/luckydonald/base.git")
+            memory_dir = repo / "ai" / "°base" / "memory"
+            memory_dir.mkdir(parents=True)
+            (memory_dir / "MEMORY.md").write_text("(empty index)\n", encoding="utf-8")
+            (memory_dir / "orphan.md").write_text("nobody points at me\n", encoding="utf-8")
+            run_git(repo, "add", "ai")
+            run_git(repo, "commit", "-m", "seed orphaned memory")
+
+            result = run_hook(
+                repo,
+                MEMORY_HOOK,
+                {"hook_event_name": "SessionStart"},
+                extra_env={"HOME": str(home)},
+            )
+
+            self.assertIn("orphan.md", result.stderr)
+            self.assertIn("orphaned", result.stderr)
+
+    def test_memory_session_start_warns_on_dangling_index_link(self):
+        """A MEMORY.md line pointing at a file that doesn't exist should warn,
+        not be silently dropped or resurrect anything."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "base"
+            home = Path(tmp) / "home"
+            init_repo(repo, "https://luckydonald@github.com/luckydonald/base.git")
+            memory_dir = repo / "ai" / "°base" / "memory"
+            memory_dir.mkdir(parents=True)
+            (memory_dir / "MEMORY.md").write_text(
+                "- [ghost](missing.md) — this file was never created.\n",
+                encoding="utf-8",
+            )
+            run_git(repo, "add", "ai")
+            run_git(repo, "commit", "-m", "seed dangling index entry")
+
+            result = run_hook(
+                repo,
+                MEMORY_HOOK,
+                {"hook_event_name": "SessionStart"},
+                extra_env={"HOME": str(home)},
+            )
+
+            self.assertIn("missing.md", result.stderr)
+            self.assertIn("dangling", result.stderr)
+
     # ------------------------------------------------------------------
     # save-plan: Stop false-positive and ExitPlanMode fixes
     # ------------------------------------------------------------------
@@ -1153,6 +1802,524 @@ class AiHooksBaseRoutingTests(unittest.TestCase):
             compact_dir = repo / "ai" / "°base" / "output" / "compact"
             self.assertTrue((compact_dir / "001").is_dir(), "first compact → 001")
             self.assertTrue((compact_dir / "002").is_dir(), "second compact → 002")
+
+    def test_postcompact_manual_writes_prompt_id_result_and_marked_query_entry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "base"
+            init_repo(repo, "https://github.com/luckydonald/base.git")
+            prompt_id = "ed11c17f-abf7-40a0-839a-64dd37b4976b"
+            summary = "Exact compact summary.\n\nKeep this whitespace.\n"
+
+            run_hook(
+                repo,
+                COMPACT_PROMPT_HOOK,
+                {
+                    "hook_event_name": "PostCompact",
+                    "trigger": "manual",
+                    "compact_summary": summary,
+                    "prompt_id": prompt_id,
+                },
+                "claude",
+            )
+
+            result = (
+                repo / "ai" / "°base" / "output" / "compact"
+                / f"001.{prompt_id}" / "result.md"
+            )
+            self.assertEqual(result.read_text(encoding="utf-8"), summary)
+            query = (repo / "ai" / "°base" / "query.md").read_text(encoding="utf-8")
+            self.assertIn("❯ Conversation compacted <kbd>manual</kbd>:\n", query)
+            self.assertIn(f"output/compact/001.{prompt_id}/result.md", query)
+        # end with
+    # end def
+
+    def test_postcompact_auto_routes_to_consumer_and_marks_trigger(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "consumer"
+            init_repo(repo, "https://github.com/luckydonald/example.git")
+            prompt_id = "4ce3a7b9-3c0e-4a75-a5c7-e01a40f15aae"
+
+            run_hook(
+                repo,
+                COMPACT_PROMPT_HOOK,
+                {
+                    "hook_event_name": "PostCompact",
+                    "trigger": "auto",
+                    "compact_summary": "Automatic compact summary",
+                    "prompt_id": prompt_id,
+                },
+                "claude",
+            )
+
+            result = repo / "ai" / "output" / "compact" / f"001.{prompt_id}" / "result.md"
+            self.assertEqual(result.read_text(encoding="utf-8"), "Automatic compact summary")
+            query = (repo / "ai" / "query.md").read_text(encoding="utf-8")
+            self.assertIn("❯ Conversation compacted <kbd>auto</kbd>:\n", query)
+            self.assertFalse((repo / "ai" / "°base").exists())
+        # end with
+    # end def
+
+    def test_postcompact_deduplicates_same_result_but_keeps_distinct_same_prompt_results(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "base"
+            init_repo(repo, "https://github.com/luckydonald/base.git")
+            prompt_id = "0885277c-7e0b-42cd-8de8-b57be1a84c72"
+            first_payload = {
+                "hook_event_name": "PostCompact",
+                "trigger": "auto",
+                "compact_summary": "first summary",
+                "prompt_id": prompt_id,
+            }
+
+            run_hook(repo, COMPACT_PROMPT_HOOK, first_payload, "claude")
+            run_hook(repo, COMPACT_PROMPT_HOOK, first_payload, "claude")
+            run_hook(
+                repo,
+                COMPACT_PROMPT_HOOK,
+                {**first_payload, "compact_summary": "second summary"},
+                "claude",
+            )
+
+            compact_root = repo / "ai" / "°base" / "output" / "compact"
+            self.assertEqual(
+                sorted(path.name for path in compact_root.iterdir()),
+                [f"001.{prompt_id}", f"002.{prompt_id}"],
+            )
+            query = (repo / "ai" / "°base" / "query.md").read_text(encoding="utf-8")
+            self.assertEqual(query.count("Conversation compacted <kbd>auto</kbd>"), 2)
+        # end with
+    # end def
+
+    def test_postcompact_without_prompt_id_uses_numeric_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "base"
+            init_repo(repo, "https://github.com/luckydonald/base.git")
+
+            run_hook(
+                repo,
+                COMPACT_PROMPT_HOOK,
+                {
+                    "hook_event_name": "PostCompact",
+                    "trigger": "manual",
+                    "compact_summary": "older payload",
+                },
+                "claude",
+            )
+
+            result = repo / "ai" / "°base" / "output" / "compact" / "001" / "result.md"
+            self.assertEqual(result.read_text(encoding="utf-8"), "older payload")
+        # end with
+    # end def
+
+    def test_compact_autoload_reuses_prompt_id_result_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "base"
+            init_repo(repo, "https://github.com/luckydonald/base.git")
+            prompt_id = "51a1531e-7495-4677-a4cd-a0184d462662"
+            run_hook(
+                repo,
+                COMPACT_PROMPT_HOOK,
+                {
+                    "hook_event_name": "PostCompact",
+                    "trigger": "manual",
+                    "compact_summary": "summary",
+                    "prompt_id": prompt_id,
+                },
+                "claude",
+            )
+
+            run_hook(
+                repo,
+                PROMPT_HOOK,
+                {
+                    "prompt": "/compact\n  ⎿  Compacted\n  ⎿  Read notes.md (5 lines)\n",
+                    "prompt_id": prompt_id,
+                },
+                "claude",
+            )
+
+            result_directory = (
+                repo / "ai" / "°base" / "output" / "compact" / f"001.{prompt_id}"
+            )
+            self.assertTrue((result_directory / "result.md").is_file())
+            self.assertTrue((result_directory / "autoloads.md").is_file())
+            self.assertEqual(len(list(result_directory.parent.iterdir())), 1)
+        # end with
+    # end def
+
+    def test_memory_session_start_compact_captures_latest_transcript_summary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "base"
+            home = Path(tmp) / "home"
+            init_repo(repo, "https://github.com/luckydonald/base.git")
+            prompt_id = "8fe56710-dc43-4622-aa10-42dc1d5a9978"
+            transcript = Path(tmp) / "transcript.jsonl"
+            entries = [
+                {
+                    "type": "system",
+                    "subtype": "compact_boundary",
+                    "uuid": "boundary-manual",
+                    "compactMetadata": {"trigger": "manual"},
+                },
+                {
+                    "type": "user",
+                    "parentUuid": "boundary-manual",
+                    "isCompactSummary": True,
+                    "message": {"role": "user", "content": "older summary"},
+                },
+                {"type": "user", "message": {"role": "user", "content": "ordinary turn"}},
+                {
+                    "type": "system",
+                    "subtype": "compact_boundary",
+                    "uuid": "boundary-auto",
+                    "compactMetadata": {"trigger": "auto"},
+                },
+                {
+                    "type": "user",
+                    "parentUuid": "boundary-auto",
+                    "isCompactSummary": True,
+                    "message": {"role": "user", "content": "latest automatic summary"},
+                },
+            ]
+            transcript.write_text(
+                "".join(json.dumps(entry) + "\n" for entry in entries),
+                encoding="utf-8",
+            )
+
+            run_hook(
+                repo,
+                MEMORY_HOOK,
+                {
+                    "hook_event_name": "SessionStart",
+                    "source": "compact",
+                    "transcript_path": str(transcript),
+                    "prompt_id": prompt_id,
+                },
+                extra_env={"HOME": str(home)},
+            )
+
+            result = (
+                repo / "ai" / "°base" / "output" / "compact"
+                / f"001.{prompt_id}" / "result.md"
+            )
+            self.assertEqual(result.read_text(encoding="utf-8"), "latest automatic summary")
+            query = (repo / "ai" / "°base" / "query.md").read_text(encoding="utf-8")
+            self.assertIn("Conversation compacted <kbd>auto</kbd>", query)
+        # end with
+    # end def
+
+    def test_postcompact_and_session_start_fallback_store_one_result(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "base"
+            home = Path(tmp) / "home"
+            init_repo(repo, "https://github.com/luckydonald/base.git")
+            prompt_id = "9857e585-a9e0-4868-8731-09d106b5fc07"
+            summary = "same summary from both lifecycle events"
+            run_hook(
+                repo,
+                COMPACT_PROMPT_HOOK,
+                {
+                    "hook_event_name": "PostCompact",
+                    "trigger": "manual",
+                    "compact_summary": summary,
+                    "prompt_id": prompt_id,
+                },
+                "claude",
+            )
+            transcript = Path(tmp) / "transcript.jsonl"
+            transcript.write_text(
+                json.dumps(
+                    {
+                        "type": "system",
+                        "subtype": "compact_boundary",
+                        "uuid": "boundary",
+                        "compactMetadata": {"trigger": "manual"},
+                    }
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "type": "user",
+                        "parentUuid": "boundary",
+                        "isCompactSummary": True,
+                        "message": {"role": "user", "content": summary},
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            run_hook(
+                repo,
+                MEMORY_HOOK,
+                {
+                    "hook_event_name": "SessionStart",
+                    "source": "compact",
+                    "transcript_path": str(transcript),
+                    "prompt_id": prompt_id,
+                },
+                extra_env={"HOME": str(home)},
+            )
+
+            result_files = list(
+                (repo / "ai" / "°base" / "output" / "compact").glob("*/result.md")
+            )
+            self.assertEqual(len(result_files), 1)
+            query = (repo / "ai" / "°base" / "query.md").read_text(encoding="utf-8")
+            self.assertEqual(query.count("Conversation compacted <kbd>manual</kbd>"), 1)
+        # end with
+    # end def
+
+    def test_precompact_manual_with_instructions_writes_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "base"
+            init_repo(repo, "https://github.com/luckydonald/base.git")
+
+            run_hook(
+                repo, COMPACT_PROMPT_HOOK,
+                {"trigger": "manual", "custom_instructions": "focus on the auth refactor"},
+                "claude",
+            )
+
+            compacted_file = repo / "ai" / "°base" / "output" / "compacted" / "001.md"
+            self.assertTrue(compacted_file.exists(), "001.md should be created")
+            self.assertEqual(compacted_file.read_text(encoding="utf-8"), "focus on the auth refactor")
+
+            query = (repo / "ai" / "°base" / "query.md").read_text(encoding="utf-8")
+            self.assertIn("[`/compact` possible prompt](./output/compacted/001.md)", query)
+
+    def test_precompact_manual_no_instructions_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "base"
+            init_repo(repo, "https://github.com/luckydonald/base.git")
+
+            run_hook(repo, COMPACT_PROMPT_HOOK, {"trigger": "manual", "custom_instructions": ""}, "claude")
+
+            self.assertFalse((repo / "ai" / "°base" / "output" / "compacted").exists())
+            self.assertFalse((repo / "ai" / "°base" / "query.md").exists())
+
+    def test_precompact_auto_trigger_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "base"
+            init_repo(repo, "https://github.com/luckydonald/base.git")
+
+            run_hook(
+                repo, COMPACT_PROMPT_HOOK,
+                {"trigger": "auto", "custom_instructions": "some text"},
+                "claude",
+            )
+
+            self.assertFalse((repo / "ai" / "°base" / "output" / "compacted").exists())
+
+    def test_precompact_sequential_numbering(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "base"
+            init_repo(repo, "https://github.com/luckydonald/base.git")
+
+            run_hook(repo, COMPACT_PROMPT_HOOK, {"trigger": "manual", "custom_instructions": "first"}, "claude")
+            run_hook(repo, COMPACT_PROMPT_HOOK, {"trigger": "manual", "custom_instructions": "second"}, "claude")
+
+            compacted_dir = repo / "ai" / "°base" / "output" / "compacted"
+            self.assertEqual((compacted_dir / "001.md").read_text(encoding="utf-8"), "first")
+            self.assertEqual((compacted_dir / "002.md").read_text(encoding="utf-8"), "second")
+
+    def test_precompact_consuming_repo_routes_to_plain_ai_prefix(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "consumer"
+            init_repo(repo, "https://github.com/luckydonald/hoass_plugin-template.git")
+
+            run_hook(
+                repo, COMPACT_PROMPT_HOOK,
+                {"trigger": "manual", "custom_instructions": "consumer repo prompt"},
+                "claude",
+            )
+
+            compacted_file = repo / "ai" / "output" / "compacted" / "001.md"
+            self.assertTrue(compacted_file.exists(), "consuming repo should route to ai/output/compacted/")
+            self.assertFalse((repo / "ai" / "°base").exists(), "should NOT write to ai/°base/ outside base repo")
+
+    def test_referenced_file_mention_untracked_gets_own_commit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "base"
+            init_repo(repo, "https://github.com/luckydonald/base.git")
+            (repo / "sub").mkdir(parents=True, exist_ok=True)
+            (repo / "sub" / "file.txt").write_text("hello\n", encoding="utf-8")
+
+            run_hook(repo, PROMPT_HOOK, {"prompt": "please check @sub/file.txt for bugs"}, "claude")
+
+            self.assertEqual(last_subject(repo), "[base] ai: referenced file for task added.")
+            subjects = run_git(repo, "log", "--pretty=%s").stdout.strip().splitlines()
+            self.assertIn("[base] ai: updated prompt", subjects)
+            tracked = run_git(repo, "ls-files", "--", "sub/file.txt").stdout.strip()
+            self.assertEqual(tracked, "sub/file.txt")
+
+    def test_referenced_file_mention_tracked_only_staged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "myproject"
+            init_repo(repo, "https://github.com/example/consumer.git")
+            (repo / "sub").mkdir(parents=True, exist_ok=True)
+            (repo / "sub" / "file.txt").write_text("v1\n", encoding="utf-8")
+            run_git(repo, "add", "sub/file.txt")
+            run_git(repo, "commit", "-m", "add file")
+            (repo / "sub" / "file.txt").write_text("v2\n", encoding="utf-8")
+
+            run_hook(repo, PROMPT_HOOK, {"prompt": "see `sub/file.txt` for context"}, "claude")
+
+            self.assertEqual(last_subject(repo), "ai: updated prompt")
+            staged = run_git(repo, "diff", "--cached", "--name-only").stdout.strip().splitlines()
+            self.assertIn("sub/file.txt", staged)
+
+    def test_referenced_file_mention_gitignored_ai_path_force_added(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "base"
+            init_repo(repo, "https://github.com/luckydonald/base.git")
+            (repo / ".gitignore").write_text("ai/°base/scratch/\n", encoding="utf-8")
+            run_git(repo, "add", ".gitignore")
+            run_git(repo, "commit", "-m", "add gitignore")
+            (repo / "ai" / "°base" / "scratch").mkdir(parents=True, exist_ok=True)
+            (repo / "ai" / "°base" / "scratch" / "notes.md").write_text("notes\n", encoding="utf-8")
+
+            run_hook(repo, PROMPT_HOOK, {"prompt": "see @ai/°base/scratch/notes.md"}, "claude")
+
+            self.assertEqual(last_subject(repo), "[base] ai: referenced file for task added.")
+            tracked = run_git(
+                repo, "-c", "core.quotepath=false", "ls-files", "--", "ai/°base/scratch/notes.md"
+            ).stdout.strip()
+            self.assertEqual(tracked, "ai/°base/scratch/notes.md")
+
+    def test_referenced_file_mention_missing_file_ignored(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "myproject"
+            init_repo(repo, "https://github.com/example/consumer.git")
+
+            run_hook(repo, PROMPT_HOOK, {"prompt": "see @sub/does-not-exist.txt"}, "claude")
+
+            self.assertEqual(last_subject(repo), "ai: updated prompt")
+
+    def test_copilot_plan_marker_prompt_rendered_as_slash_plan(self):
+        """Copilot CLI's `/plan` mode prepends a literal `[[PLAN]] ` marker to the
+        submitted prompt (not a typed slash command); it should be rendered using
+        the same `/plan ...` convention already used for Claude's typed prompts."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "base"
+            init_repo(repo, "https://luckydonald@github.com/luckydonald/base.git")
+
+            run_hook(repo, PROMPT_HOOK, {"prompt": "[[PLAN]] Investigate the bug."}, "copilot")
+
+            self.assertEqual(
+                (repo / "ai" / "°base" / "query.md").read_text(encoding="utf-8"),
+                "◆ /plan Investigate the bug.\n\n",
+            )
+            self.assertEqual(last_subject(repo), "[base] ai: updated prompt")
+
+    def test_copilot_harness_task_complete_reminder_is_not_logged(self):
+        """The harness-injected autonomous-continuation nudge is not something the
+        user typed and must be skipped rather than committed to query.md."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "base"
+            init_repo(repo, "https://luckydonald@github.com/luckydonald/base.git")
+            reminder = (
+                "You have not yet marked the task as complete using the task_complete tool. "
+                "If you were planning, stop planning and start implementing."
+            )
+
+            run_hook(repo, PROMPT_HOOK, {"prompt": reminder}, "copilot")
+
+            self.assertFalse((repo / "ai" / "°base" / "query.md").exists())
+            self.assertEqual(last_subject(repo), "init")
+
+    def test_copilot_cross_read_duplicate_firing_is_skipped(self):
+        """When the actually-running harness is Copilot (detected via env vars)
+        but this firing's baked-in CLI arg says `claude` — i.e. it came from
+        Copilot's unconditional cross-read of `.claude/settings.json` alongside
+        its own native `.github/hooks/generated.json` — the redundant duplicate
+        firing must be skipped entirely, leaving no trace in query.md."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "base"
+            init_repo(repo, "https://luckydonald@github.com/luckydonald/base.git")
+
+            run_hook(
+                repo,
+                PROMPT_HOOK,
+                {"prompt": "Capture this prompt"},
+                "claude",
+                extra_env={"COPILOT_CLI": "1"},
+            )
+
+            self.assertFalse((repo / "ai" / "°base" / "query.md").exists())
+            self.assertEqual(last_subject(repo), "init")
+
+    def test_copilot_native_firing_not_treated_as_duplicate(self):
+        """The genuine native firing (ai_tool == 'copilot') still runs normally
+        even when Copilot's env markers are present."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "base"
+            init_repo(repo, "https://luckydonald@github.com/luckydonald/base.git")
+
+            run_hook(
+                repo,
+                PROMPT_HOOK,
+                {"prompt": "Capture this prompt"},
+                "copilot",
+                extra_env={"COPILOT_CLI": "1"},
+            )
+
+            self.assertEqual(
+                (repo / "ai" / "°base" / "query.md").read_text(encoding="utf-8"),
+                "◆ Capture this prompt\n\n",
+            )
+            self.assertEqual(last_subject(repo), "[base] ai: updated prompt")
+
+    def test_copilot_record_memory_is_noop_even_on_session_start(self):
+        """record-memory has no CLI arg to compare, so it must unconditionally
+        no-op whenever the detected harness is Copilot (no local memory-file
+        representation exists to sync from under Copilot)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "base"
+            init_repo(repo, "https://luckydonald@github.com/luckydonald/base.git")
+
+            run_hook(
+                repo,
+                MEMORY_HOOK,
+                {"hook_event_name": "SessionStart", "session_id": "abc123"},
+                extra_env={"COPILOT_CLI": "1"},
+            )
+
+            self.assertEqual(last_subject(repo), "init")
+
+
+class ReffilesLibMentionsTests(unittest.TestCase):
+    """Unit tests for °reffiles_lib.mentions, imported via importlib like °split_lib."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        import importlib
+
+        lib_root = Path(__file__).resolve().parents[1] / "ai" / "hooks"
+        sys.path.insert(0, str(lib_root))
+        cls.mentions = importlib.import_module("°reffiles_lib.mentions")
+
+    def test_extracts_at_mention_and_backtick_path(self):
+        prompt = "look at @sub/file.txt and also `other/dir/file.md` please"
+        self.assertEqual(
+            self.mentions.extract_candidate_paths(prompt),
+            ["sub/file.txt", "other/dir/file.md"],
+        )
+
+    def test_strips_trailing_punctuation(self):
+        prompt = "see @sub/file.txt, and (`other/file.md`)."
+        self.assertEqual(
+            self.mentions.extract_candidate_paths(prompt),
+            ["sub/file.txt", "other/file.md"],
+        )
+
+    def test_ignores_non_path_tokens(self):
+        prompt = "ping @someone and `just_a_word` about this"
+        self.assertEqual(self.mentions.extract_candidate_paths(prompt), [])
+
+    def test_dedupes_repeated_mentions(self):
+        prompt = "see @sub/file.txt and again `sub/file.txt`"
+        self.assertEqual(self.mentions.extract_candidate_paths(prompt), ["sub/file.txt"])
 
 
 if __name__ == "__main__":

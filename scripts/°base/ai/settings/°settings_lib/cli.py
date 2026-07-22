@@ -9,15 +9,31 @@ from __future__ import annotations
 
 import argparse
 import os
+import subprocess
 import sys
 from copy import deepcopy
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from . import codex_rules, codex_toml, commands, mcp_servers, paths
-from .hooks import CURRENT_VERSION, _shared_extras, _merge, _normalize_native, render_claude, render_codex_hooks
+from .hooks import CURRENT_VERSION, _shared_extras, _merge, _normalize_native, render_claude, render_codex_hooks, render_copilot_hooks
 from .json_io import _read_json, _same_json, _write_json, _write_text_if_changed
 from .skills import _sync_skills
+
+
+def _reorder_like(existing: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
+    """Re-key `new` to follow `existing`'s top-level key order, appending any
+    keys `existing` doesn't have (in `new`'s order) at the end. `render_claude`/
+    `render_codex_hooks` always build their result in a fixed construction
+    order, so without this, a single unrelated content change (e.g. one
+    permission entry) would reorder every top-level key in the native file
+    and turn a one-line diff into a whole-file rewrite."""
+    ordered = {key: new[key] for key in existing if key in new}
+    for key, value in new.items():
+        if key not in ordered:
+            ordered[key] = value
+    return ordered
 
 
 def _bash_prefix_key(command: str) -> tuple[str, ...] | None:
@@ -179,15 +195,28 @@ def _load_layer(
     codex_rules_path: Path | None = None,
     codex_config_path: Path | None = None,
     claude_mcp_path: Path | None = None,
+    copilot_path: Path | None = None,
 ) -> dict[str, Any]:
     shared_source = _read_json(shared_path)
+    if shared_path.name == "settings.local.json":
+        pre_commit = shared_source.get("pre_commit")
+        if isinstance(pre_commit, dict) and "yarn@4" in pre_commit:
+            raise ValueError(
+                "ai/tool-settings/settings.local.json may contain other pre_commit settings, "
+                "but pre_commit.yarn@4 is shared repository policy and must be configured in settings.json."
+            )
+        # end if
+    # end if
     shared = deepcopy(shared_source)
     if shared:
         shared = _merge({}, shared)
 
     native_sources: list[tuple[float, dict[str, Any]]] = []
     mcp_native_sources: list[tuple[float, dict[str, Any]]] = []
-    for path in (claude_path, codex_path):
+    native_paths = [claude_path, codex_path]
+    if copilot_path is not None:
+        native_paths.append(copilot_path)
+    for path in native_paths:
         if path.is_file():
             native_sources.append((path.stat().st_mtime, _read_json(path)))
     codex_config_text: str | None = None
@@ -227,6 +256,11 @@ def _load_layer(
         shared = _merge_mcp_native_additions(shared, combined_mcp_native, paths._git_root())
 
     shared.update(_shared_extras(shared_source))
+    if shared_path.name == "settings.local.json":
+        shared["$schema"] = "./settings-local.schema.json"
+    else:
+        shared["$schema"] = "./settings.schema.json"
+    # end if
     return shared
 
 
@@ -238,27 +272,36 @@ def _apply_or_check(
     codex_rules_path: Path | None = None,
     codex_config_path: Path | None = None,
     claude_mcp_path: Path | None = None,
+    backup_timestamp: str | None = None,
+    copilot_path: Path | None = None,
 ) -> list[str]:
     changed: list[str] = []
-    shared = _load_layer(shared_path, claude_path, codex_path, codex_rules_path, codex_config_path, claude_mcp_path)
+    shared = _load_layer(shared_path, claude_path, codex_path, codex_rules_path, codex_config_path, claude_mcp_path, copilot_path)
     claude = render_claude(shared)
     codex = render_codex_hooks(shared)
     git_root = paths._git_root()
 
-    for path, data in (
+    render_targets = [
         (shared_path, shared),
         (claude_path, claude),
         (codex_path, codex),
-    ):
+    ]
+    if copilot_path is not None:
+        render_targets.append((copilot_path, render_copilot_hooks(shared)))
+
+    for path, data in render_targets:
+        existing = _read_json(path)
+        if existing:
+            data = _reorder_like(existing, data)
         if _same_json(path, data):
             continue
         changed.append(str(path))
         if apply:
-            _write_json(path, data)
+            _write_json(path, data, backup_timestamp)
 
     if codex_rules_path is not None:
         rules_text = codex_rules.render_codex_rules(shared)
-        changed.extend(_write_text_if_changed(codex_rules_path, rules_text, apply))
+        changed.extend(_write_text_if_changed(codex_rules_path, rules_text, apply, backup_timestamp))
 
     if codex_config_path is not None:
         current_text = codex_config_path.read_text(encoding="utf-8") if codex_config_path.is_file() else ""
@@ -273,7 +316,7 @@ def _apply_or_check(
         final_text = mcp_servers.insert_or_replace_block(
             plugins_text, mcp_servers.MCP_TOML_BEGIN_MARKER, mcp_servers.MCP_TOML_END_MARKER, mcp_block
         )
-        changed.extend(_write_text_if_changed(codex_config_path, final_text, apply))
+        changed.extend(_write_text_if_changed(codex_config_path, final_text, apply, backup_timestamp))
 
     if claude_mcp_path is not None:
         mcp_data, claude_skipped = mcp_servers.render_claude_mcp(shared, git_root)
@@ -282,9 +325,15 @@ def _apply_or_check(
         if not _same_json(claude_mcp_path, mcp_data):
             changed.append(str(claude_mcp_path))
             if apply:
-                _write_json(claude_mcp_path, mcp_data)
+                _write_json(claude_mcp_path, mcp_data, backup_timestamp)
 
     return changed
+
+
+def _stage(paths_to_add: list[str]) -> None:
+    if not paths_to_add:
+        return
+    subprocess.run(["git", "add", "--", *paths_to_add], check=False)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -294,37 +343,66 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     os.chdir(paths._git_root())
-    dry = args.dry_run or args.check
+
+    # A merge commit can leave the tracked settings genuinely out of sync (a
+    # normal thing to fix), but it can also just surface pre-existing drift in
+    # the gitignored `.local` layer that has nothing to do with the merge. Since
+    # merge commits are usually not an interactive moment to stop and fix
+    # things by hand, auto-sync instead of blocking, and back up whatever gets
+    # overwritten so nothing is silently lost.
+    merge_auto_sync = args.check and not args.dry_run and paths._is_merge_in_progress()
+
+    dry = args.dry_run or (args.check and not merge_auto_sync)
     apply = not dry
+    backup_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S") if merge_auto_sync else None
     if args.dry_run:
         print("Dry run — no files will be written.")
 
     config_status = codex_toml._migrate_codex_feature_flag(paths.CODEX_CONFIG, apply, sys.stdin.isatty())
 
-    changed: list[str] = []
-    changed.extend(
-        _apply_or_check(
-            paths.TRACKED_SHARED,
-            paths.CLAUDE_SETTINGS,
-            paths.CODEX_HOOKS,
-            apply,
-            paths.CODEX_RULES,
-            paths.CODEX_PROJECT_CONFIG,
-            paths.CLAUDE_MCP,
-        )
+    changed_main = _apply_or_check(
+        paths.TRACKED_SHARED,
+        paths.CLAUDE_SETTINGS,
+        paths.CODEX_HOOKS,
+        apply,
+        paths.CODEX_RULES,
+        paths.CODEX_PROJECT_CONFIG,
+        paths.CLAUDE_MCP,
+        backup_timestamp,
+        paths.COPILOT_HOOKS,
     )
-    if paths.LOCAL_SHARED.is_file() or paths.CLAUDE_LOCAL.is_file() or paths.CODEX_LOCAL_HOOKS.is_file():
-        changed.extend(
-            _apply_or_check(
-                paths.LOCAL_SHARED,
-                paths.CLAUDE_LOCAL,
-                paths.CODEX_LOCAL_HOOKS,
-                apply,
-                paths.CODEX_RULES_LOCAL,
-                None,
-            )
+    changed_local: list[str] = []
+    if (
+        paths.LOCAL_SHARED.is_file()
+        or paths.CLAUDE_LOCAL.is_file()
+        or paths.CODEX_LOCAL_HOOKS.is_file()
+        or paths.COPILOT_LOCAL_HOOKS.is_file()
+    ):
+        changed_local = _apply_or_check(
+            paths.LOCAL_SHARED,
+            paths.CLAUDE_LOCAL,
+            paths.CODEX_LOCAL_HOOKS,
+            apply,
+            paths.CODEX_RULES_LOCAL,
+            None,
+            None,
+            backup_timestamp,
+            paths.COPILOT_LOCAL_HOOKS,
         )
-    changed.extend(_sync_skills(apply))
+    changed_skills = _sync_skills(apply)
+    changed = changed_main + changed_local + changed_skills
+
+    if merge_auto_sync:
+        if changed:
+            print("Merge in progress — auto-synced AI tool settings:")
+            for path in changed:
+                print(f"  Wrote: {path}")
+            if backup_timestamp:
+                print(f"Backups of overwritten files saved alongside originals (*.bak.{backup_timestamp}.*).")
+            _stage(changed_main + changed_skills)
+        else:
+            print("All files are already in sync.")
+        return config_status
 
     if changed:
         if args.check:

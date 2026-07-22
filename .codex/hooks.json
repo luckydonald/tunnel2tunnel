@@ -13,6 +13,27 @@
         ]
       }
     ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/°base/ai/hooks/save-compact-prompt/hook.py\" 'codex'"
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "matcher": "manual|auto",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/°base/ai/hooks/save-compact-prompt/hook.py\" 'codex'"
+          }
+        ]
+      }
+    ],
     "SessionStart": [
       {
         "hooks": [
@@ -30,13 +51,18 @@
             "type": "command",
             "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/°base/ai/hooks/record-memory/hook.py\"",
             "statusMessage": "Syncing memory hardlinks"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/°base/ai/hooks/record-codex-memory/hook.py\" 'codex'",
+            "statusMessage": "Committing Codex memory"
           }
         ]
       }
     ],
     "PostToolUse": [
       {
-        "matcher": "AskUserQuestion|request_user_input",
+        "matcher": "AskUserQuestion|request_user_input|ask_user",
         "hooks": [
           {
             "type": "command",
@@ -45,7 +71,7 @@
         ]
       },
       {
-        "matcher": "Write|Edit",
+        "matcher": "Write|Edit|Bash|shell|unified_exec",
         "hooks": [
           {
             "type": "command",
@@ -54,7 +80,25 @@
         ]
       },
       {
-        "matcher": "Write|Edit|ExitPlanMode",
+        "matcher": "Write|Edit|Bash|shell|unified_exec|apply_patch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/°base/ai/hooks/record-codex-memory/hook.py\" 'codex'"
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|ExitPlanMode|create|edit|exit_plan_mode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/°base/ai/hooks/save-plan/hook.py\" 'codex'"
+          }
+        ]
+      },
+      {
+        "matcher": "TodoWrite|update_todo|TaskCreate|TaskUpdate",
         "hooks": [
           {
             "type": "command",
@@ -69,6 +113,10 @@
           {
             "type": "command",
             "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/°base/ai/hooks/save-plan/hook.py\" 'codex'"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/°base/ai/hooks/record-codex-memory/hook.py\" 'codex'"
           }
         ]
       }
@@ -79,6 +127,47 @@
           {
             "type": "command",
             "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/°base/ai/hooks/save-prompt/hook.py\" 'codex'"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/°base/ai/hooks/debug-log/hook.py\" 'SubagentStop'"
+          }
+        ]
+      }
+    ],
+    "TaskCreated": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/°base/ai/hooks/debug-log/hook.py\" 'TaskCreated'"
+          }
+        ]
+      }
+    ],
+    "TaskCompleted": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/°base/ai/hooks/debug-log/hook.py\" 'TaskCompleted'"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "agent_completed",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/°base/ai/hooks/debug-log/hook.py\" 'Notification-agent_completed'"
           }
         ]
       }

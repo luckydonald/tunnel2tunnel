@@ -1,4 +1,5 @@
 {
+  "$schema": "./settings.schema.json",
   "version": 2,
   "pre_commit": {
     "yarn@4": {
@@ -15,6 +16,28 @@
             "command": "python3 \"$(git rev-parse --show-toplevel)/.claude/hooks/permission-check.py\"",
             "timeout": 5,
             "statusMessage": "Checking command policy..."
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/°base/ai/hooks/save-compact-prompt/hook.py\" 'claude'",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "matcher": "manual|auto",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/°base/ai/hooks/save-compact-prompt/hook.py\" 'claude'"
           }
         ]
       }
@@ -39,13 +62,19 @@
             "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/°base/ai/hooks/record-memory/hook.py\"",
             "statusMessage": "Syncing memory hardlinks",
             "async": true
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/°base/ai/hooks/record-codex-memory/hook.py\" 'claude'",
+            "statusMessage": "Committing Codex memory",
+            "async": true
           }
         ]
       }
     ],
     "PostToolUse": [
       {
-        "matcher": "AskUserQuestion|request_user_input",
+        "matcher": "AskUserQuestion|request_user_input|ask_user",
         "hooks": [
           {
             "type": "command",
@@ -55,7 +84,7 @@
         ]
       },
       {
-        "matcher": "Write|Edit",
+        "matcher": "Write|Edit|Bash|shell|unified_exec",
         "hooks": [
           {
             "type": "command",
@@ -65,7 +94,27 @@
         ]
       },
       {
-        "matcher": "Write|Edit|ExitPlanMode",
+        "matcher": "Write|Edit|Bash|shell|unified_exec|apply_patch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/°base/ai/hooks/record-codex-memory/hook.py\" 'claude'",
+            "async": true
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|ExitPlanMode|create|edit|exit_plan_mode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/°base/ai/hooks/save-plan/hook.py\" 'claude'",
+            "async": true
+          }
+        ]
+      },
+      {
+        "matcher": "TodoWrite|update_todo|TaskCreate|TaskUpdate",
         "hooks": [
           {
             "type": "command",
@@ -82,6 +131,11 @@
             "type": "command",
             "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/°base/ai/hooks/save-plan/hook.py\" 'claude'",
             "async": true
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/°base/ai/hooks/record-codex-memory/hook.py\" 'claude'",
+            "async": true
           }
         ]
       }
@@ -92,6 +146,51 @@
           {
             "type": "command",
             "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/°base/ai/hooks/save-prompt/hook.py\" 'claude'",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/°base/ai/hooks/debug-log/hook.py\" 'SubagentStop'",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "TaskCreated": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/°base/ai/hooks/debug-log/hook.py\" 'TaskCreated'",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "TaskCompleted": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/°base/ai/hooks/debug-log/hook.py\" 'TaskCompleted'",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "agent_completed",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/°base/ai/hooks/debug-log/hook.py\" 'Notification-agent_completed'",
             "async": true
           }
         ]
@@ -154,6 +253,7 @@
       {"type": "bash", "command": "yarn test:e2e:pw:*"},
       {"type": "bash", "command": "yarn run test:unit"},
       {"type": "bash", "command": "yarn run test:e2e:pw:*"},
+      {"type": "bash", "command": "npm view:*"},
       {"type": "bash", "command": "cargo check:*"},
       {"type": "bash", "command": "corepack yarn@4.9.2 add:*"},
       {"type": "bash", "command": "yarn add:*"},
@@ -164,6 +264,12 @@
       {"type": "bash", "command": "git diff:*"},
       {"type": "bash", "command": "git status:*"},
       {"type": "bash", "command": "git show:*"},
+      {"type": "bash", "command": "git config user.name"},
+      {"type": "bash", "command": "git config user.email"},
+      {"type": "bash", "command": "git config --local user.name"},
+      {"type": "bash", "command": "git config --local user.email"},
+      {"type": "bash", "command": "git config --global user.name"},
+      {"type": "bash", "command": "git config --global user.email"},
       {"type": "bash", "command": "git branch --show-current"},
       {"type": "bash", "command": "git ls-tree:*"},
       {"type": "bash", "command": "git check-ignore:*"},
@@ -180,6 +286,9 @@
       {"type": "bash", "command": "git rebase --continue"},
       {"type": "bash", "command": "pkill -f \"vite\""},
       {"type": "bash", "command": "tree"},
+      {"type": "bash", "command": "python3 -m json.tool"},
+      {"type": "bash", "command": "python -m json.tool"},
+      {"type": "bash", "command": "xargs -I{} ls -la {}"},
       {"type": "skill", "name": "commit-with-lplp-style"},
       {"type": "skill", "name": "/commit-with-lplp-style"},
       {"type": "read", "path": "ai/skills/commit-with-lplp-style/SKILL.md"},
@@ -200,6 +309,8 @@
       {"type": "bash", "command": "env UV_CACHE_DIR=/tmp/uv-cache DOWNLOAD_LINK_LIVE=1 uv run --project scripts/°base python -m unittest scripts/°base/tests/test_download_link_live.py -v"},
       {"type": "bash", "command": "env UV_CACHE_DIR=/tmp/uv-cache ./scripts/°base/ai/references/download-link.py:*"},
       {"type": "bash", "command": "./scripts/°base/ai/references/download-link.py:*"},
+      {"type": "bash", "command": "../scripts/°base/init/link-subproject-claude.sh"},
+      {"type": "bash", "command": "mv .claude/settings.local.json \".claude.settings.local.json.$(date +%Y-%m-%d).bak\""},
       {"type": "mcp", "server": "bugsink", "tool": "list_projects"},
       {"type": "mcp", "server": "bugsink", "tool": "list_issues"},
       {"type": "mcp", "server": "bugsink", "tool": "get_issue"},
