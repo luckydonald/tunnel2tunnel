@@ -6,6 +6,8 @@ import EntitiesPage from '@/pages/EntitiesPage.vue'
 import EntityDetailPage from '@/pages/EntityDetailPage.vue'
 import FriendsPage from '@/pages/FriendsPage.vue'
 import AdminUsersPage from '@/pages/AdminUsersPage.vue'
+import AdminConnectionLogsPage from '@/pages/AdminConnectionLogsPage.vue'
+import AdminBanRulesPage from '@/pages/AdminBanRulesPage.vue'
 import SettingsPage from '@/pages/SettingsPage.vue'
 import PurgeKeysPage from '@/pages/PurgeKeysPage.vue'
 import PurgeAccessPage from '@/pages/PurgeAccessPage.vue'
@@ -56,6 +58,18 @@ const routes: RouteRecordRaw[] = [
     path: '/admin/users',
     name: 'admin-users',
     component: AdminUsersPage,
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/admin/connection-logs',
+    name: 'admin-connection-logs',
+    component: AdminConnectionLogsPage,
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/admin/ban-rules',
+    name: 'admin-ban-rules',
+    component: AdminBanRulesPage,
     meta: { requiresAuth: true },
   },
   {

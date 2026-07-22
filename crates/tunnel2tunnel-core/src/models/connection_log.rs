@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+
+use serde::Serialize;
 use sqlx::PgPool;
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -5,14 +8,18 @@ use uuid::Uuid;
 use crate::error::CoreError;
 use crate::timestamps::Timestamps;
 
-#[derive(Debug, Clone, sqlx::FromRow)]
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
 pub struct ConnectionLog {
     pub id: Uuid,
     pub entity_id: Option<Uuid>,
+    pub user_id: Option<Uuid>,
     pub peer_ip: Option<String>,
     pub key_fingerprint: Option<String>,
-    pub login_succeeded: bool,
-    pub failure_reason: Option<String>,
+    pub attempted_password: Option<String>,
+    pub fail_reason: Option<String>,
+    pub success_reason: Option<String>,
+    pub success: bool,
+    pub tarpit_method: Option<String>,
     pub ssh_flags: Option<String>,
     pub ports_requested: Option<String>,
     pub started_at: OffsetDateTime,
@@ -26,28 +33,32 @@ impl ConnectionLog {
     pub async fn create(
         pool: &PgPool,
         entity_id: Option<Uuid>,
+        user_id: Option<Uuid>,
         peer_ip: Option<&str>,
         key_fingerprint: Option<&str>,
-        login_succeeded: bool,
-        failure_reason: Option<&str>,
-        ssh_flags: Option<&str>,
+        attempted_password: Option<&str>,
+        fail_reason: Option<&str>,
+        success_reason: Option<&str>,
+        tarpit_method: Option<&str>,
         started_at: OffsetDateTime,
     ) -> Result<Self, CoreError> {
         let id = Uuid::now_v7();
         sqlx::query_as::<_, ConnectionLog>(
             "INSERT INTO connection_logs \
-               (id, entity_id, peer_ip, key_fingerprint, login_succeeded, \
-                failure_reason, ssh_flags, started_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
+               (id, entity_id, user_id, peer_ip, key_fingerprint, attempted_password, \
+                fail_reason, success_reason, tarpit_method, started_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) \
              RETURNING *",
         )
         .bind(id)
         .bind(entity_id)
+        .bind(user_id)
         .bind(peer_ip)
         .bind(key_fingerprint)
-        .bind(login_succeeded)
-        .bind(failure_reason)
-        .bind(ssh_flags)
+        .bind(attempted_password)
+        .bind(fail_reason)
+        .bind(success_reason)
+        .bind(tarpit_method)
         .bind(started_at)
         .fetch_one(pool)
         .await
@@ -77,5 +88,166 @@ impl ConnectionLog {
         .fetch_all(pool)
         .await
         .map_err(CoreError::Sqlx)
+    }
+
+    /// Failed-attempt count for a peer_ip within the given window, used by the
+    /// tarpit/ban threshold engine. Only counts rows that actually have a
+    /// fail_reason (i.e. a real credential rejection) — `auth_none` probes and
+    /// infra/db errors never write a row at all, so they never show up here.
+    pub async fn count_recent_failures_for_peer_ip(
+        pool: &PgPool,
+        peer_ip: &str,
+        since: OffsetDateTime,
+    ) -> Result<i64, CoreError> {
+        sqlx::query_scalar(
+            "SELECT COUNT(*) FROM connection_logs \
+             WHERE peer_ip = $1 AND fail_reason IS NOT NULL AND started_at >= $2",
+        )
+        .bind(peer_ip)
+        .bind(since)
+        .fetch_one(pool)
+        .await
+        .map_err(CoreError::Sqlx)
+    }
+
+    pub async fn count_recent_failures_for_user(
+        pool: &PgPool,
+        user_id: Uuid,
+        since: OffsetDateTime,
+    ) -> Result<i64, CoreError> {
+        sqlx::query_scalar(
+            "SELECT COUNT(*) FROM connection_logs \
+             WHERE user_id = $1 AND fail_reason IS NOT NULL AND started_at >= $2",
+        )
+        .bind(user_id)
+        .bind(since)
+        .fetch_one(pool)
+        .await
+        .map_err(CoreError::Sqlx)
+    }
+
+    /// True if this peer_ip has ever completed a genuine successful login —
+    /// used to permanently exclude it from the banner-drip tarpit method
+    /// (which must intercept before russh ever runs, so it cannot tell a
+    /// legitimate device apart from an attacker sharing the same IP by any
+    /// other means).
+    pub async fn peer_ip_has_known_good_history(
+        pool: &PgPool,
+        peer_ip: &str,
+    ) -> Result<bool, CoreError> {
+        sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM connection_logs \
+             WHERE peer_ip = $1 AND success_reason = 'correct login')",
+        )
+        .bind(peer_ip)
+        .fetch_one(pool)
+        .await
+        .map_err(CoreError::Sqlx)
+    }
+
+    /// Paginated/filtered/searched admin browser query. Returns (rows, total).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn search(
+        pool: &PgPool,
+        peer_ip: Option<&str>,
+        user_id: Option<Uuid>,
+        success: Option<bool>,
+        tarpit_method: Option<&str>,
+        q: Option<&str>,
+        page: i64,
+        page_size: i64,
+    ) -> Result<(Vec<Self>, i64), CoreError> {
+        let offset = (page - 1).max(0) * page_size;
+        let rows = sqlx::query_as::<_, ConnectionLog>(
+            "SELECT * FROM connection_logs \
+             WHERE ($1::text IS NULL OR peer_ip = $1) \
+               AND ($2::uuid IS NULL OR user_id = $2) \
+               AND ($3::bool IS NULL OR success = $3) \
+               AND ($4::text IS NULL OR tarpit_method = $4) \
+               AND ($5::text IS NULL \
+                    OR peer_ip ILIKE '%' || $5 || '%' \
+                    OR key_fingerprint ILIKE '%' || $5 || '%' \
+                    OR attempted_password ILIKE '%' || $5 || '%' \
+                    OR fail_reason ILIKE '%' || $5 || '%') \
+             ORDER BY started_at DESC \
+             LIMIT $6 OFFSET $7",
+        )
+        .bind(peer_ip)
+        .bind(user_id)
+        .bind(success)
+        .bind(tarpit_method)
+        .bind(q)
+        .bind(page_size)
+        .bind(offset)
+        .fetch_all(pool)
+        .await
+        .map_err(CoreError::Sqlx)?;
+
+        let total: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM connection_logs \
+             WHERE ($1::text IS NULL OR peer_ip = $1) \
+               AND ($2::uuid IS NULL OR user_id = $2) \
+               AND ($3::bool IS NULL OR success = $3) \
+               AND ($4::text IS NULL OR tarpit_method = $4) \
+               AND ($5::text IS NULL \
+                    OR peer_ip ILIKE '%' || $5 || '%' \
+                    OR key_fingerprint ILIKE '%' || $5 || '%' \
+                    OR attempted_password ILIKE '%' || $5 || '%' \
+                    OR fail_reason ILIKE '%' || $5 || '%')",
+        )
+        .bind(peer_ip)
+        .bind(user_id)
+        .bind(success)
+        .bind(tarpit_method)
+        .bind(q)
+        .fetch_one(pool)
+        .await
+        .map_err(CoreError::Sqlx)?;
+
+        Ok((rows, total))
+    }
+
+    /// Online/offline + last-disconnect status for a single entity, derived
+    /// purely from existing connection_logs rows (no dedicated column): an
+    /// entity is online iff it has a successful session with no `ended_at` yet.
+    pub async fn entity_status(
+        pool: &PgPool,
+        entity_id: Uuid,
+    ) -> Result<(bool, Option<OffsetDateTime>), CoreError> {
+        let row: Option<(bool, Option<OffsetDateTime>)> = sqlx::query_as(
+            "SELECT COALESCE(bool_or(ended_at IS NULL), false), MAX(ended_at) \
+             FROM connection_logs WHERE entity_id = $1 AND success",
+        )
+        .bind(entity_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(CoreError::Sqlx)?;
+        Ok(row.unwrap_or((false, None)))
+    }
+
+    /// Batch variant of [`Self::entity_status`] to avoid N+1 queries on the
+    /// entities list page.
+    pub async fn entity_statuses(
+        pool: &PgPool,
+        entity_ids: &[Uuid],
+    ) -> Result<HashMap<Uuid, (bool, Option<OffsetDateTime>)>, CoreError> {
+        if entity_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let rows: Vec<(Uuid, bool, Option<OffsetDateTime>)> = sqlx::query_as(
+            "SELECT entity_id, bool_or(ended_at IS NULL), MAX(ended_at) \
+             FROM connection_logs \
+             WHERE entity_id = ANY($1) AND success AND entity_id IS NOT NULL \
+             GROUP BY entity_id",
+        )
+        .bind(entity_ids)
+        .fetch_all(pool)
+        .await
+        .map_err(CoreError::Sqlx)?;
+
+        Ok(rows
+            .into_iter()
+            .map(|(id, online, last_disconnected_at)| (id, (online, last_disconnected_at)))
+            .collect())
     }
 }

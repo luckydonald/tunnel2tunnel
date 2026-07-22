@@ -75,6 +75,7 @@ watch(() => props.entityType, (t) => store.fetchEntities(t))
         <thead>
           <tr>
             <th>Name / ID</th>
+            <th>Status</th>
             <th v-if="!entityType">Type</th>
             <th>Description</th>
             <th></th>
@@ -86,6 +87,11 @@ watch(() => props.entityType, (t) => store.fetchEntities(t))
               <RouterLink :to="{ name: 'entity-detail', params: { id: e.id } }">
                 <EntityName :entity="e" />
               </RouterLink>
+            </td>
+            <td>
+              <span :class="['badge-online', e.online ? 'online' : 'offline']">
+                {{ e.online ? 'Online' : 'Offline' }}
+              </span>
             </td>
             <td v-if="!entityType" class="td-badge">
               <span :class="['badge', e.entity_type]">{{ e.entity_type }}</span>
@@ -177,6 +183,13 @@ watch(() => props.entityType, (t) => store.fetchEntities(t))
 
   &.server { background: rgba(79, 110, 247, 0.2); color: #93c5fd; }
   &.client { background: rgba(52, 211, 153, 0.2); color: #6ee7b7; }
+}
+
+.badge-online {
+  display: inline-block; padding: 0.15em 0.5em; border-radius: 4px;
+  font-size: 0.6875rem; font-weight: 600; text-transform: uppercase;
+  &.online  { background: rgba(52,211,153,.15); color: #6ee7b7; }
+  &.offline { background: rgba(100,116,139,.15); color: #94a3b8; }
 }
 
 .td-actions { text-align: right; }

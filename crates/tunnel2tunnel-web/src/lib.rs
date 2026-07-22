@@ -106,6 +106,17 @@ pub async fn start(config: WebConfig, pool: PgPool) -> anyhow::Result<()> {
             .post(routes::admin::create_user))
         .route("/api/admin/users/{id}",
             put(routes::admin::update_user))
+        // admin: tarpit/ban rules
+        .route("/api/admin/connection-logs",
+            get(routes::tarpit::search_connection_logs))
+        .route("/api/admin/ban-rules",
+            get(routes::tarpit::list_ban_rules)
+            .post(routes::tarpit::create_ban_rule))
+        .route("/api/admin/ban-rules/{id}",
+            delete(routes::tarpit::delete_ban_rule))
+        .route("/api/admin/tarpit-settings",
+            get(routes::tarpit::get_tarpit_settings)
+            .put(routes::tarpit::update_tarpit_settings))
         // server info (authenticated)
         .route("/api/server-info",
             get(routes::server_info::get_server_info))

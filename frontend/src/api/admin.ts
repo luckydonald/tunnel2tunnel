@@ -8,14 +8,64 @@ export interface AdminUser {
   created_at: string
 }
 
+export type TarpitMethod = 'banner_drip' | 'slow_auth' | 'fake_shell'
+export type BanScopeType = 'peer_ip' | 'user'
+
 export interface ConnLog {
   id: string
+  user_id: string | null
   peer_ip: string | null
   key_fingerprint: string | null
-  login_succeeded: boolean
-  failure_reason: string | null
+  attempted_password: string | null
+  fail_reason: string | null
+  success_reason: string | null
+  success: boolean
+  tarpit_method: TarpitMethod | null
   started_at: string
   ended_at: string | null
+}
+
+export interface LogSearchParams {
+  page?: number
+  page_size?: number
+  peer_ip?: string
+  user_id?: string
+  success?: boolean
+  method?: TarpitMethod
+  q?: string
+}
+
+export interface LogSearchResult {
+  items: ConnLog[]
+  total: number
+  page: number
+  page_size: number
+}
+
+export interface BanRule {
+  id: string
+  scope_type: BanScopeType
+  peer_ip: string | null
+  user_id: string | null
+  reason: string | null
+  active_until: string | null
+  created_by: string
+  created_at: string
+  updated_at: string
+}
+
+export interface CreateBanRuleParams {
+  scope_type: BanScopeType
+  peer_ip?: string | null
+  user_id?: string | null
+  reason?: string | null
+  active_until?: string | null
+}
+
+export interface TarpitSettings {
+  threshold_count: number
+  threshold_window_seconds: number
+  enabled: boolean
 }
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -104,6 +154,34 @@ export const adminApi = {
 
   listConnectionLogs: (entity_id: string) =>
     apiFetch<ConnLog[]>(`/api/entities/${entity_id}/logs`),
+
+  searchConnectionLogs: (params: LogSearchParams = {}) => {
+    const q = new URLSearchParams()
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== null && v !== '') q.set(k, String(v))
+    }
+    const qs = q.toString()
+    return apiFetch<LogSearchResult>(`/api/admin/connection-logs${qs ? `?${qs}` : ''}`)
+  },
+
+  listBanRules: () => apiFetch<BanRule[]>('/api/admin/ban-rules'),
+
+  createBanRule: (params: CreateBanRuleParams) =>
+    apiFetch<BanRule>('/api/admin/ban-rules', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    }),
+
+  deleteBanRule: (id: string) =>
+    apiFetch<void>(`/api/admin/ban-rules/${id}`, { method: 'DELETE' }),
+
+  getTarpitSettings: () => apiFetch<TarpitSettings>('/api/admin/tarpit-settings'),
+
+  updateTarpitSettings: (settings: TarpitSettings) =>
+    apiFetch<void>('/api/admin/tarpit-settings', {
+      method: 'PUT',
+      body: JSON.stringify(settings),
+    }),
 
   sampleError: () => apiFetch<void>('/api/admin/sample-error'),
 }

@@ -16,3 +16,6 @@ base64    = { workspace = true }
 ipnetwork = { workspace = true }
 glob      = { workspace = true }
 regex     = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

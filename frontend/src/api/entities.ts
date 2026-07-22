@@ -8,6 +8,8 @@ export interface Entity {
   created_at: string
   updated_at: string
   deleted_at: string | null
+  online: boolean
+  last_disconnected_at: string | null
 }
 
 export interface SshKey {

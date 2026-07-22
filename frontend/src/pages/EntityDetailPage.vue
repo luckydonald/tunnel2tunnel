@@ -8,7 +8,7 @@ import SshCommandDisplay from '@/components/SshCommandDisplay.vue'
 import { entitiesApi, type Entity, type EntityDetail, type EntityPort, type ReachableServer } from '@/api/entities'
 import { friendsApi, type AccessRule, type Friendship } from '@/api/friends'
 import { adminApi, type ConnLog } from '@/api/admin'
-import { subjectTypeLabel, subjectTypeOptions } from '@/labels'
+import { subjectTypeLabel, subjectTypeOptions, failReasonLabel, tarpitMethodLabel } from '@/labels'
 import { useAuthStore } from '@/stores/auth'
 import { useToast } from '@/composables/useToast'
 
@@ -335,7 +335,15 @@ async function handleDeleteEntity(): Promise<void> {
             <span class="sep">/</span>
             <EntityName :entity="entity" />
           </div>
-          <h1><EntityName :entity="entity" /></h1>
+          <h1>
+            <EntityName :entity="entity" />
+            <span :class="['badge-online', entity.online ? 'online' : 'offline']">
+              {{ entity.online ? 'Online' : 'Offline' }}
+            </span>
+          </h1>
+          <p v-if="!entity.online && entity.last_disconnected_at" class="subtitle">
+            Last seen {{ new Date(entity.last_disconnected_at).toLocaleString() }}
+          </p>
           <p v-if="entity.description" class="subtitle">{{ entity.description }}</p>
         </div>
         <button class="btn-del" @click="handleDeleteEntity">Delete entity</button>
@@ -657,6 +665,7 @@ async function handleDeleteEntity(): Promise<void> {
               <th>Fingerprint</th>
               <th>Result</th>
               <th>Reason</th>
+              <th>Tarpit</th>
             </tr>
           </thead>
           <tbody>
@@ -665,11 +674,12 @@ async function handleDeleteEntity(): Promise<void> {
               <td>{{ l.peer_ip ?? '—' }}</td>
               <td><code v-if="l.key_fingerprint" class="fp">{{ l.key_fingerprint }}</code><span v-else>—</span></td>
               <td>
-                <span :class="['badge-result', l.login_succeeded ? 'ok' : 'fail']">
-                  {{ l.login_succeeded ? 'ok' : 'fail' }}
+                <span :class="['badge-result', l.success ? 'ok' : 'fail']">
+                  {{ l.success ? 'ok' : 'fail' }}
                 </span>
               </td>
-              <td class="td-desc">{{ l.failure_reason ?? '—' }}</td>
+              <td class="td-desc">{{ (l.fail_reason && failReasonLabel[l.fail_reason]) ?? l.fail_reason ?? l.success_reason ?? '—' }}</td>
+              <td class="td-desc">{{ l.tarpit_method ? tarpitMethodLabel[l.tarpit_method] : '—' }}</td>
             </tr>
           </tbody>
         </table>
@@ -802,6 +812,13 @@ async function handleDeleteEntity(): Promise<void> {
   font-size: 0.75rem; font-weight: 600; text-transform: uppercase;
   &.ok   { background: rgba(52,211,153,.15); color: #6ee7b7; }
   &.fail { background: rgba(239,68,68,.15);  color: #fca5a5; }
+}
+
+.badge-online {
+  display: inline-block; margin-left: 0.625rem; padding: 0.15em 0.5em; border-radius: 4px;
+  font-size: 0.6875rem; font-weight: 600; text-transform: uppercase; vertical-align: middle;
+  &.online  { background: rgba(52,211,153,.15); color: #6ee7b7; }
+  &.offline { background: rgba(100,116,139,.15); color: #94a3b8; }
 }
 
 .input-sm {

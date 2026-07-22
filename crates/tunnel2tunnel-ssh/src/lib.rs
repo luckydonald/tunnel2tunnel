@@ -13,6 +13,7 @@ use russh::server::{Auth, Config, Handle, Handler, Msg, Server, Session};
 use russh::{MethodKind, MethodSet};
 use russh::{Channel, ChannelId, ChannelMsg};
 use sqlx::PgPool;
+use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
@@ -25,6 +26,9 @@ use tunnel2tunnel_core::{
         ssh_key::SshKey,
     },
 };
+
+mod tarpit;
+use tarpit::{SharedThresholds, TarpitMethod, TarpitState};
 
 pub struct SshConfig {
     pub ssh_port: u16,
@@ -91,19 +95,65 @@ pub async fn start(config: SshConfig, pool: PgPool) -> Result<()> {
     let server_slots: ServerSlots = Arc::new(Mutex::new(HashMap::new()));
     let session_registry: SessionRegistry = Arc::new(Mutex::new(HashMap::new()));
     let fail2ban = config.fail2ban_log_path.map(Arc::new);
+    let tarpit_state: TarpitState = tarpit::new_state();
+    let thresholds: SharedThresholds = Arc::new(Mutex::new(tarpit::Thresholds::default()));
+
+    tarpit::spawn_settings_refresher(pool.clone(), tarpit_state.clone(), thresholds.clone());
 
     let mut server = T2tServer {
-        pool,
+        pool: pool.clone(),
         server_slots,
         session_registry,
         fail2ban,
+        tarpit: tarpit_state,
+        thresholds,
     };
 
+    // A hand-rolled accept loop (rather than `Server::run_on_address`) is
+    // required here: `russh::server::run_stream` unconditionally writes the
+    // real "SSH-2.0-..." identification string as its first action, before
+    // any `Handler` callback ever runs — there is no hook to intercept it.
+    // The endlessh-style banner-drip tarpit (which must never send that real
+    // line) therefore has to own the raw `TcpStream` itself, decided here at
+    // accept time, before the socket is ever handed to russh.
+    let listener = TcpListener::bind(("0.0.0.0", config.ssh_port)).await?;
     tracing::info!(port = config.ssh_port, "SSH server listening");
-    server
-        .run_on_address(russh_config, ("0.0.0.0", config.ssh_port))
-        .await?;
-    Ok(())
+
+    loop {
+        let (socket, addr) = match listener.accept().await {
+            Ok(pair) => pair,
+            Err(e) => {
+                tracing::warn!(err = %e, "SSH: accept() failed");
+                continue;
+            }
+        };
+        let peer_ip = addr.ip().to_string();
+
+        let pre_auth_tarpit =
+            tarpit::decide_pre_auth_tarpit(&server.tarpit, &server.pool, &peer_ip).await;
+
+        if pre_auth_tarpit == Some(TarpitMethod::BannerDrip) {
+            let pool = server.pool.clone();
+            let fail2ban = server.fail2ban.clone();
+            tracing::info!(%peer_ip, "SSH: banner-drip tarpit engaged for new connection");
+            tokio::spawn(tarpit::banner_drip::run(
+                socket, peer_ip, pool, fail2ban, "ip banned",
+            ));
+            continue;
+        }
+
+        let mut handler = server.new_client(Some(addr));
+        handler.tarpit_method = pre_auth_tarpit;
+        let cfg = russh_config.clone();
+        tokio::spawn(async move {
+            match russh::server::run_stream(cfg, socket, handler).await {
+                Ok(session) => {
+                    let _ = session.await;
+                }
+                Err(e) => tracing::debug!(err = %e, "SSH: connection setup failed"),
+            }
+        });
+    }
 }
 
 // ── Server factory ─────────────────────────────────────────────────────────
@@ -113,6 +163,8 @@ struct T2tServer {
     server_slots: ServerSlots,
     session_registry: SessionRegistry,
     fail2ban: Option<Arc<String>>,
+    tarpit: TarpitState,
+    thresholds: SharedThresholds,
 }
 
 impl Server for T2tServer {
@@ -129,11 +181,15 @@ impl Server for T2tServer {
             server_slots: self.server_slots.clone(),
             session_registry: self.session_registry.clone(),
             fail2ban: self.fail2ban.clone(),
+            tarpit: self.tarpit.clone(),
+            thresholds: self.thresholds.clone(),
             conn_id,
             peer_ip,
             entity: None,
             bridges: HashMap::new(),
             log_id: None,
+            tarpit_method: None,
+            fake_shell: false,
         }
     }
 }
@@ -153,33 +209,66 @@ struct T2tHandler {
     server_slots: ServerSlots,
     session_registry: SessionRegistry,
     fail2ban: Option<Arc<String>>,
+    tarpit: TarpitState,
+    thresholds: SharedThresholds,
     conn_id: Uuid,
     peer_ip: String,
     entity: Option<AuthedEntity>,
     bridges: HashMap<ChannelId, (Handle, ChannelId)>,
     log_id: Option<Uuid>,
+    /// Decided once per connection (either at accept time for a peer_ip-level
+    /// ban, or lazily on first real auth attempt for a user-level ban).
+    /// `TarpitMethod::BannerDrip` never appears here — by the time any
+    /// `Handler` callback runs, the real SSH-2.0 line has already gone out.
+    tarpit_method: Option<TarpitMethod>,
+    /// Set when this connection was waved through `Auth::Accept` as a
+    /// fake-shell trap rather than a real login — `entity` stays `None`.
+    fake_shell: bool,
 }
 
 impl T2tHandler {
+    /// Lazily resolves (and caches) which tarpit method applies to this
+    /// connection's auth attempts, once we're already inside a `Handler`
+    /// callback (banner-drip is not selectable here — see `tarpit_method`'s
+    /// doc comment).
+    async fn resolve_tarpit_method(&mut self, user_id: Option<Uuid>) -> Option<TarpitMethod> {
+        if self.tarpit_method.is_none() {
+            self.tarpit_method =
+                tarpit::decide_in_auth_tarpit(&self.tarpit, &self.peer_ip, user_id).await;
+        }
+        self.tarpit_method
+    }
+
+    #[allow(clippy::too_many_arguments)]
     async fn log_auth_failure(
         &self,
+        user_id: Option<Uuid>,
         fingerprint: Option<&str>,
+        attempted_password: Option<&str>,
         reason: &str,
+        counts_toward_ban: bool,
     ) {
         let now = time::OffsetDateTime::now_utc();
         if let Err(e) = ConnectionLog::create(
             &self.pool,
             None,
+            user_id,
             Some(&self.peer_ip),
             fingerprint,
-            false,
+            attempted_password,
             Some(reason),
             None,
+            self.tarpit_method.map(TarpitMethod::as_str),
             now,
         )
         .await
         {
             tracing::warn!(err = %e, "failed to write auth failure log");
+        }
+
+        if counts_toward_ban {
+            let thresholds = self.thresholds.lock().await.clone();
+            tarpit::record_auth_failure(&self.tarpit, &self.peer_ip, user_id, &thresholds).await;
         }
 
         if let Some(path) = &self.fail2ban {
@@ -201,10 +290,12 @@ impl T2tHandler {
         match ConnectionLog::create(
             &self.pool,
             Some(entity.id),
+            Some(entity.user_id),
             Some(&self.peer_ip),
             Some(fingerprint),
-            true,
             None,
+            None,
+            Some("correct login"),
             None,
             now,
         )
@@ -213,6 +304,8 @@ impl T2tHandler {
             Ok(log) => self.log_id = Some(log.id),
             Err(e) => tracing::warn!(err = %e, "failed to write auth success log"),
         }
+
+        tarpit::record_auth_success(&self.tarpit, &self.peer_ip, Some(entity.user_id)).await;
 
         if let Some(path) = &self.fail2ban {
             let line = format!(
@@ -252,7 +345,17 @@ impl Handler for T2tHandler {
             available = "publickey",
             "SSH: auth attempt (password) — rejected (password auth not supported)"
         );
-        self.log_auth_failure(None, "password auth not supported").await;
+        let method = self.resolve_tarpit_method(None).await;
+        self.log_auth_failure(None, None, Some(password), "password auth not supported", true)
+            .await;
+
+        if method == Some(TarpitMethod::FakeShell) {
+            self.fake_shell = true;
+            return Ok(Auth::Accept);
+        }
+        if method == Some(TarpitMethod::SlowAuth) {
+            tarpit::slow_auth::delay().await;
+        }
         Ok(Auth::Reject {
             proceed_with_methods: Some(publickey_only()),
             partial_success: false,
@@ -272,6 +375,17 @@ impl Handler for T2tHandler {
             available = "publickey",
             "SSH: auth attempt (keyboard-interactive) — rejected"
         );
+        let method = self.resolve_tarpit_method(None).await;
+        self.log_auth_failure(None, None, None, "unsupported auth method", true)
+            .await;
+
+        if method == Some(TarpitMethod::FakeShell) {
+            self.fake_shell = true;
+            return Ok(Auth::Accept);
+        }
+        if method == Some(TarpitMethod::SlowAuth) {
+            tarpit::slow_auth::delay().await;
+        }
         Ok(Auth::Reject {
             proceed_with_methods: Some(publickey_only()),
             partial_success: false,
@@ -312,7 +426,15 @@ impl Handler for T2tHandler {
             Ok(Some(k)) => k,
             Ok(None) => {
                 tracing::info!(%fp, peer_ip = %self.peer_ip, "SSH: auth rejected — unknown key");
-                self.log_auth_failure(Some(&fp), "unknown key").await;
+                let method = self.resolve_tarpit_method(None).await;
+                self.log_auth_failure(None, Some(&fp), None, "unknown key", true).await;
+                if method == Some(TarpitMethod::FakeShell) {
+                    self.fake_shell = true;
+                    return Ok(Auth::Accept);
+                }
+                if method == Some(TarpitMethod::SlowAuth) {
+                    tarpit::slow_auth::delay().await;
+                }
                 return Ok(Auth::Reject { proceed_with_methods: None, partial_success: false });
             }
             Err(e) => {
@@ -323,29 +445,22 @@ impl Handler for T2tHandler {
 
         tracing::debug!(%fp, key_id = %ssh_key.id, entity_id = %ssh_key.entity_id, "SSH: key found in db");
 
-        // Check key expiry (soft-deleted = expired)
-        if let Some(valid_until) = ssh_key.ts.soft_delete.deleted_at {
-            if valid_until < time::OffsetDateTime::now_utc() {
-                tracing::info!(%fp, key_id = %ssh_key.id, "SSH: auth rejected — key expired (deleted_at)");
-                self.log_auth_failure(Some(&fp), "key expired").await;
-                return Ok(Auth::Reject { proceed_with_methods: None, partial_success: false });
-            }
-        }
-        // Also check ssh_key's own valid_until field
-        if let Some(valid_until) = ssh_key.valid_until {
-            if valid_until < time::OffsetDateTime::now_utc() {
-                tracing::info!(%fp, key_id = %ssh_key.id, "SSH: auth rejected — key expired (valid_until)");
-                self.log_auth_failure(Some(&fp), "key expired (valid_until)").await;
-                return Ok(Auth::Reject { proceed_with_methods: None, partial_success: false });
-            }
-        }
-
-        // Load the owning entity
+        // Load the owning entity (before the key-expiry checks below, so a
+        // stale-but-known identity's user_id is available for user-scoped
+        // ban counting even on the key-expired branches).
         let entity = match Entity::find_by_id_only(&self.pool, ssh_key.entity_id).await {
             Ok(Some(e)) => e,
             Ok(None) => {
                 tracing::info!(%fp, entity_id = %ssh_key.entity_id, "SSH: auth rejected — entity not found");
-                self.log_auth_failure(Some(&fp), "entity not found").await;
+                let method = self.resolve_tarpit_method(None).await;
+                self.log_auth_failure(None, Some(&fp), None, "entity not found", true).await;
+                if method == Some(TarpitMethod::FakeShell) {
+                    self.fake_shell = true;
+                    return Ok(Auth::Accept);
+                }
+                if method == Some(TarpitMethod::SlowAuth) {
+                    tarpit::slow_auth::delay().await;
+                }
                 return Ok(Auth::Reject { proceed_with_methods: None, partial_success: false });
             }
             Err(e) => {
@@ -353,14 +468,46 @@ impl Handler for T2tHandler {
                 return Ok(Auth::Reject { proceed_with_methods: None, partial_success: false });
             }
         };
+        let user_id = entity.user_id;
 
         tracing::debug!(%fp, entity_id = %entity.id, entity_name = entity.name.as_deref().unwrap_or("(unnamed)"), "SSH: entity loaded");
+
+        // Check key expiry (soft-deleted = expired). These branches never
+        // switch to fake-shell — a stale-but-known identity's genuine
+        // (if expired) credential is a normal reject, not a scanner probe.
+        if let Some(valid_until) = ssh_key.ts.soft_delete.deleted_at {
+            if valid_until < time::OffsetDateTime::now_utc() {
+                tracing::info!(%fp, key_id = %ssh_key.id, "SSH: auth rejected — key expired (deleted_at)");
+                self.resolve_tarpit_method(Some(user_id)).await;
+                self.log_auth_failure(Some(user_id), Some(&fp), None, "key expired", true).await;
+                if self.tarpit_method == Some(TarpitMethod::SlowAuth) {
+                    tarpit::slow_auth::delay().await;
+                }
+                return Ok(Auth::Reject { proceed_with_methods: None, partial_success: false });
+            }
+        }
+        // Also check ssh_key's own valid_until field
+        if let Some(valid_until) = ssh_key.valid_until {
+            if valid_until < time::OffsetDateTime::now_utc() {
+                tracing::info!(%fp, key_id = %ssh_key.id, "SSH: auth rejected — key expired (valid_until)");
+                self.resolve_tarpit_method(Some(user_id)).await;
+                self.log_auth_failure(Some(user_id), Some(&fp), None, "key expired (valid_until)", true).await;
+                if self.tarpit_method == Some(TarpitMethod::SlowAuth) {
+                    tarpit::slow_auth::delay().await;
+                }
+                return Ok(Auth::Reject { proceed_with_methods: None, partial_success: false });
+            }
+        }
 
         // Check entity expiry
         if let Some(valid_until) = entity.valid_until {
             if valid_until < time::OffsetDateTime::now_utc() {
                 tracing::info!(entity_id = %entity.id, entity_name = entity.name.as_deref().unwrap_or("(unnamed)"), "SSH: auth rejected — entity expired");
-                self.log_auth_failure(Some(&fp), "entity expired").await;
+                self.resolve_tarpit_method(Some(user_id)).await;
+                self.log_auth_failure(Some(user_id), Some(&fp), None, "entity expired", true).await;
+                if self.tarpit_method == Some(TarpitMethod::SlowAuth) {
+                    tarpit::slow_auth::delay().await;
+                }
                 return Ok(Auth::Reject { proceed_with_methods: None, partial_success: false });
             }
         }
@@ -374,7 +521,11 @@ impl Handler for T2tHandler {
                     peer_ip = %self.peer_ip,
                     "SSH: auth rejected — IP blocked by whitelist"
                 );
-                self.log_auth_failure(Some(&fp), "IP blocked by whitelist").await;
+                self.resolve_tarpit_method(Some(user_id)).await;
+                self.log_auth_failure(Some(user_id), Some(&fp), None, "ip blocked by whitelist", true).await;
+                if self.tarpit_method == Some(TarpitMethod::SlowAuth) {
+                    tarpit::slow_auth::delay().await;
+                }
                 return Ok(Auth::Reject { proceed_with_methods: None, partial_success: false });
             }
         }
@@ -386,7 +537,6 @@ impl Handler for T2tHandler {
             %fp,
             "SSH: auth accepted"
         );
-        let user_id = entity.user_id;
         self.log_auth_success(&entity, &fp).await;
         self.entity = Some(AuthedEntity { entity, user_id });
 
@@ -395,6 +545,18 @@ impl Handler for T2tHandler {
 
     // Called after successful authentication — send welcome message and set up session channel.
     async fn auth_succeeded(&mut self, session: &mut Session) -> Result<(), Self::Error> {
+        if self.fake_shell {
+            // No real entity to register/broadcast — just stand the channel
+            // up in the background; the bogus prompt itself is sent once the
+            // client actually opens a session channel (see channel_open_session).
+            let handle = session.handle();
+            tokio::spawn(async move {
+                if let Ok(ch) = handle.channel_open_session().await {
+                    tarpit::fake_shell::serve(handle, ch).await;
+                }
+            });
+            return Ok(());
+        }
         let Some(ref authed) = self.entity else { return Ok(()); };
         let entity = authed.entity.clone();
         let entity_name = entity.name.as_deref().unwrap_or("(unnamed)").to_string();
@@ -487,6 +649,11 @@ impl Handler for T2tHandler {
         channel: Channel<Msg>,
         _session: &mut Session,
     ) -> Result<bool, Self::Error> {
+        if self.entity.is_none() && self.fake_shell {
+            let handle = _session.handle();
+            tokio::spawn(tarpit::fake_shell::serve(handle, channel));
+            return Ok(true);
+        }
         let Some(ref authed) = self.entity else { return Ok(false); };
         let entity_name = authed.entity.name.as_deref().unwrap_or("(unnamed)").to_string();
         let entity_type = authed.entity.entity_type.clone();

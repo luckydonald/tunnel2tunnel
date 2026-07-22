@@ -194,3 +194,14 @@ Reuses the already-tracked `connection_logs.ended_at` (set via `ConnectionLog::s
 - `cargo run -p t2t` locally, then manually reproduce the reference legit-login sequence with a real registered entity/key and confirm no delay/hang; separately hammer with a bogus key repeatedly and observe (via `RUST_LOG=tunnel2tunnel_ssh=debug`) the threshold trip, round-robin method selection, and the tarpit taking effect (e.g. `nc localhost 2222` hanging on banner-drip, or `ssh` visibly slowing down / dropping into the fake shell).
 - `npm run build` in `frontend/`, then click through the two new admin pages: create/delete a ban rule, browse+filter+paginate connection logs, edit global thresholds.
 - Confirm `contrib/fail2ban/filter.d/tunnel2tunnel.conf`'s regex still matches both ordinary failed-publickey lines and the new tarpit sentinel line (unit test covers this, but worth a manual `fail2ban-regex` sanity check too if available).
+
+## Todos
+
+- [x] Migration 008_tarpit.sql
+- [x] Core: connection_log.rs rewrite + ban_rule.rs
+- [x] SSH crate: tarpit/ module (mod.rs, banner_drip.rs, slow_auth.rs, fake_shell.rs)
+- [x] SSH crate: wire lib.rs to tarpit module
+- [x] Web routes: connection_logs, ban_rules, tarpit-settings, entity online status
+- [x] Frontend: admin pages + labels + nav
+- [x] Tests: unit + sqlx + e2e russh::client harness
+- [x] Build verification

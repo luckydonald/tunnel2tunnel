@@ -92,6 +92,11 @@ pub struct EntityResponse {
     pub updated_at: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339::option")]
     pub deleted_at: Option<OffsetDateTime>,
+    /// True iff there's currently an open, successful SSH session for this
+    /// entity — derived from connection_logs, not a dedicated column.
+    pub online: bool,
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub last_disconnected_at: Option<OffsetDateTime>,
 }
 
 impl From<Entity> for EntityResponse {
@@ -106,7 +111,19 @@ impl From<Entity> for EntityResponse {
             created_at: e.ts.timestamps.created_at,
             updated_at: e.ts.timestamps.updated_at,
             deleted_at: e.ts.soft_delete.deleted_at,
+            online: false,
+            last_disconnected_at: None,
         }
+    }
+}
+
+impl EntityResponse {
+    fn with_status(mut self, status: Option<(bool, Option<OffsetDateTime>)>) -> Self {
+        if let Some((online, last_disconnected_at)) = status {
+            self.online = online;
+            self.last_disconnected_at = last_disconnected_at;
+        }
+        self
     }
 }
 
@@ -212,7 +229,18 @@ pub async fn list_entities(
     Query(q): Query<EntityListQuery>,
 ) -> Result<Json<Vec<EntityResponse>>, WebError> {
     let list = Entity::list_for_user(&state.db, user.id, q.entity_type.as_deref()).await?;
-    Ok(Json(list.into_iter().map(EntityResponse::from).collect()))
+    let ids: Vec<Uuid> = list.iter().map(|e| e.id).collect();
+    let statuses = ConnectionLog::entity_statuses(&state.db, &ids)
+        .await
+        .map_err(WebError::Core)?;
+    Ok(Json(
+        list.into_iter()
+            .map(|e| {
+                let status = statuses.get(&e.id).copied();
+                EntityResponse::from(e).with_status(status)
+            })
+            .collect(),
+    ))
 }
 
 pub async fn create_entity(
@@ -244,8 +272,11 @@ pub async fn get_entity(
     let entity = require_owner(&state.db, id, user.id).await?;
     let ssh_keys = SshKey::list_for_entity(&state.db, id).await?;
     let ports = EntityPort::list_for_entity(&state.db, id).await?;
+    let status = ConnectionLog::entity_status(&state.db, id)
+        .await
+        .map_err(WebError::Core)?;
     Ok(Json(EntityDetailResponse {
-        entity: EntityResponse::from(entity),
+        entity: EntityResponse::from(entity).with_status(Some(status)),
         ssh_keys: ssh_keys.into_iter().map(SshKeyResponse::from).collect(),
         ports: ports.into_iter().map(EntityPortResponse::from).collect(),
     }))
@@ -537,10 +568,14 @@ pub async fn set_port_discovery_state(
 #[derive(Serialize)]
 pub struct ConnLogResponse {
     pub id: Uuid,
+    pub user_id: Option<Uuid>,
     pub peer_ip: Option<String>,
     pub key_fingerprint: Option<String>,
-    pub login_succeeded: bool,
-    pub failure_reason: Option<String>,
+    pub attempted_password: Option<String>,
+    pub fail_reason: Option<String>,
+    pub success_reason: Option<String>,
+    pub success: bool,
+    pub tarpit_method: Option<String>,
     pub started_at: String,
     pub ended_at: Option<String>,
 }
@@ -550,10 +585,14 @@ impl From<tunnel2tunnel_core::models::connection_log::ConnectionLog> for ConnLog
         use time::format_description::well_known::Rfc3339;
         Self {
             id: l.id,
+            user_id: l.user_id,
             peer_ip: l.peer_ip,
             key_fingerprint: l.key_fingerprint,
-            login_succeeded: l.login_succeeded,
-            failure_reason: l.failure_reason,
+            attempted_password: l.attempted_password,
+            fail_reason: l.fail_reason,
+            success_reason: l.success_reason,
+            success: l.success,
+            tarpit_method: l.tarpit_method,
             started_at: l.started_at.format(&Rfc3339).unwrap_or_default(),
             ended_at: l.ended_at.map(|t| t.format(&Rfc3339).unwrap_or_default()),
         }
