@@ -621,3 +621,12 @@ Generally:
 > - [Raw log (`190238` chars, `187 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/65a8ce4e-85b4-43dc-930a-adce9067ca43/tasks/af4a6ecb2abddc134.output)
 > - `14` tools, `42739` tokens, `1.22903 s`
 
+❯ Task Notification:
+> - Task `ac396b2f3ccec98ae` <kbd>completed</kbd>
+> - Tool `toolu_01XJVg1XoU9cRDG3hT2nGYSg`
+> - > Agent "Explore SSH auth flow in russh crate" finished
+> - [Query (`1524` chars, `1.49 KB`)](output/agents/012.ac396b2f3ccec98ae/prompt.md)
+> - [Answer (`19955` chars, `19.6 KB`)](output/agents/012.ac396b2f3ccec98ae/result.md)
+> - [Raw log (`218772` chars, `216 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/65a8ce4e-85b4-43dc-930a-adce9067ca43/tasks/ac396b2f3ccec98ae.output)
+> - `13` tools, `46430` tokens, `1.88822 s`
+
