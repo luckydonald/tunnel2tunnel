@@ -578,3 +578,5 @@ Also add an automated test based on the `MANUAL_TESTING.md` with the fake stuff 
 
 ❯ Notice that the ai commits right before our commit might be for those unstaged changes, in that case merge those (and the auto-commit caused by this prompt) with the code.
 
+❯ codex
+
