@@ -18,7 +18,9 @@ use getrandom::SysRng;
 use russh::client::{connect as client_connect, Config as ClientConfig, Handle as ClientHandle};
 use russh::keys::key::PrivateKeyWithHashAlg;
 use russh::keys::{Algorithm, PrivateKey};
+use russh::ChannelMsg;
 use time::OffsetDateTime;
+use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
 use tokio::time::sleep;
 use uuid::Uuid;
@@ -239,5 +241,93 @@ async fn repeated_bad_key_attempts_trigger_slow_auth_delay() {
     assert!(
         last_elapsed >= Duration::from_secs(2),
         "6th attempt should have been slow-auth-delayed after crossing the ban threshold, took {last_elapsed:?}"
+    );
+}
+
+/// Drives `count` failed publickey attempts (always an unregistered key)
+/// through the server at `port`, one connection each. Ignores the outcome —
+/// works whether the server rejects (slow_auth) or waves the attempt
+/// through into a fake shell (`Auth::Accept`), since either way a fresh
+/// `connection_logs` failure row is written and the in-memory ban counter
+/// advances the same way.
+async fn drive_failures(port: u16, count: usize) {
+    for _ in 0..count {
+        let (bad_key, _, _) = generate_keypair();
+        let mut handle = connect_client(port).await;
+        let key_with_alg = PrivateKeyWithHashAlg::new(Arc::new(bad_key), None);
+        let _ = handle.authenticate_publickey("test", key_with_alg).await;
+    }
+}
+
+/// `TarpitMethod::round_robin` cycles BannerDrip(0) -> SlowAuth(1) ->
+/// FakeShell(2) -> BannerDrip(3) by `trigger_count`, and each ban-threshold
+/// crossing (default: 5 failures) bumps `trigger_count` by one. So the 3rd
+/// crossing (15 failures total) lands back on BannerDrip for the *next*
+/// connection — this drives real traffic through the whole pipeline to
+/// prove the accept-time hook in `start()` actually engages the raw-socket
+/// drip path, not just the pure round-robin math already unit-tested.
+#[tokio::test]
+async fn repeated_bans_eventually_engage_banner_drip() {
+    let _guard = TEST_GUARD.lock().await;
+    let pool = test_pool().await;
+    let port = spawn_server(pool.clone()).await;
+
+    drive_failures(port, 15).await;
+
+    let mut socket = TcpStream::connect(("127.0.0.1", port))
+        .await
+        .expect("connect to banner-drip-tarpitted port");
+    let mut buf = vec![0u8; 4096];
+    let n = tokio::time::timeout(Duration::from_secs(15), socket.read(&mut buf))
+        .await
+        .expect("expected at least one banner-drip line within the timeout")
+        .expect("read banner-drip line");
+    assert!(n > 0, "connection closed with no data");
+    let text = String::from_utf8_lossy(&buf[..n]);
+    assert!(
+        !text.starts_with("SSH-"),
+        "banner-drip must never send the real SSH-2.0 identification line, got: {text:?}"
+    );
+}
+
+/// After 2 ban-threshold crossings (10 failures), `trigger_count == 2` and
+/// `round_robin(2) == FakeShell` — the next attempt should be waved through
+/// with `Auth::Accept` into a bogus shell rather than rejected, and opening
+/// a channel on it should yield the fake `$ ` prompt bytes rather than any
+/// real access.
+#[tokio::test]
+async fn repeated_bans_eventually_engage_fake_shell() {
+    let _guard = TEST_GUARD.lock().await;
+    let pool = test_pool().await;
+    let port = spawn_server(pool.clone()).await;
+
+    drive_failures(port, 10).await;
+
+    let (bad_key, _, _) = generate_keypair();
+    let mut handle = connect_client(port).await;
+    let key_with_alg = PrivateKeyWithHashAlg::new(Arc::new(bad_key), None);
+    let result = handle
+        .authenticate_publickey("test", key_with_alg)
+        .await
+        .expect("authenticate_publickey");
+    assert!(
+        result.success(),
+        "an unregistered key on the fake-shell round-robin slot must still get Auth::Accept"
+    );
+
+    let mut channel = handle
+        .channel_open_session()
+        .await
+        .expect("open session channel on the fake shell");
+    let msg = tokio::time::timeout(Duration::from_secs(5), channel.wait())
+        .await
+        .expect("expected the fake shell to send its bogus prompt")
+        .expect("channel closed with no data");
+    let ChannelMsg::Data { data } = msg else {
+        panic!("expected a Data message with the bogus prompt, got: {msg:?}");
+    };
+    assert!(
+        String::from_utf8_lossy(&data).contains('$'),
+        "expected the fake shell's bogus '$ ' prompt, got: {data:?}"
     );
 }

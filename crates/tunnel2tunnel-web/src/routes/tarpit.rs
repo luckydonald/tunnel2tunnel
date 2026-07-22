@@ -38,13 +38,18 @@ pub struct LogSearchResponse {
     pub page_size: i64,
 }
 
+/// Pure pagination normalization — extracted so it's unit-testable without a
+/// DB/HTTP request. Page is floored at 1; page_size clamped to [1, 200].
+fn normalize_pagination(page: Option<i64>, page_size: Option<i64>) -> (i64, i64) {
+    (page.unwrap_or(1).max(1), page_size.unwrap_or(50).clamp(1, 200))
+}
+
 pub async fn search_connection_logs(
     AdminUser(_admin): AdminUser,
     State(state): State<AppState>,
     Query(q): Query<LogSearchQuery>,
 ) -> Result<Json<LogSearchResponse>, WebError> {
-    let page = q.page.unwrap_or(1).max(1);
-    let page_size = q.page_size.unwrap_or(50).clamp(1, 200);
+    let (page, page_size) = normalize_pagination(q.page, q.page_size);
     let (rows, total) = ConnectionLog::search(
         &state.db,
         q.peer_ip.as_deref(),
@@ -115,24 +120,30 @@ pub struct CreateBanRuleBody {
     pub active_until: Option<OffsetDateTime>,
 }
 
-pub async fn create_ban_rule(
-    AdminUser(admin): AdminUser,
-    State(state): State<AppState>,
-    Json(body): Json<CreateBanRuleBody>,
-) -> Result<(StatusCode, Json<BanRuleResponse>), WebError> {
+/// Pure validation for a create-ban-rule request — extracted so it's
+/// unit-testable without needing a DB/HTTP request.
+fn validate_create_ban_rule(body: &CreateBanRuleBody) -> Result<(), WebError> {
     let valid_types = ["peer_ip", "user"];
     if !valid_types.contains(&body.scope_type.as_str()) {
         return Err(WebError::BadRequest("invalid scope_type".into()));
     }
     match body.scope_type.as_str() {
         "peer_ip" if body.peer_ip.is_none() => {
-            return Err(WebError::BadRequest("peer_ip required for scope_type 'peer_ip'".into()));
+            Err(WebError::BadRequest("peer_ip required for scope_type 'peer_ip'".into()))
         }
         "user" if body.user_id.is_none() => {
-            return Err(WebError::BadRequest("user_id required for scope_type 'user'".into()));
+            Err(WebError::BadRequest("user_id required for scope_type 'user'".into()))
         }
-        _ => {}
+        _ => Ok(()),
     }
+}
+
+pub async fn create_ban_rule(
+    AdminUser(admin): AdminUser,
+    State(state): State<AppState>,
+    Json(body): Json<CreateBanRuleBody>,
+) -> Result<(StatusCode, Json<BanRuleResponse>), WebError> {
+    validate_create_ban_rule(&body)?;
 
     let rule = BanRule::create(
         &state.db,
@@ -229,4 +240,45 @@ pub async fn update_tarpit_settings(
         .await
         .map_err(WebError::Core)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn body(scope_type: &str, peer_ip: Option<&str>, user_id: Option<Uuid>) -> CreateBanRuleBody {
+        CreateBanRuleBody {
+            scope_type: scope_type.to_string(),
+            peer_ip: peer_ip.map(String::from),
+            user_id,
+            reason: None,
+            active_until: None,
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_scope_type() {
+        let err = validate_create_ban_rule(&body("hostname", None, None)).unwrap_err();
+        assert!(matches!(err, WebError::BadRequest(_)));
+    }
+
+    #[test]
+    fn peer_ip_scope_requires_peer_ip() {
+        assert!(validate_create_ban_rule(&body("peer_ip", None, None)).is_err());
+        assert!(validate_create_ban_rule(&body("peer_ip", Some("203.0.113.1"), None)).is_ok());
+    }
+
+    #[test]
+    fn user_scope_requires_user_id() {
+        assert!(validate_create_ban_rule(&body("user", None, None)).is_err());
+        assert!(validate_create_ban_rule(&body("user", None, Some(Uuid::now_v7()))).is_ok());
+    }
+
+    #[test]
+    fn pagination_defaults_and_clamps() {
+        assert_eq!(normalize_pagination(None, None), (1, 50));
+        assert_eq!(normalize_pagination(Some(0), Some(0)), (1, 1));
+        assert_eq!(normalize_pagination(Some(-5), Some(9999)), (1, 200));
+        assert_eq!(normalize_pagination(Some(3), Some(20)), (3, 20));
+    }
 }

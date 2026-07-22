@@ -140,6 +140,68 @@ async fn search_filters_by_success_and_peer_ip() {
 }
 
 #[tokio::test]
+async fn search_paginates_and_filters_by_tarpit_method() {
+    let pool = test_pool().await;
+    let peer_ip = format!("203.0.113.{}", rand_octet());
+    let now = OffsetDateTime::now_utc();
+
+    for _ in 0..5 {
+        ConnectionLog::create(&pool, None, None, Some(&peer_ip), None, None, Some("unknown key"), None, Some("slow_auth"), now)
+            .await.unwrap();
+    }
+    ConnectionLog::create(&pool, None, None, Some(&peer_ip), None, None, Some("unknown key"), None, None, now)
+        .await.unwrap();
+
+    // page 1 of 2 with page_size=2 over the 5 slow_auth rows
+    let (page1, total) = ConnectionLog::search(&pool, Some(&peer_ip), None, None, Some("slow_auth"), None, 1, 2)
+        .await.expect("search page 1");
+    assert_eq!(total, 5, "method filter should exclude the 6th (no tarpit_method) row");
+    assert_eq!(page1.len(), 2);
+
+    let (page3, total3) = ConnectionLog::search(&pool, Some(&peer_ip), None, None, Some("slow_auth"), None, 3, 2)
+        .await.expect("search page 3");
+    assert_eq!(total3, 5);
+    assert_eq!(page3.len(), 1, "5 rows at page_size 2 leaves exactly 1 row on page 3");
+
+    let ids_p1: Vec<_> = page1.iter().map(|r| r.id).collect();
+    let ids_p3: Vec<_> = page3.iter().map(|r| r.id).collect();
+    assert!(ids_p1.iter().all(|id| !ids_p3.contains(id)), "pages must not overlap");
+}
+
+#[tokio::test]
+async fn entity_statuses_batches_multiple_entities() {
+    let pool = test_pool().await;
+    let owner = test_user(&pool).await;
+    let online_entity = Entity::create(&pool, owner.id, "server", Some("batch-online"), None, None, None)
+        .await.expect("create online entity");
+    let offline_entity = Entity::create(&pool, owner.id, "server", Some("batch-offline"), None, None, None)
+        .await.expect("create offline entity");
+    let never_connected = Entity::create(&pool, owner.id, "server", Some("batch-never"), None, None, None)
+        .await.expect("create never-connected entity");
+
+    ConnectionLog::create(
+        &pool, Some(online_entity.id), Some(owner.id), Some("198.51.100.2"), None,
+        None, None, Some("correct login"), None, OffsetDateTime::now_utc(),
+    ).await.expect("insert open session");
+
+    let closed = ConnectionLog::create(
+        &pool, Some(offline_entity.id), Some(owner.id), Some("198.51.100.3"), None,
+        None, None, Some("correct login"), None, OffsetDateTime::now_utc(),
+    ).await.expect("insert closed session");
+    ConnectionLog::set_ended(&pool, closed.id).await.expect("set_ended");
+
+    let statuses = ConnectionLog::entity_statuses(
+        &pool,
+        &[online_entity.id, offline_entity.id, never_connected.id],
+    ).await.expect("entity_statuses");
+
+    assert!(statuses.get(&online_entity.id).unwrap().0, "online entity should read online=true");
+    assert!(!statuses.get(&offline_entity.id).unwrap().0, "offline entity should read online=false");
+    assert!(statuses.get(&offline_entity.id).unwrap().1.is_some(), "offline entity should have a last_disconnected_at");
+    assert!(statuses.get(&never_connected.id).is_none(), "an entity with no rows should be absent from the map");
+}
+
+#[tokio::test]
 async fn entity_status_reflects_open_and_closed_sessions() {
     let pool = test_pool().await;
     let owner = test_user(&pool).await;
