@@ -688,3 +688,12 @@ Generally:
 > </details>
 >
 
+❯ Task Notification:
+> - Task `a56d2dda01a2eaa2b` <kbd>completed</kbd>
+> - Tool `toolu_01V5v98mZdj4xtrBUnKZXgiN`
+> - > Agent "Design SSH tarpit + ban-rules feature" finished
+> - [Query (`21220` chars, `20.8 KB`)](output/agents/014.a56d2dda01a2eaa2b/prompt.md)
+> - [Answer (`48320` chars, `47.4 KB`)](output/agents/014.a56d2dda01a2eaa2b/result.md)
+> - [Raw log (`503404` chars, `496 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/65a8ce4e-85b4-43dc-930a-adce9067ca43/tasks/a56d2dda01a2eaa2b.output)
+> - `23` tools, `94415` tokens, `112.73 s`
+
