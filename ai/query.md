@@ -697,3 +697,8 @@ Generally:
 > - [Raw log (`503404` chars, `496 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/65a8ce4e-85b4-43dc-930a-adce9067ca43/tasks/a56d2dda01a2eaa2b.output)
 > - `23` tools, `94415` tokens, `112.73 s`
 
+❯ Changes:
+- auth_keyboard_interactive: this sounds like a useful pit-able item.
+- in the admin table, there is needed a ban button.
+- _drive via OpenSSH subprocess_ this sounds dangerous, I don't want to do any sys/cmd calls.
+
