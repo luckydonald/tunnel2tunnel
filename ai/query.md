@@ -639,3 +639,52 @@ Generally:
 > - [Raw log (`327457` chars, `321 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/65a8ce4e-85b4-43dc-930a-adce9067ca43/tasks/a3cc6a94f78cafdb2.output)
 > - `47` tools, `55429` tokens, `3.5788 s`
 
+❯ Question answered.
+> <details><summary>
+>
+>> 1. New DB table for tarpit/ban events, or extend existing connection_logs table?
+>> 2. How should ban/tarpit triggering thresholds work (e.g. N failed attempts within window before tarpitting)?
+>> 3. Should tarpit/ban rules expire automatically, or stay active until admin removes them?
+>> 4. Which tarpit methods should the round-robin pick from for v1?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **DB design** (1/4) <kbd>Single Select</kbd><br>
+>> New DB table for tarpit/ban events, or extend existing connection_logs table?
+> - [ ] 1\. New table `auth_tarpit_events`
+>   - _Separate table dedicated to tarpit/ban tracking with success/fail-reason columns as you specified. Keeps connection_logs untouched, cleaner schema for the new enum-based reason columns._
+> - [x] 2\. Extend connection_logs
+>   - _Add tarpit_method, ban-related columns to the existing table. Reuses existing writer/reader code but connection_logs currently has loose free-text failure_reason (no CHECK constraint) — would need tightening._
+> - [ ] 3\. _Type something._
+>
+>> **Trigger rule** (2/4) <kbd>Single Select</kbd><br>
+>> How should ban/tarpit triggering thresholds work (e.g. N failed attempts within window before tarpitting)?
+> - [x] 1\. Admin-configurable global thresholds
+>   - _e.g. "5 failed attempts in 10 min" as global settings editable in webui, applied per peer_ip and per user/entity._
+> - [ ] 2\. Fixed threshold in code
+>   - _Hardcode a sane default (e.g. 3 failures) as a constant, no UI for tuning it — matches request emphasis on ban *rules* (allow/deny lists) rather than tunable detection thresholds._
+> - [ ] 3\. Manual-only (admin bans explicitly)
+>   - _No automatic threshold-based triggering at all — admin manually adds peer_ip/user rules via webui after reviewing the log table; tarpit applies only to entries matching an active rule._
+> - [ ] 4\. _Type something._
+>
+>> **Rule duration** (3/4) <kbd>Single Select</kbd><br>
+>> Should tarpit/ban rules expire automatically, or stay active until admin removes them?
+> - [x] 1\. Admin sets optional expiry per rule
+>   - _Rule form includes an optional "active until" field (like entity valid_until pattern already used elsewhere); indefinite if left blank._
+> - [ ] 2\. Indefinite until manually removed
+>   - _Simpler: admin explicitly deletes a rule to lift a ban, mirroring the existing entity_access rule-list delete pattern._
+> - [ ] 3\. _Type something._
+>
+>> **Tarpit methods** (4/4) <kbd>Single Select</kbd><br>
+>> Which tarpit methods should the round-robin pick from for v1?
+> - [ ] 1\. Endlessh banner drip + slow auth drip-feed
+>   - _Two methods: (1) endless random pre-banner lines per RFC4253 loophole, (2) accept connection then delay responses during auth negotiation. Both operate before/around auth, no fake shell yet._
+> - [x] 2\. All three: banner drip + slow auth + fake shell
+>   - _Adds a third method: let banned client complete a bogus auth handshake into a fake interactive shell that just hangs, per your original request. More code (needs Auth::Accept branch + fake channel_open_session path) but matches your full ask._
+> - [ ] 3\. _Type something._
+>
+> </details>
+>
+
