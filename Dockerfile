@@ -4,11 +4,17 @@
 FROM rust:1.88-slim AS rust-builder
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
-    apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev
+    apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev lld
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ crates/
 COPY migrations/ migrations/
+# -j 1 bounds rustc/LLVM to one crate at a time — on a <200MB box, parallel codegen units are
+# what OOMs the build, not the binary itself. lld uses substantially less memory than GNU ld
+# for the final link. A swapfile on the host is still required (see deploy notes) — this just
+# keeps peak RSS as low as the toolchain allows so the swap doesn't have to absorb as much.
+ENV CARGO_BUILD_JOBS=1
+ENV RUSTFLAGS="-C link-arg=-fuse-ld=lld"
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/app/target \
@@ -17,6 +23,15 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 
 # Stage 2: Build Vue frontend
 FROM node:24-alpine AS node-builder
+# Forces this stage to wait for rust-builder to finish before running npm ci/build below —
+# without it BuildKit runs both heavy build stages concurrently, doubling peak RAM on a
+# machine that barely fits one of them.
+WORKDIR /app/frontend
+COPY --from=rust-builder /t2t /tmp/.rust-build-complete
+# V8 sizes its default heap ceiling off detected physical RAM, which on a <200MB box is low
+# enough that the build hits a heap-OOM before ever touching the swap that's supposed to
+# cover the shortfall. Setting this explicitly overrides that auto-detection.
+ENV NODE_OPTIONS=--max-old-space-size=2048
 # Release/build metadata baked into the bundle at build time (see frontend/vite.config.ts).
 ARG SOURCE_COMMIT
 ARG GIT_BRANCH
@@ -29,7 +44,6 @@ ARG VITE_SENTRY_TRACES_SAMPLE_RATE
 ARG BUILD_BUGSINK_URL
 ARG BUILD_BUGSINK_AUTH_TOKEN
 ARG BUILD_BUGSINK_PROJECT_SLUG
-WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json* ./
 RUN --mount=type=cache,target=/root/.npm \
     npm ci --prefer-offline

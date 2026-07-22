@@ -1,0 +1,1 @@
+Background command "CARGO_BUILD_JOBS=1 cargo build --release -p t2t 2>&1 | tail -40" completed (exit code 0)

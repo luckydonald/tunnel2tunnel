@@ -459,3 +459,69 @@ You can try yourself:
 > </details>
 >
 
+❯ commit pleasee
+
+❯ optimize the build to run on a cheap VPS with < 200mb RAM
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. Does the 200MB budget cover Postgres too, or is Postgres separate/managed elsewhere?
+>>    - App only
+>>      ```text
+>>      Only crates/t2t + Dockerfile runtime stage + tokio/sqlx pool settings are in scope.
+>>      ```
+>> 2. Where does the Docker build run — on the cheap VPS itself, or elsewhere (CI/local) with the image just deployed to the VPS?
+>>    - Built on the VPS itself
+>>      ```text
+>>      If true, build-time memory becomes the binding constraint, not runtime memory.
+>>      ```
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **RAM scope** (1/2) <kbd>Single Select</kbd><br>
+>> Does the 200MB budget cover Postgres too, or is Postgres separate/managed elsewhere?
+> - [ ] 1\. App + Postgres, one VPS
+>   - _docker-compose runs both t2t and postgres:18 on the same box — total footprint (app + DB) must fit under 200MB. Needs Postgres config tuning (shared_buffers, max_connections, etc.) in addition to the Rust side._
+>   - ```
+>     docker-compose.yml currently runs:
+>       db: postgres:18  (default config assumes much more RAM)
+>       t2t: app container
+>     Both on one host → both need tuning.
+>     ```
+> - [ ] 2\. App only
+>   - _Postgres is external/managed (RDS, another host, etc.) — only the t2t binary + its container need to fit in 200MB._
+>   - ```text
+>     Only crates/t2t + Dockerfile runtime stage + tokio/sqlx pool settings are in scope.
+>     ```
+> - [ ] 3\. _Notes: Add notes on this design._
+>
+>> **Build location** (2/2) <kbd>Single Select</kbd><br>
+>> Where does the Docker build run — on the cheap VPS itself, or elsewhere (CI/local) with the image just deployed to the VPS?
+> - [ ] 1\. Built elsewhere, deployed to VPS
+>   - _CI or your local machine runs `docker build`/cargo build/npm build, then the VPS only ever pulls and runs the finished image. Build-time RAM (cargo/npm need much more than 200MB) is not a constraint._
+>   - ```
+>     e.g. GitHub Actions builds & pushes to a registry, VPS does `docker compose pull && up`.
+>     ```
+> - [ ] 2\. Built on the VPS itself
+>   - _`docker compose up --build` (or similar) runs directly on the 200MB VPS. This is a real constraint — cargo/npm builds typically need 1GB+ RAM and would likely OOM, so this path needs a workaround (e.g. swap, or building off-box)._
+>   - ```text
+>     If true, build-time memory becomes the binding constraint, not runtime memory.
+>     ```
+> - [ ] 3\. _Notes: Add notes on this design._
+>
+> </details>
+>
+
+❯ Task Notification:
+> - Task `bhlzvnqe3` <kbd>completed</kbd>
+> - Tool `toolu_01YKceTqVRhQA1Xj8fRXbUom`
+> - > Background command "CARGO_BUILD_JOBS=1 cargo build --release -p t2t 2>&1 | tail -40" completed (exit code 0)
+> - [Query (`108` chars, `108 B`)](output/agents/009.bhlzvnqe3/prompt.md)
+> - [Answer (`1666` chars, `1.63 KB`)](output/agents/009.bhlzvnqe3/result.md)
+> - [Raw log (`1666` chars, `1.63 KB`)](/private/tmp/claude-501/-Users-user-Documents-programming-Rust-tunnel2tunnel/195a7ada-d307-4623-a64b-ca7684db0786/tasks/bhlzvnqe3.output)
+
+❯ Check on the background cargo build (task bhlzvnqe3) validating the release profile and CARGO_BUILD_JOBS=1 changes. If finished, report results and wrap up (add CLAUDE.md gotcha note, final summary). If still running, check again.
+

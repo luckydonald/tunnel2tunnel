@@ -31,5 +31,11 @@ getrandom   = "0.4"
 ipnetwork   = "0.20"
 glob        = "0.3"
 regex       = "1"
-sentry      = "0.48.3"
+sentry      = { version = "0.48.3", default-features = false, features = ["backtrace", "contexts", "panic", "transport"] }
 tower       = "0.5"
+
+[profile.release]
+strip = true      # smaller binary, less to page in on a memory-constrained VPS
+opt-level = "s"   # this is an I/O-bound proxy, not CPU-bound; "s" also uses less peak RAM to compile than "3"
+lto = false       # explicitly off — fat/thin LTO's whole-program link step is the single biggest RAM spike in a
+                   # release build and would blow the build-time budget on a <200MB VPS; not worth the size gain
