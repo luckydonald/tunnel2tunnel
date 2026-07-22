@@ -704,3 +704,5 @@ Generally:
 
 ❯ For statistical reasons, we should also mark the final disconnect time of such a session. This also allows us to show a online/offline badge in the frontend next to server/clients.
 
+❯ add some more tests.
+
