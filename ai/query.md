@@ -708,3 +708,5 @@ Generally:
 
 ❯ The sidebar should be toggable with a burger menu button on mobile, as it's currently taking 80% of the screen of an iPhone 12 Mini, which leaves the content the other 20%, with is obviously not enough.
 
+❯ The admin connection log table should also show the disconnection date/time.
+

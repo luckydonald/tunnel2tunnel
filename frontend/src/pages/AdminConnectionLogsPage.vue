@@ -120,7 +120,8 @@ onMounted(search)
       <table v-if="logs.length" class="data-table">
         <thead>
           <tr>
-            <th>Time</th>
+            <th>Started</th>
+            <th>Ended</th>
             <th>Peer IP</th>
             <th>User</th>
             <th>Fingerprint</th>
@@ -134,6 +135,7 @@ onMounted(search)
         <tbody>
           <tr v-for="l in logs" :key="l.id">
             <td class="td-ts">{{ new Date(l.started_at).toLocaleString() }}</td>
+            <td class="td-ts">{{ l.ended_at ? new Date(l.ended_at).toLocaleString() : '—' }}</td>
             <td>{{ l.peer_ip ?? '—' }}</td>
             <td><code v-if="l.user_id" class="fp" :title="l.user_id">{{ l.user_id.slice(0, 8) }}…</code><span v-else>—</span></td>
             <td><code v-if="l.key_fingerprint" class="fp">{{ l.key_fingerprint }}</code><span v-else>—</span></td>
