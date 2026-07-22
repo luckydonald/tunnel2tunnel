@@ -1,10 +1,21 @@
 <script setup lang="ts">
-import { useRouter, RouterLink } from 'vue-router'
+import { ref, watch } from 'vue'
+import { useRouter, useRoute, RouterLink } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import ToastContainer from '@/components/ToastContainer.vue'
 
 const router = useRouter()
+const route = useRoute()
 const auth = useAuthStore()
+
+const sidebarOpen = ref(false)
+
+watch(
+  () => route.fullPath,
+  () => {
+    sidebarOpen.value = false
+  },
+)
 
 async function handleLogout(): Promise<void> {
   await auth.logout()
@@ -14,7 +25,19 @@ async function handleLogout(): Promise<void> {
 
 <template>
   <div class="shell">
-    <nav class="sidebar">
+    <button
+      class="burger-btn"
+      type="button"
+      :aria-expanded="sidebarOpen"
+      aria-label="Toggle navigation menu"
+      @click="sidebarOpen = !sidebarOpen"
+    >
+      <span />
+      <span />
+      <span />
+    </button>
+    <div v-if="sidebarOpen" class="sidebar-backdrop" @click="sidebarOpen = false" />
+    <nav class="sidebar" :class="{ 'sidebar-open': sidebarOpen }">
       <div class="sidebar-brand">t2t</div>
       <ul class="sidebar-nav">
         <li><RouterLink to="/dashboard">Dashboard</RouterLink></li>
@@ -136,5 +159,68 @@ async function handleLogout(): Promise<void> {
   flex: 1;
   padding: 2rem;
   overflow-y: auto;
+}
+
+.burger-btn {
+  display: none;
+  position: fixed;
+  top: 0.75rem;
+  left: 0.75rem;
+  z-index: 30;
+  width: 2.5rem;
+  height: 2.5rem;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  background: #1a1d27;
+  border: 1px solid #2d3248;
+  border-radius: 6px;
+  cursor: pointer;
+
+  span {
+    display: block;
+    width: 1.25rem;
+    height: 2px;
+    background: #e2e8f0;
+  }
+}
+
+.sidebar-backdrop {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .burger-btn {
+    display: flex;
+  }
+
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 80%;
+    max-width: 280px;
+    z-index: 25;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+  }
+
+  .sidebar-open {
+    transform: translateX(0);
+  }
+
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 20;
+  }
+
+  .content {
+    padding: 4rem 1rem 1rem;
+  }
 }
 </style>
