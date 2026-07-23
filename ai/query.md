@@ -793,3 +793,6 @@ Generally:
 
 ❯ Document your learnings
 
+❯ Conversation compacted <kbd>manual</kbd>:
+> - [Result (`32372` chars, `31.7 KB`)](output/compact/001.f1404cae-0a95-46ef-a454-7759beb5e72d/result.md)
+
