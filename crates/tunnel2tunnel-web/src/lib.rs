@@ -114,6 +114,8 @@ pub async fn start(config: WebConfig, pool: PgPool) -> anyhow::Result<()> {
             .post(routes::tarpit::create_ban_rule))
         .route("/api/admin/ban-rules/{id}",
             delete(routes::tarpit::delete_ban_rule))
+        .route("/api/admin/ban-rules/{id}/restore",
+            post(routes::tarpit::restore_ban_rule))
         .route("/api/admin/tarpit-settings",
             get(routes::tarpit::get_tarpit_settings)
             .put(routes::tarpit::update_tarpit_settings))
@@ -123,6 +125,8 @@ pub async fn start(config: WebConfig, pool: PgPool) -> anyhow::Result<()> {
         .route("/api/admin/tarpit-thresholds/{id}",
             put(routes::tarpit::update_tarpit_threshold)
             .delete(routes::tarpit::delete_tarpit_threshold))
+        .route("/api/admin/tarpit-thresholds/{id}/restore",
+            post(routes::tarpit::restore_tarpit_threshold))
         // server info (authenticated)
         .route("/api/server-info",
             get(routes::server_info::get_server_info))

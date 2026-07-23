@@ -517,7 +517,13 @@ mod tests {
             window_seconds: window_secs,
             enabled: true,
             action: action.to_string(),
-            ts: tunnel2tunnel_core::timestamps::Timestamps { created_at: now, updated_at: now },
+            ts: tunnel2tunnel_core::timestamps::TimestampsSoftDelete {
+                timestamps: tunnel2tunnel_core::timestamps::Timestamps {
+                    created_at: now,
+                    updated_at: now,
+                },
+                soft_delete: tunnel2tunnel_core::timestamps::SoftDelete { deleted_at: None },
+            },
         }
     }
 

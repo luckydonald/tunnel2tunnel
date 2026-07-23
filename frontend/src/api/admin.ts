@@ -58,6 +58,7 @@ export interface BanRule {
   action: TarpitAction
   created_at: string
   updated_at: string
+  deleted_at: string | null
 }
 
 export interface CreateBanRuleParams {
@@ -81,6 +82,7 @@ export interface TarpitThreshold {
   action: TarpitAction
   created_at: string
   updated_at: string
+  deleted_at: string | null
 }
 
 export interface TarpitThresholdParams {
@@ -197,6 +199,9 @@ export const adminApi = {
   deleteBanRule: (id: string) =>
     apiFetch<void>(`/api/admin/ban-rules/${id}`, { method: 'DELETE' }),
 
+  restoreBanRule: (id: string) =>
+    apiFetch<void>(`/api/admin/ban-rules/${id}/restore`, { method: 'POST' }),
+
   getTarpitSettings: () => apiFetch<TarpitSettings>('/api/admin/tarpit-settings'),
 
   updateTarpitSettings: (settings: TarpitSettings) =>
@@ -221,6 +226,9 @@ export const adminApi = {
 
   deleteTarpitThreshold: (id: string) =>
     apiFetch<void>(`/api/admin/tarpit-thresholds/${id}`, { method: 'DELETE' }),
+
+  restoreTarpitThreshold: (id: string) =>
+    apiFetch<void>(`/api/admin/tarpit-thresholds/${id}/restore`, { method: 'POST' }),
 
   sampleError: () => apiFetch<void>('/api/admin/sample-error'),
 }

@@ -3,7 +3,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::error::CoreError;
-use crate::timestamps::Timestamps;
+use crate::timestamps::TimestampsSoftDelete;
 
 #[derive(Debug, Clone, sqlx::FromRow, Serialize)]
 pub struct TarpitThreshold {
@@ -13,10 +13,13 @@ pub struct TarpitThreshold {
     pub enabled: bool,
     pub action: String,
     #[sqlx(flatten)]
-    pub ts: Timestamps,
+    #[serde(flatten)]
+    pub ts: TimestampsSoftDelete,
 }
 
 impl TarpitThreshold {
+    /// All rows, including soft-deleted ones — used by the admin CRUD listing so old
+    /// connection_logs references still resolve to a visible (if deleted) row.
     pub async fn list_all(pool: &PgPool) -> Result<Vec<Self>, CoreError> {
         sqlx::query_as::<_, TarpitThreshold>(
             "SELECT * FROM tarpit_thresholds ORDER BY window_seconds ASC",
@@ -26,10 +29,10 @@ impl TarpitThreshold {
         .map_err(CoreError::Sqlx)
     }
 
-    /// Enabled rows only — what the SSH-side tarpit engine actually enforces.
+    /// Enabled, non-deleted rows only — what the SSH-side tarpit engine actually enforces.
     pub async fn list_enabled(pool: &PgPool) -> Result<Vec<Self>, CoreError> {
         sqlx::query_as::<_, TarpitThreshold>(
-            "SELECT * FROM tarpit_thresholds WHERE enabled ORDER BY window_seconds ASC",
+            "SELECT * FROM tarpit_thresholds WHERE enabled AND deleted_at IS NULL ORDER BY window_seconds ASC",
         )
         .fetch_all(pool)
         .await
@@ -85,12 +88,25 @@ impl TarpitThreshold {
         .map_err(CoreError::Sqlx)
     }
 
-    pub async fn delete(pool: &PgPool, id: Uuid) -> Result<bool, CoreError> {
-        let r = sqlx::query("DELETE FROM tarpit_thresholds WHERE id = $1")
-            .bind(id)
-            .execute(pool)
-            .await
-            .map_err(CoreError::Sqlx)?;
+    pub async fn soft_delete(pool: &PgPool, id: Uuid) -> Result<bool, CoreError> {
+        let r = sqlx::query(
+            "UPDATE tarpit_thresholds SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL",
+        )
+        .bind(id)
+        .execute(pool)
+        .await
+        .map_err(CoreError::Sqlx)?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    pub async fn restore(pool: &PgPool, id: Uuid) -> Result<bool, CoreError> {
+        let r = sqlx::query(
+            "UPDATE tarpit_thresholds SET deleted_at = NULL WHERE id = $1 AND deleted_at IS NOT NULL",
+        )
+        .bind(id)
+        .execute(pool)
+        .await
+        .map_err(CoreError::Sqlx)?;
         Ok(r.rows_affected() > 0)
     }
 }

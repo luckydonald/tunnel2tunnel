@@ -66,9 +66,18 @@ async function handleDelete(id: string): Promise<void> {
   if (!confirm('Remove this ban rule?')) return
   try {
     await adminApi.deleteBanRule(id)
-    rules.value = rules.value.filter(r => r.id !== id)
+    await loadRules()
   } catch (e) {
     toast(e instanceof Error ? e.message : 'Failed to remove ban rule')
+  }
+}
+
+async function handleRestore(id: string): Promise<void> {
+  try {
+    await adminApi.restoreBanRule(id)
+    await loadRules()
+  } catch (e) {
+    toast(e instanceof Error ? e.message : 'Failed to restore ban rule')
   }
 }
 
@@ -159,9 +168,18 @@ async function handleDeleteThreshold(id: string): Promise<void> {
   if (!confirm('Remove this threshold rule?')) return
   try {
     await adminApi.deleteTarpitThreshold(id)
-    thresholds.value = thresholds.value.filter(t => t.id !== id)
+    await loadThresholds()
   } catch (e) {
     toast(e instanceof Error ? e.message : 'Failed to remove threshold rule')
+  }
+}
+
+async function handleRestoreThreshold(id: string): Promise<void> {
+  try {
+    await adminApi.restoreTarpitThreshold(id)
+    await loadThresholds()
+  } catch (e) {
+    toast(e instanceof Error ? e.message : 'Failed to restore threshold rule')
   }
 }
 
@@ -234,18 +252,22 @@ onMounted(() => {
           </tr>
         </thead>
         <tbody>
-          <tr v-for="t in thresholds" :key="t.id" :id="`threshold-${t.id}`">
+          <tr v-for="t in thresholds" :key="t.id" :id="`threshold-${t.id}`" :class="{ 'row-deleted': t.deleted_at }">
             <td>{{ t.fail_count }}</td>
             <td>{{ formatWindow(t.window_seconds) }}</td>
             <td>
-              <select v-model="t.action" class="select-sm" @change="handleUpdateThreshold(t)">
+              <select v-model="t.action" class="select-sm" :disabled="!!t.deleted_at" @change="handleUpdateThreshold(t)">
                 <option v-for="opt in tarpitActionOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
               </select>
             </td>
             <td>
-              <input type="checkbox" v-model="t.enabled" @change="handleUpdateThreshold(t)" />
+              <input type="checkbox" v-model="t.enabled" :disabled="!!t.deleted_at" @change="handleUpdateThreshold(t)" />
             </td>
-            <td><button class="btn-del-sm" @click="handleDeleteThreshold(t.id)">×</button></td>
+            <td>
+              <span v-if="t.deleted_at" class="deleted-tag">Deleted</span>
+              <button v-if="t.deleted_at" class="btn-secondary btn-restore" @click="handleRestoreThreshold(t.id)">Restore</button>
+              <button v-else class="btn-del-sm" @click="handleDeleteThreshold(t.id)">×</button>
+            </td>
           </tr>
         </tbody>
       </table>
@@ -291,7 +313,7 @@ onMounted(() => {
           </tr>
         </thead>
         <tbody>
-          <tr v-for="r in rules" :key="r.id" :id="`rule-${r.id}`" :class="{ 'row-expired': isExpired(r) }">
+          <tr v-for="r in rules" :key="r.id" :id="`rule-${r.id}`" :class="{ 'row-expired': isExpired(r), 'row-deleted': r.deleted_at }">
             <td>{{ banScopeTypeLabel[r.scope_type] }}</td>
             <td><code class="fp">{{ r.peer_ip ?? r.user_id }}</code></td>
             <td>{{ tarpitActionLabel[r.action] }}</td>
@@ -300,7 +322,11 @@ onMounted(() => {
               {{ r.active_until ? new Date(r.active_until).toLocaleString() : 'Indefinite' }}
               <span v-if="isExpired(r)" class="expired-tag">(expired)</span>
             </td>
-            <td><button class="btn-del-sm" @click="handleDelete(r.id)">×</button></td>
+            <td>
+              <span v-if="r.deleted_at" class="deleted-tag">Deleted</span>
+              <button v-if="r.deleted_at" class="btn-secondary btn-restore" @click="handleRestore(r.id)">Restore</button>
+              <button v-else class="btn-del-sm" @click="handleDelete(r.id)">×</button>
+            </td>
           </tr>
         </tbody>
       </table>
@@ -355,7 +381,13 @@ onMounted(() => {
 }
 
 .row-expired { opacity: 0.55; }
+.row-deleted { opacity: 0.55; }
 .expired-tag { color: #64748b; }
+.deleted-tag {
+  color: #f87171; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em;
+  margin-right: 0.5rem;
+}
+.btn-restore { padding: .125rem .5rem; font-size: .8125rem; }
 .td-desc { color: #64748b; }
 .td-ts { font-size: 0.8125rem; color: #94a3b8; white-space: nowrap; }
 

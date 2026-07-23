@@ -1,0 +1,15 @@
+Research-only, do not edit anything. I'm in plan mode designing a plan to add soft-delete to `tarpit_thresholds` and `ban_rules` tables, modeled as a reusable "mixin" like the existing `TimestampsSoftDelete`/`SoftDelete` pattern used by User/Entity/SshKey.
+
+Read and report back (concise, code snippets where useful):
+
+1. `crates/tunnel2tunnel-core/src/models/` — find the `Timestamps`, `TimestampsSoftDelete`, `SoftDelete` struct definitions (likely in a shared module like `timestamps.rs` or similar). Show exact field names/types and any derive/sqlx attributes.
+2. Show one full example of a model using `TimestampsSoftDelete` end-to-end (e.g. `entity.rs` or `ssh_key.rs`): the struct, the `ts` field, its `create`, a `soft_delete`/`delete` function (does it set `deleted_at` via UPDATE, or is there a trigger?), and any `list_active`/`list_all` query that filters `deleted_at IS NULL`.
+3. Read `crates/tunnel2tunnel-core/src/models/tarpit_threshold.rs` in full — current struct, `ts: Timestamps` field, `list_all`, `list_enabled`, `create`, `update`, `delete` signatures and bodies (SQL included).
+4. Read `crates/tunnel2tunnel-core/src/models/ban_rule.rs` in full — same detail level.
+5. Check `migrations/` directory listing and read the most recent migration numbers (currently believed to end around `012_connection_log_tarpit_reference.sql` — confirm the actual latest number by listing the directory) so I know what the next migration number should be.
+6. Check whether `tarpit_thresholds` or `ban_rules` currently have any hard `DELETE FROM` call sites elsewhere in the codebase (grep `TarpitThreshold::delete` and `BanRule::delete` across `crates/`), listing every call site file:line — these will need to change to soft-delete calls.
+7. Check `crates/tunnel2tunnel-web/src/routes/tarpit.rs` for the delete-endpoint handlers for both — what HTTP verb/route, what they currently call.
+8. Check frontend `frontend/src/pages/AdminBanRulesPage.vue` and `frontend/src/api/admin.ts` for how delete is triggered/called from the UI (function names, API calls) — just enough to know what would need to change to reflect a soft-deleted (vs hard-removed) row in the UI list.
+9. Check `crates/tunnel2tunnel-ssh/src/tarpit/mod.rs` for `refresh_once`, `ThresholdConfig`, and how `list_enabled`/`list_active`-style queries are called to build `rules`/`ban_rules` — confirm whether soft-deleted rows would naturally already be excluded if the query stays `WHERE deleted_at IS NULL AND enabled = true` (or similar), and whether `resolve_outcome`'s existing "rule not found in the current list → lenient fallback" path would still work unchanged for soft-deleted rows referenced by old connection_logs rows.
+
+Report all of this back clearly with file:line references and relevant code snippets. Do not modify any files. Keep the report focused and factual — under 500 lines.

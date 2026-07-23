@@ -85,6 +85,7 @@ pub struct BanRuleResponse {
     pub action: String,
     pub created_at: String,
     pub updated_at: String,
+    pub deleted_at: Option<String>,
 }
 
 impl From<BanRule> for BanRuleResponse {
@@ -99,8 +100,13 @@ impl From<BanRule> for BanRuleResponse {
             active_until: r.active_until.map(|t| t.format(&Rfc3339).unwrap_or_default()),
             created_by: r.created_by,
             action: r.action,
-            created_at: r.ts.created_at.format(&Rfc3339).unwrap_or_default(),
-            updated_at: r.ts.updated_at.format(&Rfc3339).unwrap_or_default(),
+            created_at: r.ts.timestamps.created_at.format(&Rfc3339).unwrap_or_default(),
+            updated_at: r.ts.timestamps.updated_at.format(&Rfc3339).unwrap_or_default(),
+            deleted_at: r
+                .ts
+                .soft_delete
+                .deleted_at
+                .map(|t| t.format(&Rfc3339).unwrap_or_default()),
         }
     }
 }
@@ -173,7 +179,19 @@ pub async fn delete_ban_rule(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, WebError> {
-    if BanRule::delete(&state.db, id).await.map_err(WebError::Core)? {
+    if BanRule::soft_delete(&state.db, id).await.map_err(WebError::Core)? {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(WebError::NotFound)
+    }
+}
+
+pub async fn restore_ban_rule(
+    AdminUser(_admin): AdminUser,
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, WebError> {
+    if BanRule::restore(&state.db, id).await.map_err(WebError::Core)? {
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(WebError::NotFound)
@@ -227,6 +245,7 @@ pub struct TarpitThresholdResponse {
     pub action: String,
     pub created_at: String,
     pub updated_at: String,
+    pub deleted_at: Option<String>,
 }
 
 impl From<TarpitThreshold> for TarpitThresholdResponse {
@@ -238,8 +257,13 @@ impl From<TarpitThreshold> for TarpitThresholdResponse {
             window_seconds: t.window_seconds,
             enabled: t.enabled,
             action: t.action,
-            created_at: t.ts.created_at.format(&Rfc3339).unwrap_or_default(),
-            updated_at: t.ts.updated_at.format(&Rfc3339).unwrap_or_default(),
+            created_at: t.ts.timestamps.created_at.format(&Rfc3339).unwrap_or_default(),
+            updated_at: t.ts.timestamps.updated_at.format(&Rfc3339).unwrap_or_default(),
+            deleted_at: t
+                .ts
+                .soft_delete
+                .deleted_at
+                .map(|t| t.format(&Rfc3339).unwrap_or_default()),
         }
     }
 }
@@ -327,7 +351,19 @@ pub async fn delete_tarpit_threshold(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, WebError> {
-    if TarpitThreshold::delete(&state.db, id).await.map_err(WebError::Core)? {
+    if TarpitThreshold::soft_delete(&state.db, id).await.map_err(WebError::Core)? {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(WebError::NotFound)
+    }
+}
+
+pub async fn restore_tarpit_threshold(
+    AdminUser(_admin): AdminUser,
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, WebError> {
+    if TarpitThreshold::restore(&state.db, id).await.map_err(WebError::Core)? {
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(WebError::NotFound)

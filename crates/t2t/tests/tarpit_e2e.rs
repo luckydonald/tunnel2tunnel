@@ -376,5 +376,5 @@ async fn ban_action_threshold_rejects_instantly_without_tarpit() {
         Err(_) => panic!("expected the connection to close quickly, but read timed out"),
     }
 
-    TarpitThreshold::delete(&pool, threshold.id).await.ok();
+    TarpitThreshold::soft_delete(&pool, threshold.id).await.ok();
 }
