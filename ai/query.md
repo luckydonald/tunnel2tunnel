@@ -789,3 +789,5 @@ Generally:
 
 ❯ Simpify the `MultiButton` component as basically a wrapper applying `:not(:first-child)` and `:not(:last-child)` sylings setting the borders and spaces on the affected sides to 0.
 
+❯ In the frontend table, the result and decision could be displayed as one of OK, Fail, Trap, Ban, to make that easier to see.
+

@@ -59,6 +59,20 @@ function prevPage(): void {
   search()
 }
 
+function statusLabel(l: ConnLog): string {
+  if (l.success) return 'OK'
+  if (l.tarpit_action === 'ban') return 'Ban'
+  if (l.tarpit_action === 'trap') return 'Trap'
+  return 'Fail'
+}
+
+function statusClass(l: ConnLog): string {
+  if (l.success) return 'ok'
+  if (l.tarpit_action === 'ban') return 'ban'
+  if (l.tarpit_action === 'trap') return 'trap'
+  return 'fail'
+}
+
 // Quick trap-or-ban form, opened from a log row
 const banningLog = ref<ConnLog | null>(null)
 const banningAction = ref<TarpitAction>('ban')
@@ -135,10 +149,9 @@ onMounted(search)
             <th>User</th>
             <th>Fingerprint</th>
             <th>Password</th>
-            <th>Result</th>
+            <th>Status</th>
             <th>Reason</th>
             <th>Tarpit</th>
-            <th>Decision</th>
             <th></th>
           </tr>
         </thead>
@@ -156,14 +169,7 @@ onMounted(search)
             <td><code v-if="l.key_fingerprint" class="fp">{{ l.key_fingerprint }}</code><span v-else>—</span></td>
             <td class="td-desc">{{ l.attempted_password ?? '—' }}</td>
             <td>
-              <span :class="['badge-result', l.success ? 'ok' : 'fail']">{{ l.success ? 'ok' : 'fail' }}</span>
-            </td>
-            <td class="td-desc">
-              {{ (l.fail_reason && failReasonLabel[l.fail_reason]) ?? l.fail_reason ?? l.success_reason ?? '—' }}
-            </td>
-            <td class="td-desc">{{ l.tarpit_method ? tarpitMethodLabel[l.tarpit_method] : '—' }}</td>
-            <td class="td-desc">
-              <span v-if="l.tarpit_action">{{ tarpitActionLabel[l.tarpit_action] }}</span>
+              <span :class="['badge-result', statusClass(l)]">{{ statusLabel(l) }}</span>
               <RouterLink
                 v-if="l.tarpit_threshold_id"
                 :to="{ path: '/admin/ban-rules', hash: `#threshold-${l.tarpit_threshold_id}` }"
@@ -172,8 +178,11 @@ onMounted(search)
                 v-else-if="l.banned_by_ban_rule_id"
                 :to="{ path: '/admin/ban-rules', hash: `#rule-${l.banned_by_ban_rule_id}` }"
               >(admin)</RouterLink>
-              <span v-if="!l.tarpit_action">—</span>
             </td>
+            <td class="td-desc">
+              {{ (l.fail_reason && failReasonLabel[l.fail_reason]) ?? l.fail_reason ?? l.success_reason ?? '—' }}
+            </td>
+            <td class="td-desc">{{ l.tarpit_method ? tarpitMethodLabel[l.tarpit_method] : '—' }}</td>
             <td>
               <MultiButton v-if="!l.success">
                 <button class="btn-secondary btn-ban" @click="openBanForm(l, 'trap')">Trap</button>
@@ -254,6 +263,8 @@ onMounted(search)
   font-size: 0.75rem; font-weight: 600; text-transform: uppercase;
   &.ok   { background: rgba(52,211,153,.15); color: #6ee7b7; }
   &.fail { background: rgba(239,68,68,.15);  color: #fca5a5; }
+  &.trap { background: rgba(251,191,36,.15); color: #fcd34d; }
+  &.ban  { background: rgba(248,113,113,.2); color: #f87171; }
 }
 
 .btn-ban {
