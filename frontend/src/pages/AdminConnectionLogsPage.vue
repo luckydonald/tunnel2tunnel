@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { RouterLink } from 'vue-router'
 import AppShell from '@/components/AppShell.vue'
 import { adminApi, type ConnLog, type CreateBanRuleParams } from '@/api/admin'
 import { failReasonLabel, tarpitMethodLabel, tarpitMethodOptions } from '@/labels'
@@ -137,7 +138,12 @@ onMounted(search)
             <td class="td-ts">{{ new Date(l.started_at).toLocaleString() }}</td>
             <td class="td-ts">{{ l.ended_at ? new Date(l.ended_at).toLocaleString() : '—' }}</td>
             <td>{{ l.peer_ip ?? '—' }}</td>
-            <td><code v-if="l.user_id" class="fp" :title="l.user_id">{{ l.user_id.slice(0, 8) }}…</code><span v-else>—</span></td>
+            <td>
+              <RouterLink v-if="l.user_id" :to="{ path: '/admin/users', hash: `#user-${l.user_id}` }" :title="l.user_id">
+                {{ l.attempted_username ?? l.user_id.slice(0, 8) + '…' }}
+              </RouterLink>
+              <span v-else>{{ l.attempted_username ?? '—' }}</span>
+            </td>
             <td><code v-if="l.key_fingerprint" class="fp">{{ l.key_fingerprint }}</code><span v-else>—</span></td>
             <td class="td-desc">{{ l.attempted_password ?? '—' }}</td>
             <td>

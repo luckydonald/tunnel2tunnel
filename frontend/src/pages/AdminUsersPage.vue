@@ -113,7 +113,7 @@ function isSelf(u: AdminUser): boolean {
           </tr>
         </thead>
         <tbody>
-          <tr v-for="u in users" :key="u.id" :class="{ 'row-self': isSelf(u) }">
+          <tr v-for="u in users" :key="u.id" :id="`user-${u.id}`" :class="{ 'row-self': isSelf(u) }">
             <td>
               {{ u.username }}
               <span v-if="isSelf(u)" class="badge-you">you</span>

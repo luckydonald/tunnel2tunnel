@@ -17,6 +17,7 @@ export interface ConnLog {
   peer_ip: string | null
   key_fingerprint: string | null
   attempted_password: string | null
+  attempted_username: string | null
   fail_reason: string | null
   success_reason: string | null
   success: boolean

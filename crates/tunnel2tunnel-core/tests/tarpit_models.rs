@@ -79,7 +79,7 @@ async fn connection_log_success_column_matches_reason_set() {
     let peer_ip = format!("203.0.113.{}", rand_octet());
 
     let fail_row = ConnectionLog::create(
-        &pool, None, None, Some(&peer_ip), None, None,
+        &pool, None, None, Some(&peer_ip), None, None, None,
         Some("unknown key"), None, None, OffsetDateTime::now_utc(),
     )
     .await
@@ -89,7 +89,7 @@ async fn connection_log_success_column_matches_reason_set() {
     assert_eq!(fail_row.success_reason, None);
 
     let success_row = ConnectionLog::create(
-        &pool, None, None, Some(&peer_ip), None, None,
+        &pool, None, None, Some(&peer_ip), None, None, None,
         None, Some("correct login"), None, OffsetDateTime::now_utc(),
     )
     .await
@@ -106,11 +106,11 @@ async fn count_recent_failures_respects_window() {
     let now = OffsetDateTime::now_utc();
 
     // Two failures inside the window, one well outside it.
-    ConnectionLog::create(&pool, None, None, Some(&peer_ip), None, None, Some("unknown key"), None, None, now)
+    ConnectionLog::create(&pool, None, None, Some(&peer_ip), None, None, None, Some("unknown key"), None, None, now)
         .await.unwrap();
-    ConnectionLog::create(&pool, None, None, Some(&peer_ip), None, None, Some("unknown key"), None, None, now)
+    ConnectionLog::create(&pool, None, None, Some(&peer_ip), None, None, None, Some("unknown key"), None, None, now)
         .await.unwrap();
-    ConnectionLog::create(&pool, None, None, Some(&peer_ip), None, None, Some("unknown key"), None, None, now - TimeDuration::hours(2))
+    ConnectionLog::create(&pool, None, None, Some(&peer_ip), None, None, None, Some("unknown key"), None, None, now - TimeDuration::hours(2))
         .await.unwrap();
 
     let since = now - TimeDuration::minutes(10);
@@ -126,9 +126,9 @@ async fn search_filters_by_success_and_peer_ip() {
     let peer_ip = format!("203.0.113.{}", rand_octet());
     let now = OffsetDateTime::now_utc();
 
-    ConnectionLog::create(&pool, None, None, Some(&peer_ip), None, None, Some("unknown key"), None, None, now)
+    ConnectionLog::create(&pool, None, None, Some(&peer_ip), None, None, None, Some("unknown key"), None, None, now)
         .await.unwrap();
-    ConnectionLog::create(&pool, None, None, Some(&peer_ip), None, None, None, Some("correct login"), None, now)
+    ConnectionLog::create(&pool, None, None, Some(&peer_ip), None, None, None, None, Some("correct login"), None, now)
         .await.unwrap();
 
     let (rows, total) = ConnectionLog::search(&pool, Some(&peer_ip), None, Some(false), None, None, 1, 50)
@@ -146,10 +146,10 @@ async fn search_paginates_and_filters_by_tarpit_method() {
     let now = OffsetDateTime::now_utc();
 
     for _ in 0..5 {
-        ConnectionLog::create(&pool, None, None, Some(&peer_ip), None, None, Some("unknown key"), None, Some("slow_auth"), now)
+        ConnectionLog::create(&pool, None, None, Some(&peer_ip), None, None, None, Some("unknown key"), None, Some("slow_auth"), now)
             .await.unwrap();
     }
-    ConnectionLog::create(&pool, None, None, Some(&peer_ip), None, None, Some("unknown key"), None, None, now)
+    ConnectionLog::create(&pool, None, None, Some(&peer_ip), None, None, None, Some("unknown key"), None, None, now)
         .await.unwrap();
 
     // page 1 of 2 with page_size=2 over the 5 slow_auth rows
@@ -181,12 +181,12 @@ async fn entity_statuses_batches_multiple_entities() {
 
     ConnectionLog::create(
         &pool, Some(online_entity.id), Some(owner.id), Some("198.51.100.2"), None,
-        None, None, Some("correct login"), None, OffsetDateTime::now_utc(),
+        None, None, None, Some("correct login"), None, OffsetDateTime::now_utc(),
     ).await.expect("insert open session");
 
     let closed = ConnectionLog::create(
         &pool, Some(offline_entity.id), Some(owner.id), Some("198.51.100.3"), None,
-        None, None, Some("correct login"), None, OffsetDateTime::now_utc(),
+        None, None, None, Some("correct login"), None, OffsetDateTime::now_utc(),
     ).await.expect("insert closed session");
     ConnectionLog::set_ended(&pool, closed.id).await.expect("set_ended");
 
@@ -216,7 +216,7 @@ async fn entity_status_reflects_open_and_closed_sessions() {
 
     let log = ConnectionLog::create(
         &pool, Some(entity.id), Some(owner.id), Some("198.51.100.1"), Some("SHA256:abc"),
-        None, None, Some("correct login"), None, OffsetDateTime::now_utc(),
+        None, None, None, Some("correct login"), None, OffsetDateTime::now_utc(),
     )
     .await
     .expect("insert success row");

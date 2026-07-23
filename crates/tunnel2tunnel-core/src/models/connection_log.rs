@@ -16,6 +16,7 @@ pub struct ConnectionLog {
     pub peer_ip: Option<String>,
     pub key_fingerprint: Option<String>,
     pub attempted_password: Option<String>,
+    pub attempted_username: Option<String>,
     pub fail_reason: Option<String>,
     pub success_reason: Option<String>,
     pub success: bool,
@@ -37,6 +38,7 @@ impl ConnectionLog {
         peer_ip: Option<&str>,
         key_fingerprint: Option<&str>,
         attempted_password: Option<&str>,
+        attempted_username: Option<&str>,
         fail_reason: Option<&str>,
         success_reason: Option<&str>,
         tarpit_method: Option<&str>,
@@ -46,8 +48,8 @@ impl ConnectionLog {
         sqlx::query_as::<_, ConnectionLog>(
             "INSERT INTO connection_logs \
                (id, entity_id, user_id, peer_ip, key_fingerprint, attempted_password, \
-                fail_reason, success_reason, tarpit_method, started_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) \
+                attempted_username, fail_reason, success_reason, tarpit_method, started_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
              RETURNING *",
         )
         .bind(id)
@@ -56,6 +58,7 @@ impl ConnectionLog {
         .bind(peer_ip)
         .bind(key_fingerprint)
         .bind(attempted_password)
+        .bind(attempted_username)
         .bind(fail_reason)
         .bind(success_reason)
         .bind(tarpit_method)

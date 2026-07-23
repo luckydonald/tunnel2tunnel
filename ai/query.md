@@ -749,3 +749,7 @@ Generally:
 
 ❯ Let's acutally limit this implemetation plan to just the refactoring of the rules.
 
+❯ The `user` column in the admin connection log UI shall show the username attempted in the ssh connection, and make it a link if it is actually resolving to a registered user - instead of only showing the uuid7 of the user and nothing if it doesn't match.
+
+❯ Also fold `todo.md` (and this query update) into that commit.
+
