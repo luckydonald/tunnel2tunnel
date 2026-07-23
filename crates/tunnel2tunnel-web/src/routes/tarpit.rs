@@ -82,6 +82,7 @@ pub struct BanRuleResponse {
     pub reason: Option<String>,
     pub active_until: Option<String>,
     pub created_by: Uuid,
+    pub action: String,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -97,6 +98,7 @@ impl From<BanRule> for BanRuleResponse {
             reason: r.reason,
             active_until: r.active_until.map(|t| t.format(&Rfc3339).unwrap_or_default()),
             created_by: r.created_by,
+            action: r.action,
             created_at: r.ts.created_at.format(&Rfc3339).unwrap_or_default(),
             updated_at: r.ts.updated_at.format(&Rfc3339).unwrap_or_default(),
         }
@@ -119,6 +121,7 @@ pub struct CreateBanRuleBody {
     pub reason: Option<String>,
     #[serde(default, with = "time::serde::rfc3339::option")]
     pub active_until: Option<OffsetDateTime>,
+    pub action: String,
 }
 
 /// Pure validation for a create-ban-rule request — extracted so it's
@@ -127,6 +130,9 @@ fn validate_create_ban_rule(body: &CreateBanRuleBody) -> Result<(), WebError> {
     let valid_types = ["peer_ip", "user"];
     if !valid_types.contains(&body.scope_type.as_str()) {
         return Err(WebError::BadRequest("invalid scope_type".into()));
+    }
+    if !["trap", "ban"].contains(&body.action.as_str()) {
+        return Err(WebError::BadRequest("invalid action".into()));
     }
     match body.scope_type.as_str() {
         "peer_ip" if body.peer_ip.is_none() => {
@@ -154,6 +160,7 @@ pub async fn create_ban_rule(
         body.reason.as_deref(),
         body.active_until,
         admin.id,
+        &body.action,
     )
     .await
     .map_err(WebError::Core)?;
@@ -217,6 +224,7 @@ pub struct TarpitThresholdResponse {
     pub fail_count: i32,
     pub window_seconds: i64,
     pub enabled: bool,
+    pub action: String,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -229,6 +237,7 @@ impl From<TarpitThreshold> for TarpitThresholdResponse {
             fail_count: t.fail_count,
             window_seconds: t.window_seconds,
             enabled: t.enabled,
+            action: t.action,
             created_at: t.ts.created_at.format(&Rfc3339).unwrap_or_default(),
             updated_at: t.ts.updated_at.format(&Rfc3339).unwrap_or_default(),
         }
@@ -241,10 +250,16 @@ pub struct TarpitThresholdBody {
     pub window_seconds: i64,
     #[serde(default = "default_true")]
     pub enabled: bool,
+    #[serde(default = "default_trap")]
+    pub action: String,
 }
 
 fn default_true() -> bool {
     true
+}
+
+fn default_trap() -> String {
+    "trap".to_string()
 }
 
 fn validate_threshold_body(body: &TarpitThresholdBody) -> Result<(), WebError> {
@@ -253,6 +268,9 @@ fn validate_threshold_body(body: &TarpitThresholdBody) -> Result<(), WebError> {
     }
     if body.window_seconds <= 0 {
         return Err(WebError::BadRequest("window_seconds must be positive".into()));
+    }
+    if !["trap", "ban"].contains(&body.action.as_str()) {
+        return Err(WebError::BadRequest("invalid action".into()));
     }
     Ok(())
 }
@@ -271,9 +289,15 @@ pub async fn create_tarpit_threshold(
     Json(body): Json<TarpitThresholdBody>,
 ) -> Result<(StatusCode, Json<TarpitThresholdResponse>), WebError> {
     validate_threshold_body(&body)?;
-    let rule = TarpitThreshold::create(&state.db, body.fail_count, body.window_seconds, body.enabled)
-        .await
-        .map_err(WebError::Core)?;
+    let rule = TarpitThreshold::create(
+        &state.db,
+        body.fail_count,
+        body.window_seconds,
+        body.enabled,
+        &body.action,
+    )
+    .await
+    .map_err(WebError::Core)?;
     Ok((StatusCode::CREATED, Json(TarpitThresholdResponse::from(rule))))
 }
 
@@ -284,10 +308,17 @@ pub async fn update_tarpit_threshold(
     Json(body): Json<TarpitThresholdBody>,
 ) -> Result<Json<TarpitThresholdResponse>, WebError> {
     validate_threshold_body(&body)?;
-    let rule = TarpitThreshold::update(&state.db, id, body.fail_count, body.window_seconds, body.enabled)
-        .await
-        .map_err(WebError::Core)?
-        .ok_or(WebError::NotFound)?;
+    let rule = TarpitThreshold::update(
+        &state.db,
+        id,
+        body.fail_count,
+        body.window_seconds,
+        body.enabled,
+        &body.action,
+    )
+    .await
+    .map_err(WebError::Core)?
+    .ok_or(WebError::NotFound)?;
     Ok(Json(TarpitThresholdResponse::from(rule)))
 }
 
@@ -314,6 +345,7 @@ mod tests {
             user_id,
             reason: None,
             active_until: None,
+            action: "ban".to_string(),
         }
     }
 
@@ -333,6 +365,24 @@ mod tests {
     fn user_scope_requires_user_id() {
         assert!(validate_create_ban_rule(&body("user", None, None)).is_err());
         assert!(validate_create_ban_rule(&body("user", None, Some(Uuid::now_v7()))).is_ok());
+    }
+
+    #[test]
+    fn rejects_unknown_ban_rule_action() {
+        let mut b = body("peer_ip", Some("203.0.113.1"), None);
+        b.action = "smite".to_string();
+        assert!(validate_create_ban_rule(&b).is_err());
+    }
+
+    #[test]
+    fn rejects_unknown_threshold_action() {
+        let body = TarpitThresholdBody {
+            fail_count: 5,
+            window_seconds: 60,
+            enabled: true,
+            action: "smite".to_string(),
+        };
+        assert!(validate_threshold_body(&body).is_err());
     }
 
     #[test]

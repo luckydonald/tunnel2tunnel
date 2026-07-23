@@ -1,5 +1,5 @@
 import type { AccessRule, Friendship } from '@/api/friends'
-import type { BanScopeType, TarpitMethod } from '@/api/admin'
+import type { BanScopeType, TarpitAction, TarpitMethod } from '@/api/admin'
 
 export const subjectTypeLabel: Record<AccessRule['subject_type'], string> = {
   public_lite:        'Anyone (no account required)',
@@ -51,6 +51,15 @@ export const banScopeTypeLabel: Record<BanScopeType, string> = {
 
 export const banScopeTypeOptions = (
   Object.entries(banScopeTypeLabel) as [BanScopeType, string][]
+).map(([value, label]) => ({ value, label }))
+
+export const tarpitActionLabel: Record<TarpitAction, string> = {
+  trap: 'Trap',
+  ban:  'Ban',
+}
+
+export const tarpitActionOptions = (
+  Object.entries(tarpitActionLabel) as [TarpitAction, string][]
 ).map(([value, label]) => ({ value, label }))
 
 export const failReasonLabel: Record<string, string> = {

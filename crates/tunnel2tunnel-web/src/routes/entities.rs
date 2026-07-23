@@ -577,6 +577,9 @@ pub struct ConnLogResponse {
     pub success_reason: Option<String>,
     pub success: bool,
     pub tarpit_method: Option<String>,
+    pub tarpit_action: Option<String>,
+    pub tarpit_threshold_id: Option<Uuid>,
+    pub banned_by_ban_rule_id: Option<Uuid>,
     pub started_at: String,
     pub ended_at: Option<String>,
 }
@@ -595,6 +598,9 @@ impl From<tunnel2tunnel_core::models::connection_log::ConnectionLog> for ConnLog
             success_reason: l.success_reason,
             success: l.success,
             tarpit_method: l.tarpit_method,
+            tarpit_action: l.tarpit_action,
+            tarpit_threshold_id: l.tarpit_threshold_id,
+            banned_by_ban_rule_id: l.banned_by_ban_rule_id,
             started_at: l.started_at.format(&Rfc3339).unwrap_or_default(),
             ended_at: l.ended_at.map(|t| t.format(&Rfc3339).unwrap_or_default()),
         }

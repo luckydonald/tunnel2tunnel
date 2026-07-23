@@ -27,7 +27,10 @@ use uuid::Uuid;
 
 use tunnel2tunnel_core::{
     db,
-    models::{connection_log::ConnectionLog, entity::Entity, ssh_key::SshKey, user::User},
+    models::{
+        connection_log::ConnectionLog, entity::Entity, ssh_key::SshKey,
+        tarpit_threshold::TarpitThreshold, user::User,
+    },
     pubkey::parse_authorized_keys_line,
 };
 use tunnel2tunnel_ssh::{start as start_ssh, SshConfig};
@@ -330,4 +333,48 @@ async fn repeated_bans_eventually_engage_fake_shell() {
         String::from_utf8_lossy(&data).contains('$'),
         "expected the fake shell's bogus '$ ' prompt, got: {data:?}"
     );
+}
+
+/// A threshold rule configured with `action = "ban"` must reject instantly —
+/// no slow-auth delay, no fake-shell `Auth::Accept`, not even the real
+/// SSH-2.0 identification line — once its own (tighter) count/window trips,
+/// independent of the default trap-action rule seeded by earlier migrations.
+#[tokio::test]
+async fn ban_action_threshold_rejects_instantly_without_tarpit() {
+    let _guard = TEST_GUARD.lock().await;
+    let pool = test_pool().await;
+    let threshold = TarpitThreshold::create(&pool, 2, 600, true, "ban")
+        .await
+        .expect("create ban-action threshold");
+
+    // Inserted before spawn_server, so the server's synchronous first
+    // refresh (awaited before it starts accepting) already sees this rule.
+    let port = spawn_server(pool.clone()).await;
+
+    drive_failures(port, 2).await;
+    sleep(Duration::from_millis(200)).await;
+
+    let started = Instant::now();
+    let mut socket = TcpStream::connect(("127.0.0.1", port))
+        .await
+        .expect("connect to hard-banned port");
+    let mut buf = vec![0u8; 4096];
+    let result = tokio::time::timeout(Duration::from_secs(2), socket.read(&mut buf)).await;
+    let elapsed = started.elapsed();
+
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "hard ban must close the connection instantly, not delay it, took {elapsed:?}"
+    );
+    match result {
+        Ok(Ok(0)) => {}  // connection closed with no data — expected
+        Ok(Err(_)) => {} // read error from an abrupt close is also acceptable
+        Ok(Ok(n)) => panic!(
+            "hard ban must never send any data (no tarpit method engages), got {n} bytes: {:?}",
+            &buf[..n]
+        ),
+        Err(_) => panic!("expected the connection to close quickly, but read timed out"),
+    }
+
+    TarpitThreshold::delete(&pool, threshold.id).await.ok();
 }

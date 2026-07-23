@@ -2,8 +2,9 @@
 import { ref, onMounted } from 'vue'
 import { RouterLink } from 'vue-router'
 import AppShell from '@/components/AppShell.vue'
-import { adminApi, type ConnLog, type CreateBanRuleParams } from '@/api/admin'
-import { failReasonLabel, tarpitMethodLabel, tarpitMethodOptions } from '@/labels'
+import MultiButton from '@/components/MultiButton.vue'
+import { adminApi, type ConnLog, type CreateBanRuleParams, type TarpitAction } from '@/api/admin'
+import { failReasonLabel, tarpitActionLabel, tarpitMethodLabel, tarpitMethodOptions } from '@/labels'
 import { useToast } from '@/composables/useToast'
 
 const { show: toast } = useToast()
@@ -58,14 +59,16 @@ function prevPage(): void {
   search()
 }
 
-// Quick-ban form, opened from a log row
+// Quick trap-or-ban form, opened from a log row
 const banningLog = ref<ConnLog | null>(null)
+const banningAction = ref<TarpitAction>('ban')
 const banReason = ref('')
 const banActiveUntil = ref('')
 const banning = ref(false)
 
-function openBanForm(log: ConnLog): void {
+function openBanForm(log: ConnLog, action: TarpitAction): void {
   banningLog.value = log
+  banningAction.value = action
   banReason.value = ''
   banActiveUntil.value = ''
 }
@@ -74,8 +77,13 @@ async function confirmBan(): Promise<void> {
   if (!banningLog.value) return
   const log = banningLog.value
   const params: CreateBanRuleParams = log.user_id
-    ? { scope_type: 'user', user_id: log.user_id, reason: banReason.value || null }
-    : { scope_type: 'peer_ip', peer_ip: log.peer_ip ?? undefined, reason: banReason.value || null }
+    ? { scope_type: 'user', user_id: log.user_id, reason: banReason.value || null, action: banningAction.value }
+    : {
+        scope_type: 'peer_ip',
+        peer_ip: log.peer_ip ?? undefined,
+        reason: banReason.value || null,
+        action: banningAction.value,
+      }
   if (banActiveUntil.value) {
     params.active_until = new Date(banActiveUntil.value).toISOString()
   }
@@ -83,9 +91,9 @@ async function confirmBan(): Promise<void> {
   try {
     await adminApi.createBanRule(params)
     banningLog.value = null
-    toast('Ban rule created')
+    toast('Rule created')
   } catch (e) {
-    toast(e instanceof Error ? e.message : 'Failed to create ban rule')
+    toast(e instanceof Error ? e.message : 'Failed to create rule')
   } finally {
     banning.value = false
   }
@@ -130,6 +138,7 @@ onMounted(search)
             <th>Result</th>
             <th>Reason</th>
             <th>Tarpit</th>
+            <th>Decision</th>
             <th></th>
           </tr>
         </thead>
@@ -153,8 +162,23 @@ onMounted(search)
               {{ (l.fail_reason && failReasonLabel[l.fail_reason]) ?? l.fail_reason ?? l.success_reason ?? '—' }}
             </td>
             <td class="td-desc">{{ l.tarpit_method ? tarpitMethodLabel[l.tarpit_method] : '—' }}</td>
+            <td class="td-desc">
+              <span v-if="l.tarpit_action">{{ tarpitActionLabel[l.tarpit_action] }}</span>
+              <RouterLink
+                v-if="l.tarpit_threshold_id"
+                :to="{ path: '/admin/ban-rules', hash: `#threshold-${l.tarpit_threshold_id}` }"
+              >(rule)</RouterLink>
+              <RouterLink
+                v-else-if="l.banned_by_ban_rule_id"
+                :to="{ path: '/admin/ban-rules', hash: `#rule-${l.banned_by_ban_rule_id}` }"
+              >(admin)</RouterLink>
+              <span v-if="!l.tarpit_action">—</span>
+            </td>
             <td>
-              <button v-if="!l.success" class="btn-secondary btn-ban" @click="openBanForm(l)">Ban</button>
+              <MultiButton v-if="!l.success">
+                <button class="btn-secondary btn-ban" @click="openBanForm(l, 'trap')">Trap</button>
+                <button class="btn-secondary btn-ban" @click="openBanForm(l, 'ban')">Ban</button>
+              </MultiButton>
             </td>
           </tr>
         </tbody>
@@ -168,10 +192,10 @@ onMounted(search)
       </div>
     </template>
 
-    <!-- Quick ban modal -->
+    <!-- Quick trap-or-ban modal -->
     <div v-if="banningLog" class="modal-overlay" @click.self="banningLog = null">
       <div class="modal">
-        <h2>Ban {{ banningLog.user_id ? 'user' : 'IP' }}</h2>
+        <h2>{{ tarpitActionLabel[banningAction] }} {{ banningLog.user_id ? 'user' : 'IP' }}</h2>
         <p class="section-note">
           {{ banningLog.user_id ? banningLog.user_id : banningLog.peer_ip }}
         </p>
@@ -186,7 +210,7 @@ onMounted(search)
         <div class="modal-actions">
           <button class="btn-secondary" @click="banningLog = null">Cancel</button>
           <button class="btn-primary" :disabled="banning" @click="confirmBan">
-            {{ banning ? 'Banning…' : 'Ban' }}
+            {{ banning ? 'Saving…' : tarpitActionLabel[banningAction] }}
           </button>
         </div>
       </div>

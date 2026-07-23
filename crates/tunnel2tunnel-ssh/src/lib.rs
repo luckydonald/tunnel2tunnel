@@ -129,21 +129,33 @@ pub async fn start(config: SshConfig, pool: PgPool) -> Result<()> {
         };
         let peer_ip = addr.ip().to_string();
 
-        let pre_auth_tarpit =
-            tarpit::decide_pre_auth_tarpit(&server.tarpit, &server.pool, &peer_ip).await;
+        let pre_auth_outcome = tarpit::decide_pre_auth_tarpit(
+            &server.tarpit,
+            &server.thresholds,
+            &server.pool,
+            &peer_ip,
+        )
+        .await;
 
-        if pre_auth_tarpit == Some(TarpitMethod::BannerDrip) {
+        if let tarpit::TarpitOutcome::Ban { source } = pre_auth_outcome {
+            tracing::info!(%peer_ip, "SSH: hard ban engaged for new connection — closing instantly");
+            tokio::spawn(tarpit::log_hard_ban(server.pool.clone(), peer_ip, source));
+            continue;
+        }
+
+        if let tarpit::TarpitOutcome::Trap { method: TarpitMethod::BannerDrip, source } = &pre_auth_outcome {
             let pool = server.pool.clone();
             let fail2ban = server.fail2ban.clone();
+            let source = source.clone();
             tracing::info!(%peer_ip, "SSH: banner-drip tarpit engaged for new connection");
             tokio::spawn(tarpit::banner_drip::run(
-                socket, peer_ip, pool, fail2ban, "ip banned",
+                socket, peer_ip, pool, fail2ban, "ip banned", source,
             ));
             continue;
         }
 
         let mut handler = server.new_client(Some(addr));
-        handler.tarpit_method = pre_auth_tarpit;
+        handler.tarpit_outcome = Some(pre_auth_outcome);
         let cfg = russh_config.clone();
         tokio::spawn(async move {
             match russh::server::run_stream(cfg, socket, handler).await {
@@ -188,7 +200,7 @@ impl Server for T2tServer {
             entity: None,
             bridges: HashMap::new(),
             log_id: None,
-            tarpit_method: None,
+            tarpit_outcome: None,
             fake_shell: false,
         }
     }
@@ -218,25 +230,29 @@ struct T2tHandler {
     log_id: Option<Uuid>,
     /// Decided once per connection (either at accept time for a peer_ip-level
     /// ban, or lazily on first real auth attempt for a user-level ban).
-    /// `TarpitMethod::BannerDrip` never appears here — by the time any
-    /// `Handler` callback runs, the real SSH-2.0 line has already gone out.
-    tarpit_method: Option<TarpitMethod>,
+    /// `Trap{method: BannerDrip, ..}` never appears here — by the time any
+    /// `Handler` callback runs, the real SSH-2.0 line has already gone out
+    /// (a pre-auth `BannerDrip` decision is acted on directly in the accept
+    /// loop and never reaches a handler at all).
+    tarpit_outcome: Option<tarpit::TarpitOutcome>,
     /// Set when this connection was waved through `Auth::Accept` as a
     /// fake-shell trap rather than a real login — `entity` stays `None`.
     fake_shell: bool,
 }
 
 impl T2tHandler {
-    /// Lazily resolves (and caches) which tarpit method applies to this
+    /// Lazily resolves (and caches) which tarpit outcome applies to this
     /// connection's auth attempts, once we're already inside a `Handler`
-    /// callback (banner-drip is not selectable here — see `tarpit_method`'s
+    /// callback (banner-drip is not selectable here — see `tarpit_outcome`'s
     /// doc comment).
-    async fn resolve_tarpit_method(&mut self, user_id: Option<Uuid>) -> Option<TarpitMethod> {
-        if self.tarpit_method.is_none() {
-            self.tarpit_method =
-                tarpit::decide_in_auth_tarpit(&self.tarpit, &self.peer_ip, user_id).await;
+    async fn resolve_tarpit_outcome(&mut self, user_id: Option<Uuid>) -> tarpit::TarpitOutcome {
+        if self.tarpit_outcome.is_none() {
+            self.tarpit_outcome = Some(
+                tarpit::decide_in_auth_tarpit(&self.tarpit, &self.thresholds, &self.peer_ip, user_id)
+                    .await,
+            );
         }
-        self.tarpit_method
+        self.tarpit_outcome.clone().unwrap_or(tarpit::TarpitOutcome::None)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -247,8 +263,22 @@ impl T2tHandler {
         attempted_password: Option<&str>,
         attempted_username: &str,
         reason: &str,
+        outcome: &tarpit::TarpitOutcome,
         counts_toward_ban: bool,
     ) {
+        let (tarpit_method, tarpit_action, source) = match outcome {
+            tarpit::TarpitOutcome::Trap { method, source } => {
+                (Some(method.as_str()), Some("trap"), source.clone())
+            }
+            tarpit::TarpitOutcome::Ban { source } => (None, Some("ban"), Some(source.clone())),
+            tarpit::TarpitOutcome::None => (None, None, None),
+        };
+        let (threshold_id, ban_rule_id) = match source {
+            Some(tarpit::BanSource::Threshold(id)) => (Some(id), None),
+            Some(tarpit::BanSource::AdminRule(id)) => (None, Some(id)),
+            None => (None, None),
+        };
+
         let now = time::OffsetDateTime::now_utc();
         if let Err(e) = ConnectionLog::create(
             &self.pool,
@@ -260,7 +290,10 @@ impl T2tHandler {
             Some(attempted_username),
             Some(reason),
             None,
-            self.tarpit_method.map(TarpitMethod::as_str),
+            tarpit_method,
+            tarpit_action,
+            threshold_id,
+            ban_rule_id,
             now,
         )
         .await
@@ -299,6 +332,9 @@ impl T2tHandler {
             Some(attempted_username),
             None,
             Some("correct login"),
+            None,
+            None,
+            None,
             None,
             now,
         )
@@ -348,16 +384,18 @@ impl Handler for T2tHandler {
             available = "publickey",
             "SSH: auth attempt (password) — rejected (password auth not supported)"
         );
-        let method = self.resolve_tarpit_method(None).await;
-        self.log_auth_failure(None, None, Some(password), user, "password auth not supported", true)
+        let outcome = self.resolve_tarpit_outcome(None).await;
+        self.log_auth_failure(None, None, Some(password), user, "password auth not supported", &outcome, true)
             .await;
 
-        if method == Some(TarpitMethod::FakeShell) {
-            self.fake_shell = true;
-            return Ok(Auth::Accept);
-        }
-        if method == Some(TarpitMethod::SlowAuth) {
-            tarpit::slow_auth::delay().await;
+        if let tarpit::TarpitOutcome::Trap { method, .. } = outcome {
+            if method == TarpitMethod::FakeShell {
+                self.fake_shell = true;
+                return Ok(Auth::Accept);
+            }
+            if method == TarpitMethod::SlowAuth {
+                tarpit::slow_auth::delay().await;
+            }
         }
         Ok(Auth::Reject {
             proceed_with_methods: Some(publickey_only()),
@@ -378,16 +416,18 @@ impl Handler for T2tHandler {
             available = "publickey",
             "SSH: auth attempt (keyboard-interactive) — rejected"
         );
-        let method = self.resolve_tarpit_method(None).await;
-        self.log_auth_failure(None, None, None, user, "unsupported auth method", true)
+        let outcome = self.resolve_tarpit_outcome(None).await;
+        self.log_auth_failure(None, None, None, user, "unsupported auth method", &outcome, true)
             .await;
 
-        if method == Some(TarpitMethod::FakeShell) {
-            self.fake_shell = true;
-            return Ok(Auth::Accept);
-        }
-        if method == Some(TarpitMethod::SlowAuth) {
-            tarpit::slow_auth::delay().await;
+        if let tarpit::TarpitOutcome::Trap { method, .. } = outcome {
+            if method == TarpitMethod::FakeShell {
+                self.fake_shell = true;
+                return Ok(Auth::Accept);
+            }
+            if method == TarpitMethod::SlowAuth {
+                tarpit::slow_auth::delay().await;
+            }
         }
         Ok(Auth::Reject {
             proceed_with_methods: Some(publickey_only()),
@@ -429,14 +469,16 @@ impl Handler for T2tHandler {
             Ok(Some(k)) => k,
             Ok(None) => {
                 tracing::info!(%fp, peer_ip = %self.peer_ip, "SSH: auth rejected — unknown key");
-                let method = self.resolve_tarpit_method(None).await;
-                self.log_auth_failure(None, Some(&fp), None, user, "unknown key", true).await;
-                if method == Some(TarpitMethod::FakeShell) {
-                    self.fake_shell = true;
-                    return Ok(Auth::Accept);
-                }
-                if method == Some(TarpitMethod::SlowAuth) {
-                    tarpit::slow_auth::delay().await;
+                let outcome = self.resolve_tarpit_outcome(None).await;
+                self.log_auth_failure(None, Some(&fp), None, user, "unknown key", &outcome, true).await;
+                if let tarpit::TarpitOutcome::Trap { method, .. } = outcome {
+                    if method == TarpitMethod::FakeShell {
+                        self.fake_shell = true;
+                        return Ok(Auth::Accept);
+                    }
+                    if method == TarpitMethod::SlowAuth {
+                        tarpit::slow_auth::delay().await;
+                    }
                 }
                 return Ok(Auth::Reject { proceed_with_methods: None, partial_success: false });
             }
@@ -455,14 +497,16 @@ impl Handler for T2tHandler {
             Ok(Some(e)) => e,
             Ok(None) => {
                 tracing::info!(%fp, entity_id = %ssh_key.entity_id, "SSH: auth rejected — entity not found");
-                let method = self.resolve_tarpit_method(None).await;
-                self.log_auth_failure(None, Some(&fp), None, user, "entity not found", true).await;
-                if method == Some(TarpitMethod::FakeShell) {
-                    self.fake_shell = true;
-                    return Ok(Auth::Accept);
-                }
-                if method == Some(TarpitMethod::SlowAuth) {
-                    tarpit::slow_auth::delay().await;
+                let outcome = self.resolve_tarpit_outcome(None).await;
+                self.log_auth_failure(None, Some(&fp), None, user, "entity not found", &outcome, true).await;
+                if let tarpit::TarpitOutcome::Trap { method, .. } = outcome {
+                    if method == TarpitMethod::FakeShell {
+                        self.fake_shell = true;
+                        return Ok(Auth::Accept);
+                    }
+                    if method == TarpitMethod::SlowAuth {
+                        tarpit::slow_auth::delay().await;
+                    }
                 }
                 return Ok(Auth::Reject { proceed_with_methods: None, partial_success: false });
             }
@@ -481,9 +525,9 @@ impl Handler for T2tHandler {
         if let Some(valid_until) = ssh_key.ts.soft_delete.deleted_at {
             if valid_until < time::OffsetDateTime::now_utc() {
                 tracing::info!(%fp, key_id = %ssh_key.id, "SSH: auth rejected — key expired (deleted_at)");
-                self.resolve_tarpit_method(Some(user_id)).await;
-                self.log_auth_failure(Some(user_id), Some(&fp), None, user, "key expired", true).await;
-                if self.tarpit_method == Some(TarpitMethod::SlowAuth) {
+                let outcome = self.resolve_tarpit_outcome(Some(user_id)).await;
+                self.log_auth_failure(Some(user_id), Some(&fp), None, user, "key expired", &outcome, true).await;
+                if let tarpit::TarpitOutcome::Trap { method: TarpitMethod::SlowAuth, .. } = outcome {
                     tarpit::slow_auth::delay().await;
                 }
                 return Ok(Auth::Reject { proceed_with_methods: None, partial_success: false });
@@ -493,9 +537,9 @@ impl Handler for T2tHandler {
         if let Some(valid_until) = ssh_key.valid_until {
             if valid_until < time::OffsetDateTime::now_utc() {
                 tracing::info!(%fp, key_id = %ssh_key.id, "SSH: auth rejected — key expired (valid_until)");
-                self.resolve_tarpit_method(Some(user_id)).await;
-                self.log_auth_failure(Some(user_id), Some(&fp), None, user, "key expired (valid_until)", true).await;
-                if self.tarpit_method == Some(TarpitMethod::SlowAuth) {
+                let outcome = self.resolve_tarpit_outcome(Some(user_id)).await;
+                self.log_auth_failure(Some(user_id), Some(&fp), None, user, "key expired (valid_until)", &outcome, true).await;
+                if let tarpit::TarpitOutcome::Trap { method: TarpitMethod::SlowAuth, .. } = outcome {
                     tarpit::slow_auth::delay().await;
                 }
                 return Ok(Auth::Reject { proceed_with_methods: None, partial_success: false });
@@ -506,9 +550,9 @@ impl Handler for T2tHandler {
         if let Some(valid_until) = entity.valid_until {
             if valid_until < time::OffsetDateTime::now_utc() {
                 tracing::info!(entity_id = %entity.id, entity_name = entity.name.as_deref().unwrap_or("(unnamed)"), "SSH: auth rejected — entity expired");
-                self.resolve_tarpit_method(Some(user_id)).await;
-                self.log_auth_failure(Some(user_id), Some(&fp), None, user, "entity expired", true).await;
-                if self.tarpit_method == Some(TarpitMethod::SlowAuth) {
+                let outcome = self.resolve_tarpit_outcome(Some(user_id)).await;
+                self.log_auth_failure(Some(user_id), Some(&fp), None, user, "entity expired", &outcome, true).await;
+                if let tarpit::TarpitOutcome::Trap { method: TarpitMethod::SlowAuth, .. } = outcome {
                     tarpit::slow_auth::delay().await;
                 }
                 return Ok(Auth::Reject { proceed_with_methods: None, partial_success: false });
@@ -524,9 +568,9 @@ impl Handler for T2tHandler {
                     peer_ip = %self.peer_ip,
                     "SSH: auth rejected — IP blocked by whitelist"
                 );
-                self.resolve_tarpit_method(Some(user_id)).await;
-                self.log_auth_failure(Some(user_id), Some(&fp), None, user, "ip blocked by whitelist", true).await;
-                if self.tarpit_method == Some(TarpitMethod::SlowAuth) {
+                let outcome = self.resolve_tarpit_outcome(Some(user_id)).await;
+                self.log_auth_failure(Some(user_id), Some(&fp), None, user, "ip blocked by whitelist", &outcome, true).await;
+                if let tarpit::TarpitOutcome::Trap { method: TarpitMethod::SlowAuth, .. } = outcome {
                     tarpit::slow_auth::delay().await;
                 }
                 return Ok(Auth::Reject { proceed_with_methods: None, partial_success: false });

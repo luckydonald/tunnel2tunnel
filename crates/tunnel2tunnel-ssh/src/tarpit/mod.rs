@@ -3,7 +3,8 @@
 //! All new tarpit logic lives under this module (never inline in `lib.rs`),
 //! per project convention. Sibling modules implement the three tarpit
 //! methods; this module owns the shared in-memory ban/threshold state and
-//! the decision logic for which method (if any) applies to a connection.
+//! the decision logic for which action (trap or ban, and if trap, which
+//! method) applies to a connection.
 
 pub mod banner_drip;
 pub mod fake_shell;
@@ -50,6 +51,25 @@ impl TarpitMethod {
     }
 }
 
+/// Which row decided an active ban — a tripped `tarpit_thresholds` rule, or
+/// an admin-created `ban_rules` row (the admin is reached via
+/// `ban_rules.created_by`, no direct reference needed here).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BanSource {
+    Threshold(Uuid),
+    AdminRule(Uuid),
+}
+
+/// The action actually resolved for a connection attempt right now — looked
+/// up from whichever row's `action` (`trap`/`ban`) is currently configured,
+/// so editing a rule takes effect on the next attempt without restarting.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TarpitOutcome {
+    None,
+    Trap { method: TarpitMethod, source: Option<BanSource> },
+    Ban { source: BanSource },
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum BanUntil {
     NotBanned,
@@ -80,6 +100,10 @@ pub(crate) struct TarpitEntry {
     /// successfully, since it intercepts before russh/auth ever runs.
     banner_drip_eligible: bool,
     banned: BanUntil,
+    /// Which rule decided the currently-active `banned` state, if any.
+    /// Looked up again (not baked in) each time an outcome is resolved, so
+    /// editing that rule's `action` takes effect immediately.
+    ban_source: Option<BanSource>,
 }
 
 impl TarpitEntry {
@@ -89,6 +113,7 @@ impl TarpitEntry {
             trigger_count: 0,
             banner_drip_eligible: true,
             banned: BanUntil::NotBanned,
+            ban_source: None,
         }
     }
 
@@ -108,18 +133,20 @@ fn user_key(user_id: Uuid) -> String {
     format!("user:{user_id}")
 }
 
-/// Admin-configurable threshold rules plus the global enforcement toggle.
-/// Any one rule reaching its own `fail_count` within its own `window_seconds`
-/// trips a ban — rules are independent, not combined.
+/// Admin-configurable threshold rules and active ban rules, plus the global
+/// enforcement toggle. Any one threshold rule reaching its own `fail_count`
+/// within its own `window_seconds` trips a ban — rules are independent, not
+/// combined.
 #[derive(Debug, Clone)]
 pub struct ThresholdConfig {
     pub enabled: bool,
     pub rules: Vec<TarpitThreshold>,
+    pub ban_rules: Vec<BanRule>,
 }
 
 impl Default for ThresholdConfig {
     fn default() -> Self {
-        Self { enabled: true, rules: Vec::new() }
+        Self { enabled: true, rules: Vec::new(), ban_rules: Vec::new() }
     }
 }
 
@@ -130,8 +157,11 @@ pub type SharedThresholds = Arc<Mutex<ThresholdConfig>>;
 /// Records one failed attempt for `key`. Returns whether `key` is banned
 /// after this call. Crossing any rule's threshold sets a time-bounded ban
 /// (auto bans are never indefinite — only admin-created `ban_rules` can be,
-/// using the longest window among the rules that tripped) and bumps
-/// `trigger_count`, which drives the next round-robin method pick.
+/// using the longest window among the rules that tripped, independent of
+/// which one's action "wins") and bumps `trigger_count`, which drives the
+/// next round-robin method pick. If several rules trip in the same call, a
+/// `"ban"`-action rule always outranks a `"trap"`-action one; ties within
+/// the same action are broken by the longest window.
 fn record_failure(
     map: &mut HashMap<String, TarpitEntry>,
     key: &str,
@@ -142,7 +172,8 @@ fn record_failure(
         .entry(key.to_string())
         .or_insert_with(|| TarpitEntry::new(now));
 
-    let mut tripped_window = None;
+    let mut winner: Option<(&TarpitThreshold, Duration)> = None;
+    let mut max_window = Duration::ZERO;
     for rule in rules {
         let window = Duration::from_secs(rule.window_seconds.max(0) as u64);
         let tally = entry.tallies.entry(rule.id).or_insert((0, now));
@@ -157,13 +188,24 @@ fn record_failure(
         if tally.0 >= rule.fail_count.max(0) as u32 {
             tally.0 = 0;
             tally.1 = now;
-            tripped_window = Some(tripped_window.unwrap_or(Duration::ZERO).max(window));
+            max_window = max_window.max(window);
+
+            let is_better = match &winner {
+                None => true,
+                Some((best, best_window)) => {
+                    (rule.action == "ban", window) > (best.action == "ban", *best_window)
+                }
+            };
+            if is_better {
+                winner = Some((rule, window));
+            }
         }
     }
 
-    if let Some(window) = tripped_window {
+    if let Some((rule, _)) = winner {
         entry.trigger_count += 1;
-        entry.banned = BanUntil::At(now + window);
+        entry.banned = BanUntil::At(now + max_window);
+        entry.ban_source = Some(BanSource::Threshold(rule.id));
     }
 
     entry.is_banned(now)
@@ -178,6 +220,42 @@ fn record_failure(
 fn clear_fail_tally_on_success(map: &mut HashMap<String, TarpitEntry>, key: &str, _now: Instant) {
     if let Some(entry) = map.get_mut(key) {
         entry.tallies.clear();
+    }
+}
+
+/// Resolves what should actually happen for an active ban, by looking up
+/// its source's *current* `action` — so editing a rule's action takes
+/// effect on the very next connection attempt, no restart needed. Falls
+/// back to a lenient `Trap` (no reference) if the source row was deleted
+/// after the ban took effect, rather than hard-banning forever against a
+/// rule that no longer exists.
+fn resolve_outcome(
+    ban_source: &BanSource,
+    trigger_count: u64,
+    rules: &[TarpitThreshold],
+    ban_rules: &[BanRule],
+) -> TarpitOutcome {
+    match ban_source {
+        BanSource::Threshold(id) => match rules.iter().find(|r| &r.id == id) {
+            None => TarpitOutcome::Trap { method: TarpitMethod::round_robin(trigger_count), source: None },
+            Some(rule) if rule.action == "ban" => {
+                TarpitOutcome::Ban { source: BanSource::Threshold(*id) }
+            }
+            Some(_) => TarpitOutcome::Trap {
+                method: TarpitMethod::round_robin(trigger_count),
+                source: Some(BanSource::Threshold(*id)),
+            },
+        },
+        BanSource::AdminRule(id) => match ban_rules.iter().find(|r| &r.id == id) {
+            None => TarpitOutcome::Trap { method: TarpitMethod::round_robin(trigger_count), source: None },
+            Some(rule) if rule.action == "ban" => {
+                TarpitOutcome::Ban { source: BanSource::AdminRule(*id) }
+            }
+            Some(_) => TarpitOutcome::Trap {
+                method: TarpitMethod::round_robin(trigger_count),
+                source: Some(BanSource::AdminRule(*id)),
+            },
+        },
     }
 }
 
@@ -213,28 +291,40 @@ pub async fn record_auth_success(state: &TarpitState, peer_ip: &str, user_id: Op
 }
 
 /// Called once per accepted TCP connection, before the socket is handed to
-/// russh (or drip-fed directly). Only ever returns `BannerDrip` or `None` —
-/// slow-auth/fake-shell are decided later, inside the `Handler` callbacks,
-/// once we know which auth method is actually being attempted.
+/// russh (or drip-fed directly, or dropped outright for a hard `Ban`).
+/// `Trap{method: SlowAuth | FakeShell, ..}`/`None` are decided further at
+/// accept time but not acted on until inside the `Handler` callbacks, once
+/// we know which auth method is actually being attempted.
 pub async fn decide_pre_auth_tarpit(
     state: &TarpitState,
+    thresholds: &SharedThresholds,
     pool: &PgPool,
     peer_ip: &str,
-) -> Option<TarpitMethod> {
+) -> TarpitOutcome {
     let now = Instant::now();
-    let (banned, trigger_count, cached_ineligible) = {
+    let (banned, ban_source, trigger_count, cached_ineligible) = {
         let map = state.lock().await;
         match map.get(peer_ip) {
-            Some(e) if e.is_banned(now) => (true, e.trigger_count, !e.banner_drip_eligible),
-            _ => (false, 0, false),
+            Some(e) if e.is_banned(now) => {
+                (true, e.ban_source.clone(), e.trigger_count, !e.banner_drip_eligible)
+            }
+            _ => (false, None, 0, false),
         }
     };
     if !banned {
-        return None;
+        return TarpitOutcome::None;
     }
 
-    let mut method = TarpitMethod::round_robin(trigger_count);
-    if method == TarpitMethod::BannerDrip {
+    let (rules, ban_rules) = {
+        let t = thresholds.lock().await;
+        (t.rules.clone(), t.ban_rules.clone())
+    };
+    let mut outcome = match ban_source {
+        Some(source) => resolve_outcome(&source, trigger_count, &rules, &ban_rules),
+        None => TarpitOutcome::Trap { method: TarpitMethod::round_robin(trigger_count), source: None },
+    };
+
+    if let TarpitOutcome::Trap { method: TarpitMethod::BannerDrip, source } = &outcome {
         let ineligible = cached_ineligible
             || ConnectionLog::peer_ip_has_known_good_history(pool, peer_ip)
                 .await
@@ -244,10 +334,10 @@ pub async fn decide_pre_auth_tarpit(
             map.entry(peer_ip.to_string())
                 .or_insert_with(|| TarpitEntry::new(now))
                 .banner_drip_eligible = false;
-            method = TarpitMethod::SlowAuth;
+            outcome = TarpitOutcome::Trap { method: TarpitMethod::SlowAuth, source: source.clone() };
         }
     }
-    Some(method)
+    outcome
 }
 
 /// Called from inside an auth `Handler` callback (password/keyboard-interactive/
@@ -256,34 +346,54 @@ pub async fn decide_pre_auth_tarpit(
 /// out by the time any `Handler` callback runs.
 pub async fn decide_in_auth_tarpit(
     state: &TarpitState,
+    thresholds: &SharedThresholds,
     peer_ip: &str,
     user_id: Option<Uuid>,
-) -> Option<TarpitMethod> {
+) -> TarpitOutcome {
     let now = Instant::now();
-    let map = state.lock().await;
-    let mut banned = false;
-    let mut trigger_count = 0u64;
-    if let Some(e) = map.get(peer_ip) {
-        if e.is_banned(now) {
-            banned = true;
-            trigger_count = trigger_count.max(e.trigger_count);
-        }
-    }
-    if let Some(uid) = user_id {
-        if let Some(e) = map.get(&user_key(uid)) {
+    let (banned, ban_source, trigger_count) = {
+        let map = state.lock().await;
+        let mut banned = false;
+        let mut trigger_count = 0u64;
+        let mut source = None;
+        if let Some(e) = map.get(peer_ip) {
             if e.is_banned(now) {
                 banned = true;
                 trigger_count = trigger_count.max(e.trigger_count);
+                source = e.ban_source.clone();
             }
         }
-    }
+        if let Some(uid) = user_id {
+            if let Some(e) = map.get(&user_key(uid)) {
+                if e.is_banned(now) {
+                    banned = true;
+                    trigger_count = trigger_count.max(e.trigger_count);
+                    // Prefer the user-scoped source (more specific identity)
+                    // when both peer_ip and user are banned simultaneously.
+                    source = e.ban_source.clone().or(source);
+                }
+            }
+        }
+        (banned, source, trigger_count)
+    };
     if !banned {
-        return None;
+        return TarpitOutcome::None;
     }
-    Some(match TarpitMethod::round_robin(trigger_count) {
-        TarpitMethod::BannerDrip => TarpitMethod::SlowAuth,
+
+    let (rules, ban_rules) = {
+        let t = thresholds.lock().await;
+        (t.rules.clone(), t.ban_rules.clone())
+    };
+    let outcome = match ban_source {
+        Some(source) => resolve_outcome(&source, trigger_count, &rules, &ban_rules),
+        None => TarpitOutcome::Trap { method: TarpitMethod::round_robin(trigger_count), source: None },
+    };
+    match outcome {
+        TarpitOutcome::Trap { method: TarpitMethod::BannerDrip, source } => {
+            TarpitOutcome::Trap { method: TarpitMethod::SlowAuth, source }
+        }
         other => other,
-    })
+    }
 }
 
 /// Periodically refreshes admin-configurable thresholds and merges active
@@ -310,21 +420,19 @@ async fn refresh_once(pool: &PgPool, state: &TarpitState, thresholds: &SharedThr
         .map(|v| v == "true")
         .unwrap_or(true);
     let rules = TarpitThreshold::list_enabled(pool).await.unwrap_or_default();
+    let active_ban_rules = BanRule::list_active(pool).await.unwrap_or_default();
 
     {
         let mut t = thresholds.lock().await;
         t.enabled = enabled;
         t.rules = rules;
+        t.ban_rules = active_ban_rules.clone();
     }
-
-    let Ok(rules) = BanRule::list_active(pool).await else {
-        return;
-    };
 
     let now_wall = time::OffsetDateTime::now_utc();
     let now_mono = Instant::now();
     let mut map = state.lock().await;
-    for rule in rules {
+    for rule in active_ban_rules {
         let key = match rule.scope_type.as_str() {
             "peer_ip" => rule.peer_ip.clone(),
             "user" => rule.user_id.map(user_key),
@@ -341,7 +449,40 @@ async fn refresh_once(pool: &PgPool, state: &TarpitState, thresholds: &SharedThr
                 BanUntil::At(now_mono + Duration::from_secs(remaining.whole_seconds().max(0) as u64))
             }
         };
-        map.entry(key).or_insert_with(|| TarpitEntry::new(now_mono)).banned = banned;
+        let entry = map.entry(key).or_insert_with(|| TarpitEntry::new(now_mono));
+        entry.banned = banned;
+        entry.ban_source = Some(BanSource::AdminRule(rule.id));
+    }
+}
+
+/// Writes the `connection_logs` row for a hard `Ban` decided before `russh`
+/// ever touched the connection (accept-time peer_ip ban) — the socket is
+/// dropped by the caller right after this, no tarpit method engages at all.
+pub async fn log_hard_ban(pool: PgPool, peer_ip: String, source: BanSource) {
+    let now = time::OffsetDateTime::now_utc();
+    let (threshold_id, ban_rule_id) = match source {
+        BanSource::Threshold(id) => (Some(id), None),
+        BanSource::AdminRule(id) => (None, Some(id)),
+    };
+    if let Err(e) = ConnectionLog::create(
+        &pool,
+        None,
+        None,
+        Some(&peer_ip),
+        None,
+        None,
+        None,
+        Some("ip banned"),
+        None,
+        None,
+        Some("ban"),
+        threshold_id,
+        ban_rule_id,
+        now,
+    )
+    .await
+    {
+        tracing::warn!(err = %e, "failed to write hard-ban log");
     }
 }
 
@@ -368,15 +509,20 @@ mod tests {
         assert_eq!(TarpitMethod::round_robin(4), TarpitMethod::SlowAuth);
     }
 
-    fn rule(fail_count: i32, window_secs: i64) -> TarpitThreshold {
+    fn rule_with_action(fail_count: i32, window_secs: i64, action: &str) -> TarpitThreshold {
         let now = time::OffsetDateTime::now_utc();
         TarpitThreshold {
             id: Uuid::now_v7(),
             fail_count,
             window_seconds: window_secs,
             enabled: true,
+            action: action.to_string(),
             ts: tunnel2tunnel_core::timestamps::Timestamps { created_at: now, updated_at: now },
         }
+    }
+
+    fn rule(fail_count: i32, window_secs: i64) -> TarpitThreshold {
+        rule_with_action(fail_count, window_secs, "trap")
     }
 
     fn thresholds() -> Vec<TarpitThreshold> {
@@ -402,6 +548,7 @@ mod tests {
         assert!(!record_failure(&mut map, "1.2.3.4", &t, now));
         assert!(record_failure(&mut map, "1.2.3.4", &t, now));
         assert_eq!(map["1.2.3.4"].trigger_count, 1);
+        assert_eq!(map["1.2.3.4"].ban_source, Some(BanSource::Threshold(t[0].id)));
     }
 
     #[test]
@@ -428,6 +575,46 @@ mod tests {
         assert!(!record_failure(&mut map, "1.2.3.4", &t, now));
         assert!(record_failure(&mut map, "1.2.3.4", &t, now));
         assert_eq!(map["1.2.3.4"].trigger_count, 1);
+    }
+
+    #[test]
+    fn ban_action_rule_trips_straight_to_ban() {
+        let mut map = HashMap::new();
+        let t = vec![rule_with_action(2, 60, "ban")];
+        let now = Instant::now();
+        assert!(!record_failure(&mut map, "1.2.3.4", &t, now));
+        assert!(record_failure(&mut map, "1.2.3.4", &t, now));
+        let outcome = resolve_outcome(
+            map["1.2.3.4"].ban_source.as_ref().unwrap(),
+            map["1.2.3.4"].trigger_count,
+            &t,
+            &[],
+        );
+        assert_eq!(outcome, TarpitOutcome::Ban { source: BanSource::Threshold(t[0].id) });
+    }
+
+    #[test]
+    fn mixed_trap_and_ban_rules_prefer_ban() {
+        // Both rules trip on the same failure — the "ban" rule must win even
+        // though the "trap" rule has a longer window (ban always outranks
+        // trap, regardless of window length).
+        let mut map = HashMap::new();
+        let t = vec![rule_with_action(1, 600, "trap"), rule_with_action(1, 60, "ban")];
+        let now = Instant::now();
+        assert!(record_failure(&mut map, "1.2.3.4", &t, now));
+        assert_eq!(map["1.2.3.4"].ban_source, Some(BanSource::Threshold(t[1].id)));
+    }
+
+    #[test]
+    fn resolve_outcome_falls_back_to_trap_when_rule_missing() {
+        // The rule that originally tripped the ban has since been deleted —
+        // don't hard-ban forever against a rule that no longer exists.
+        let missing_id = Uuid::now_v7();
+        let outcome = resolve_outcome(&BanSource::Threshold(missing_id), 0, &[], &[]);
+        assert_eq!(outcome, TarpitOutcome::Trap { method: TarpitMethod::BannerDrip, source: None });
+
+        let outcome = resolve_outcome(&BanSource::AdminRule(missing_id), 0, &[], &[]);
+        assert_eq!(outcome, TarpitOutcome::Trap { method: TarpitMethod::BannerDrip, source: None });
     }
 
     #[test]

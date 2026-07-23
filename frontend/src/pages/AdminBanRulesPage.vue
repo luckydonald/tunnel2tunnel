@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import AppShell from '@/components/AppShell.vue'
-import { adminApi, type BanRule, type TarpitSettings, type TarpitThreshold } from '@/api/admin'
-import { banScopeTypeLabel, banScopeTypeOptions } from '@/labels'
+import { adminApi, type BanRule, type TarpitAction, type TarpitSettings, type TarpitThreshold } from '@/api/admin'
+import { banScopeTypeLabel, banScopeTypeOptions, tarpitActionLabel, tarpitActionOptions } from '@/labels'
 import { useToast } from '@/composables/useToast'
 
 const { show: toast } = useToast()
@@ -28,8 +28,16 @@ type NewRule = {
   user_id: string
   reason: string
   active_until: string
+  action: TarpitAction
 }
-const blankRule = (): NewRule => ({ scope_type: 'peer_ip', peer_ip: '', user_id: '', reason: '', active_until: '' })
+const blankRule = (): NewRule => ({
+  scope_type: 'peer_ip',
+  peer_ip: '',
+  user_id: '',
+  reason: '',
+  active_until: '',
+  action: 'ban',
+})
 const newRule = ref<NewRule>(blankRule())
 const adding = ref(false)
 
@@ -42,6 +50,7 @@ async function handleAdd(): Promise<void> {
       user_id: newRule.value.scope_type === 'user' ? newRule.value.user_id : null,
       reason: newRule.value.reason || null,
       active_until: newRule.value.active_until ? new Date(newRule.value.active_until).toISOString() : null,
+      action: newRule.value.action,
     })
     showAdd.value = false
     newRule.value = blankRule()
@@ -108,8 +117,8 @@ async function loadThresholds(): Promise<void> {
 }
 
 const showAddThreshold = ref(false)
-type NewThreshold = { fail_count: number; window_seconds: number }
-const blankThreshold = (): NewThreshold => ({ fail_count: 5, window_seconds: 600 })
+type NewThreshold = { fail_count: number; window_seconds: number; action: TarpitAction }
+const blankThreshold = (): NewThreshold => ({ fail_count: 5, window_seconds: 600, action: 'trap' })
 const newThreshold = ref<NewThreshold>(blankThreshold())
 const addingThreshold = ref(false)
 
@@ -120,6 +129,7 @@ async function handleAddThreshold(): Promise<void> {
       fail_count: newThreshold.value.fail_count,
       window_seconds: newThreshold.value.window_seconds,
       enabled: true,
+      action: newThreshold.value.action,
     })
     showAddThreshold.value = false
     newThreshold.value = blankThreshold()
@@ -131,12 +141,13 @@ async function handleAddThreshold(): Promise<void> {
   }
 }
 
-async function handleToggleThreshold(t: TarpitThreshold): Promise<void> {
+async function handleUpdateThreshold(t: TarpitThreshold): Promise<void> {
   try {
     await adminApi.updateTarpitThreshold(t.id, {
       fail_count: t.fail_count,
       window_seconds: t.window_seconds,
       enabled: t.enabled,
+      action: t.action,
     })
   } catch (e) {
     toast(e instanceof Error ? e.message : 'Failed to update threshold rule')
@@ -198,7 +209,10 @@ onMounted(() => {
         <input v-model.number="newThreshold.fail_count" type="number" min="1" class="input-sm" placeholder="Failed attempts" />
         <span class="section-note">in</span>
         <input v-model.number="newThreshold.window_seconds" type="number" min="1" class="input-sm" placeholder="Window (seconds)" />
-        <span class="section-note">seconds</span>
+        <span class="section-note">seconds,</span>
+        <select v-model="newThreshold.action" class="select-sm">
+          <option v-for="opt in tarpitActionOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+        </select>
         <button
           class="btn-primary"
           :disabled="addingThreshold || !newThreshold.fail_count || !newThreshold.window_seconds"
@@ -214,16 +228,22 @@ onMounted(() => {
           <tr>
             <th>Failed attempts</th>
             <th>Window</th>
+            <th>Action</th>
             <th>Enabled</th>
             <th></th>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="t in thresholds" :key="t.id">
+          <tr v-for="t in thresholds" :key="t.id" :id="`threshold-${t.id}`">
             <td>{{ t.fail_count }}</td>
             <td>{{ formatWindow(t.window_seconds) }}</td>
             <td>
-              <input type="checkbox" v-model="t.enabled" @change="handleToggleThreshold(t)" />
+              <select v-model="t.action" class="select-sm" @change="handleUpdateThreshold(t)">
+                <option v-for="opt in tarpitActionOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+              </select>
+            </td>
+            <td>
+              <input type="checkbox" v-model="t.enabled" @change="handleUpdateThreshold(t)" />
             </td>
             <td><button class="btn-del-sm" @click="handleDeleteThreshold(t.id)">×</button></td>
           </tr>
@@ -246,6 +266,9 @@ onMounted(() => {
         <input v-else v-model="newRule.user_id" type="text" class="input-sm" placeholder="User ID (UUID)" />
         <input v-model="newRule.reason" type="text" class="input-sm" placeholder="Reason (optional)" />
         <input v-model="newRule.active_until" type="datetime-local" class="input-sm" title="Active until (blank = indefinite)" />
+        <select v-model="newRule.action" class="select-sm">
+          <option v-for="opt in tarpitActionOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+        </select>
         <button
           class="btn-primary"
           :disabled="adding || (newRule.scope_type === 'peer_ip' ? !newRule.peer_ip : !newRule.user_id)"
@@ -261,15 +284,17 @@ onMounted(() => {
           <tr>
             <th>Scope</th>
             <th>Target</th>
+            <th>Action</th>
             <th>Reason</th>
             <th>Active until</th>
             <th></th>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="r in rules" :key="r.id" :class="{ 'row-expired': isExpired(r) }">
+          <tr v-for="r in rules" :key="r.id" :id="`rule-${r.id}`" :class="{ 'row-expired': isExpired(r) }">
             <td>{{ banScopeTypeLabel[r.scope_type] }}</td>
             <td><code class="fp">{{ r.peer_ip ?? r.user_id }}</code></td>
+            <td>{{ tarpitActionLabel[r.action] }}</td>
             <td class="td-desc">{{ r.reason ?? '—' }}</td>
             <td class="td-ts">
               {{ r.active_until ? new Date(r.active_until).toLocaleString() : 'Indefinite' }}

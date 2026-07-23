@@ -11,6 +11,7 @@ pub struct TarpitThreshold {
     pub fail_count: i32,
     pub window_seconds: i64,
     pub enabled: bool,
+    pub action: String,
     #[sqlx(flatten)]
     pub ts: Timestamps,
 }
@@ -35,37 +36,42 @@ impl TarpitThreshold {
         .map_err(CoreError::Sqlx)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn create(
         pool: &PgPool,
         fail_count: i32,
         window_seconds: i64,
         enabled: bool,
+        action: &str,
     ) -> Result<Self, CoreError> {
         let id = Uuid::now_v7();
         sqlx::query_as::<_, TarpitThreshold>(
-            "INSERT INTO tarpit_thresholds (id, fail_count, window_seconds, enabled) \
-             VALUES ($1, $2, $3, $4) \
+            "INSERT INTO tarpit_thresholds (id, fail_count, window_seconds, enabled, action) \
+             VALUES ($1, $2, $3, $4, $5) \
              RETURNING *",
         )
         .bind(id)
         .bind(fail_count)
         .bind(window_seconds)
         .bind(enabled)
+        .bind(action)
         .fetch_one(pool)
         .await
         .map_err(CoreError::Sqlx)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn update(
         pool: &PgPool,
         id: Uuid,
         fail_count: i32,
         window_seconds: i64,
         enabled: bool,
+        action: &str,
     ) -> Result<Option<Self>, CoreError> {
         sqlx::query_as::<_, TarpitThreshold>(
             "UPDATE tarpit_thresholds \
-             SET fail_count = $2, window_seconds = $3, enabled = $4 \
+             SET fail_count = $2, window_seconds = $3, enabled = $4, action = $5 \
              WHERE id = $1 \
              RETURNING *",
         )
@@ -73,6 +79,7 @@ impl TarpitThreshold {
         .bind(fail_count)
         .bind(window_seconds)
         .bind(enabled)
+        .bind(action)
         .fetch_optional(pool)
         .await
         .map_err(CoreError::Sqlx)

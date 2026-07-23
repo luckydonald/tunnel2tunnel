@@ -21,6 +21,9 @@ pub struct ConnectionLog {
     pub success_reason: Option<String>,
     pub success: bool,
     pub tarpit_method: Option<String>,
+    pub tarpit_action: Option<String>,
+    pub tarpit_threshold_id: Option<Uuid>,
+    pub banned_by_ban_rule_id: Option<Uuid>,
     pub ssh_flags: Option<String>,
     pub ports_requested: Option<String>,
     pub started_at: OffsetDateTime,
@@ -42,14 +45,18 @@ impl ConnectionLog {
         fail_reason: Option<&str>,
         success_reason: Option<&str>,
         tarpit_method: Option<&str>,
+        tarpit_action: Option<&str>,
+        tarpit_threshold_id: Option<Uuid>,
+        banned_by_ban_rule_id: Option<Uuid>,
         started_at: OffsetDateTime,
     ) -> Result<Self, CoreError> {
         let id = Uuid::now_v7();
         sqlx::query_as::<_, ConnectionLog>(
             "INSERT INTO connection_logs \
                (id, entity_id, user_id, peer_ip, key_fingerprint, attempted_password, \
-                attempted_username, fail_reason, success_reason, tarpit_method, started_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
+                attempted_username, fail_reason, success_reason, tarpit_method, \
+                tarpit_action, tarpit_threshold_id, banned_by_ban_rule_id, started_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) \
              RETURNING *",
         )
         .bind(id)
@@ -62,6 +69,9 @@ impl ConnectionLog {
         .bind(fail_reason)
         .bind(success_reason)
         .bind(tarpit_method)
+        .bind(tarpit_action)
+        .bind(tarpit_threshold_id)
+        .bind(banned_by_ban_rule_id)
         .bind(started_at)
         .fetch_one(pool)
         .await

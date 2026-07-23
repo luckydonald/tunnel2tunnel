@@ -19,7 +19,7 @@ use tokio::net::TcpStream;
 
 use tunnel2tunnel_core::models::connection_log::ConnectionLog;
 
-use super::fail2ban_tarpit_line;
+use super::{fail2ban_tarpit_line, BanSource};
 
 const DRIP_INTERVAL: Duration = Duration::from_secs(10);
 /// Generous cap so a large scan can't grow unbounded fd/task usage forever.
@@ -47,7 +47,13 @@ pub async fn run(
     pool: PgPool,
     fail2ban: Option<Arc<String>>,
     fail_reason: &'static str,
+    source: Option<BanSource>,
 ) {
+    let (threshold_id, ban_rule_id) = match source {
+        Some(BanSource::Threshold(id)) => (Some(id), None),
+        Some(BanSource::AdminRule(id)) => (None, Some(id)),
+        None => (None, None),
+    };
     let now = time::OffsetDateTime::now_utc();
     let log = ConnectionLog::create(
         &pool,
@@ -60,6 +66,9 @@ pub async fn run(
         Some(fail_reason),
         None,
         Some("banner_drip"),
+        Some("trap"),
+        threshold_id,
+        ban_rule_id,
         now,
     )
     .await

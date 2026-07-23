@@ -16,6 +16,7 @@ pub struct BanRule {
     #[serde(with = "time::serde::rfc3339::option")]
     pub active_until: Option<OffsetDateTime>,
     pub created_by: Uuid,
+    pub action: String,
     #[sqlx(flatten)]
     #[serde(flatten)]
     pub ts: Timestamps,
@@ -42,6 +43,7 @@ impl BanRule {
             .map_err(CoreError::Sqlx)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn create(
         pool: &PgPool,
         scope_type: &str,
@@ -50,12 +52,13 @@ impl BanRule {
         reason: Option<&str>,
         active_until: Option<OffsetDateTime>,
         created_by: Uuid,
+        action: &str,
     ) -> Result<Self, CoreError> {
         let id = Uuid::now_v7();
         sqlx::query_as::<_, BanRule>(
             "INSERT INTO ban_rules \
-               (id, scope_type, peer_ip, user_id, reason, active_until, created_by) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7) \
+               (id, scope_type, peer_ip, user_id, reason, active_until, created_by, action) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
              RETURNING *",
         )
         .bind(id)
@@ -65,6 +68,7 @@ impl BanRule {
         .bind(reason)
         .bind(active_until)
         .bind(created_by)
+        .bind(action)
         .fetch_one(pool)
         .await
         .map_err(CoreError::Sqlx)

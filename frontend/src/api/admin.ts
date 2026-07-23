@@ -10,6 +10,7 @@ export interface AdminUser {
 
 export type TarpitMethod = 'banner_drip' | 'slow_auth' | 'fake_shell'
 export type BanScopeType = 'peer_ip' | 'user'
+export type TarpitAction = 'trap' | 'ban'
 
 export interface ConnLog {
   id: string
@@ -22,6 +23,9 @@ export interface ConnLog {
   success_reason: string | null
   success: boolean
   tarpit_method: TarpitMethod | null
+  tarpit_action: TarpitAction | null
+  tarpit_threshold_id: string | null
+  banned_by_ban_rule_id: string | null
   started_at: string
   ended_at: string | null
 }
@@ -51,6 +55,7 @@ export interface BanRule {
   reason: string | null
   active_until: string | null
   created_by: string
+  action: TarpitAction
   created_at: string
   updated_at: string
 }
@@ -61,6 +66,7 @@ export interface CreateBanRuleParams {
   user_id?: string | null
   reason?: string | null
   active_until?: string | null
+  action: TarpitAction
 }
 
 export interface TarpitSettings {
@@ -72,6 +78,7 @@ export interface TarpitThreshold {
   fail_count: number
   window_seconds: number
   enabled: boolean
+  action: TarpitAction
   created_at: string
   updated_at: string
 }
@@ -80,6 +87,7 @@ export interface TarpitThresholdParams {
   fail_count: number
   window_seconds: number
   enabled: boolean
+  action: TarpitAction
 }
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
