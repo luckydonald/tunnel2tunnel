@@ -712,3 +712,5 @@ Generally:
 
 ❯ git push
 
+❯ For the connection log view, add a row with information of which strike it is.
+
