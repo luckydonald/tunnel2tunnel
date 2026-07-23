@@ -734,3 +734,5 @@ Generally:
 
 ❯ The algorithm for that probably would be to take that log table, get all entries which "belong together" (ip or user), limit the history to only go back to the last "successful" login. Then throw a count over those subqueries. Sound like quite a lot of work for the database? Maybe a `WITH` grouping where you already get those prepared as  _user/ip -> result_ to look up in the joins could help? But I also really like the "written down" one - as that is a log of how it was back there, this should definitly (also?) be included. Let's think about my algorighm for now.
 
+❯ This doesn't seem to include the timing windows configurable in admin pane, which should be a table, too.
+
