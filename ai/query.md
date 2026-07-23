@@ -736,3 +736,5 @@ Generally:
 
 ❯ This doesn't seem to include the timing windows configurable in admin pane, which should be a table, too.
 
+❯ Btw, while at it, currently there's one global rule, and addable rules for user/ips. Instead that one global rule should _also_ be allowed to configure multiple times - to have `x in 60 minutes` + `y in 24 hours`, `z in a week`, `i in 30 days` and so on, so there are multiple windows in which they can get strikes.
+
