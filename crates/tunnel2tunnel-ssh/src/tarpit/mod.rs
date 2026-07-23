@@ -19,6 +19,7 @@ use uuid::Uuid;
 
 use tunnel2tunnel_core::models::{
     ban_rule::BanRule, connection_log::ConnectionLog, settings::Settings,
+    tarpit_threshold::TarpitThreshold,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -68,8 +69,10 @@ impl BanUntil {
 
 #[derive(Debug)]
 pub(crate) struct TarpitEntry {
-    fail_count: u32,
-    window_start: Instant,
+    /// One running fail-count/window-start tally per configured threshold
+    /// rule (keyed by `tarpit_thresholds.id`) — any single rule reaching its
+    /// own `fail_count` within its own `window_seconds` trips a ban.
+    tallies: HashMap<Uuid, (u32, Instant)>,
     trigger_count: u64,
     /// Once a success is recorded for this key (peer_ip only — user keys
     /// never drive banner-drip), this is permanently set to `false`: banner
@@ -80,10 +83,9 @@ pub(crate) struct TarpitEntry {
 }
 
 impl TarpitEntry {
-    fn new(now: Instant) -> Self {
+    fn new(_now: Instant) -> Self {
         Self {
-            fail_count: 0,
-            window_start: now,
+            tallies: HashMap::new(),
             trigger_count: 0,
             banner_drip_eligible: true,
             banned: BanUntil::NotBanned,
@@ -106,68 +108,76 @@ fn user_key(user_id: Uuid) -> String {
     format!("user:{user_id}")
 }
 
+/// Admin-configurable threshold rules plus the global enforcement toggle.
+/// Any one rule reaching its own `fail_count` within its own `window_seconds`
+/// trips a ban — rules are independent, not combined.
 #[derive(Debug, Clone)]
-pub struct Thresholds {
-    pub count: u32,
-    pub window: Duration,
+pub struct ThresholdConfig {
     pub enabled: bool,
+    pub rules: Vec<TarpitThreshold>,
 }
 
-impl Default for Thresholds {
+impl Default for ThresholdConfig {
     fn default() -> Self {
-        Self {
-            count: 5,
-            window: Duration::from_secs(600),
-            enabled: true,
-        }
+        Self { enabled: true, rules: Vec::new() }
     }
 }
 
-pub type SharedThresholds = Arc<Mutex<Thresholds>>;
+pub type SharedThresholds = Arc<Mutex<ThresholdConfig>>;
 
 // ── Pure, DB/network-free logic — the part covered by fast unit tests ──────
 
 /// Records one failed attempt for `key`. Returns whether `key` is banned
-/// after this call. Crossing the threshold sets a time-bounded ban (auto
-/// bans are never indefinite — only admin-created `ban_rules` can be) and
-/// bumps `trigger_count`, which drives the next round-robin method pick.
+/// after this call. Crossing any rule's threshold sets a time-bounded ban
+/// (auto bans are never indefinite — only admin-created `ban_rules` can be,
+/// using the longest window among the rules that tripped) and bumps
+/// `trigger_count`, which drives the next round-robin method pick.
 fn record_failure(
     map: &mut HashMap<String, TarpitEntry>,
     key: &str,
-    thresholds: &Thresholds,
+    rules: &[TarpitThreshold],
     now: Instant,
 ) -> bool {
     let entry = map
         .entry(key.to_string())
         .or_insert_with(|| TarpitEntry::new(now));
 
-    if now.duration_since(entry.window_start) > thresholds.window {
-        entry.fail_count = 0;
-        entry.window_start = now;
+    let mut tripped_window = None;
+    for rule in rules {
+        let window = Duration::from_secs(rule.window_seconds.max(0) as u64);
+        let tally = entry.tallies.entry(rule.id).or_insert((0, now));
+
+        if now.duration_since(tally.1) > window {
+            tally.0 = 0;
+            tally.1 = now;
+        }
+
+        tally.0 += 1;
+
+        if tally.0 >= rule.fail_count.max(0) as u32 {
+            tally.0 = 0;
+            tally.1 = now;
+            tripped_window = Some(tripped_window.unwrap_or(Duration::ZERO).max(window));
+        }
     }
 
-    entry.fail_count += 1;
-
-    if entry.fail_count >= thresholds.count {
+    if let Some(window) = tripped_window {
         entry.trigger_count += 1;
-        entry.banned = BanUntil::At(now + thresholds.window);
-        entry.fail_count = 0;
-        entry.window_start = now;
+        entry.banned = BanUntil::At(now + window);
     }
 
     entry.is_banned(now)
 }
 
-/// A successful login resets the failure tally (so future failures start
-/// counting fresh) but deliberately does NOT lift an already-active ban —
-/// success only guarantees the *current* session isn't interrupted (which is
-/// automatic: the success path never routes through a tarpit branch), not
-/// that a standing ban is forgiven for future connections from the same
-/// peer_ip/user.
-fn clear_fail_tally_on_success(map: &mut HashMap<String, TarpitEntry>, key: &str, now: Instant) {
+/// A successful login resets every rule's failure tally (so future failures
+/// start counting fresh) but deliberately does NOT lift an already-active
+/// ban — success only guarantees the *current* session isn't interrupted
+/// (which is automatic: the success path never routes through a tarpit
+/// branch), not that a standing ban is forgiven for future connections from
+/// the same peer_ip/user.
+fn clear_fail_tally_on_success(map: &mut HashMap<String, TarpitEntry>, key: &str, _now: Instant) {
     if let Some(entry) = map.get_mut(key) {
-        entry.fail_count = 0;
-        entry.window_start = now;
+        entry.tallies.clear();
     }
 }
 
@@ -177,16 +187,16 @@ pub async fn record_auth_failure(
     state: &TarpitState,
     peer_ip: &str,
     user_id: Option<Uuid>,
-    thresholds: &Thresholds,
+    thresholds: &ThresholdConfig,
 ) {
     if !thresholds.enabled {
         return;
     }
     let now = Instant::now();
     let mut map = state.lock().await;
-    record_failure(&mut map, peer_ip, thresholds, now);
+    record_failure(&mut map, peer_ip, &thresholds.rules, now);
     if let Some(uid) = user_id {
-        record_failure(&mut map, &user_key(uid), thresholds, now);
+        record_failure(&mut map, &user_key(uid), &thresholds.rules, now);
     }
 }
 
@@ -278,41 +288,33 @@ pub async fn decide_in_auth_tarpit(
 
 /// Periodically refreshes admin-configurable thresholds and merges active
 /// `ban_rules` rows into the in-memory tarpit state, so webui edits take
-/// effect without a server restart.
-pub fn spawn_settings_refresher(pool: PgPool, state: TarpitState, thresholds: SharedThresholds) {
+/// effect without a server restart. Runs the first refresh synchronously
+/// (awaited by the caller) so threshold rules are loaded from the DB before
+/// the server starts accepting connections — otherwise the default empty
+/// rule set would let an initial burst of failures through uncounted.
+pub async fn spawn_settings_refresher(pool: PgPool, state: TarpitState, thresholds: SharedThresholds) {
+    refresh_once(&pool, &state, &thresholds).await;
     tokio::spawn(async move {
         loop {
-            refresh_once(&pool, &state, &thresholds).await;
             tokio::time::sleep(Duration::from_secs(30)).await;
+            refresh_once(&pool, &state, &thresholds).await;
         }
     });
 }
 
 async fn refresh_once(pool: &PgPool, state: &TarpitState, thresholds: &SharedThresholds) {
-    let count = Settings::get(pool, "tarpit_threshold_count")
-        .await
-        .ok()
-        .flatten()
-        .and_then(|v| v.parse::<u32>().ok())
-        .unwrap_or(5);
-    let window_secs = Settings::get(pool, "tarpit_threshold_window_seconds")
-        .await
-        .ok()
-        .flatten()
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(600);
     let enabled = Settings::get(pool, "tarpit_enabled")
         .await
         .ok()
         .flatten()
         .map(|v| v == "true")
         .unwrap_or(true);
+    let rules = TarpitThreshold::list_enabled(pool).await.unwrap_or_default();
 
     {
         let mut t = thresholds.lock().await;
-        t.count = count;
-        t.window = Duration::from_secs(window_secs);
         t.enabled = enabled;
+        t.rules = rules;
     }
 
     let Ok(rules) = BanRule::list_active(pool).await else {
@@ -366,8 +368,19 @@ mod tests {
         assert_eq!(TarpitMethod::round_robin(4), TarpitMethod::SlowAuth);
     }
 
-    fn thresholds() -> Thresholds {
-        Thresholds { count: 3, window: Duration::from_secs(60), enabled: true }
+    fn rule(fail_count: i32, window_secs: i64) -> TarpitThreshold {
+        let now = time::OffsetDateTime::now_utc();
+        TarpitThreshold {
+            id: Uuid::now_v7(),
+            fail_count,
+            window_seconds: window_secs,
+            enabled: true,
+            ts: tunnel2tunnel_core::timestamps::Timestamps { created_at: now, updated_at: now },
+        }
+    }
+
+    fn thresholds() -> Vec<TarpitThreshold> {
+        vec![rule(3, 60)]
     }
 
     #[test]
@@ -401,7 +414,20 @@ mod tests {
         // Well outside the 60s window — should reset instead of accumulating.
         let later = now + Duration::from_secs(120);
         assert!(!record_failure(&mut map, "1.2.3.4", &t, later));
-        assert_eq!(map["1.2.3.4"].fail_count, 1);
+        assert_eq!(map["1.2.3.4"].tallies[&t[0].id].0, 1);
+    }
+
+    #[test]
+    fn independent_rules_trip_on_their_own_window() {
+        // 2-in-30s rule and a 5-in-600s rule, evaluated independently — the
+        // tight rule should trip first even though the loose rule is nowhere
+        // near its own count.
+        let mut map = HashMap::new();
+        let t = vec![rule(2, 30), rule(5, 600)];
+        let now = Instant::now();
+        assert!(!record_failure(&mut map, "1.2.3.4", &t, now));
+        assert!(record_failure(&mut map, "1.2.3.4", &t, now));
+        assert_eq!(map["1.2.3.4"].trigger_count, 1);
     }
 
     #[test]
@@ -415,7 +441,7 @@ mod tests {
         assert!(map["1.2.3.4"].is_banned(now));
 
         clear_fail_tally_on_success(&mut map, "1.2.3.4", now);
-        assert_eq!(map["1.2.3.4"].fail_count, 0);
+        assert!(map["1.2.3.4"].tallies.is_empty());
         // Ban itself must survive a success — success only guarantees the
         // *current* session isn't interrupted, not that the ban is lifted.
         assert!(map["1.2.3.4"].is_banned(now));

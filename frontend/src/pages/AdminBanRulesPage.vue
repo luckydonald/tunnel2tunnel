@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import AppShell from '@/components/AppShell.vue'
-import { adminApi, type BanRule, type TarpitSettings } from '@/api/admin'
+import { adminApi, type BanRule, type TarpitSettings, type TarpitThreshold } from '@/api/admin'
 import { banScopeTypeLabel, banScopeTypeOptions } from '@/labels'
 import { useToast } from '@/composables/useToast'
 
@@ -92,9 +92,79 @@ async function saveSettings(): Promise<void> {
   }
 }
 
+// Threshold rules (multiple independent count+window rules)
+const thresholds = ref<TarpitThreshold[]>([])
+const thresholdsLoading = ref(true)
+
+async function loadThresholds(): Promise<void> {
+  thresholdsLoading.value = true
+  try {
+    thresholds.value = await adminApi.listTarpitThresholds()
+  } catch (e) {
+    toast(e instanceof Error ? e.message : 'Failed to load threshold rules')
+  } finally {
+    thresholdsLoading.value = false
+  }
+}
+
+const showAddThreshold = ref(false)
+type NewThreshold = { fail_count: number; window_seconds: number }
+const blankThreshold = (): NewThreshold => ({ fail_count: 5, window_seconds: 600 })
+const newThreshold = ref<NewThreshold>(blankThreshold())
+const addingThreshold = ref(false)
+
+async function handleAddThreshold(): Promise<void> {
+  addingThreshold.value = true
+  try {
+    await adminApi.createTarpitThreshold({
+      fail_count: newThreshold.value.fail_count,
+      window_seconds: newThreshold.value.window_seconds,
+      enabled: true,
+    })
+    showAddThreshold.value = false
+    newThreshold.value = blankThreshold()
+    await loadThresholds()
+  } catch (e) {
+    toast(e instanceof Error ? e.message : 'Failed to add threshold rule')
+  } finally {
+    addingThreshold.value = false
+  }
+}
+
+async function handleToggleThreshold(t: TarpitThreshold): Promise<void> {
+  try {
+    await adminApi.updateTarpitThreshold(t.id, {
+      fail_count: t.fail_count,
+      window_seconds: t.window_seconds,
+      enabled: t.enabled,
+    })
+  } catch (e) {
+    toast(e instanceof Error ? e.message : 'Failed to update threshold rule')
+    await loadThresholds()
+  }
+}
+
+async function handleDeleteThreshold(id: string): Promise<void> {
+  if (!confirm('Remove this threshold rule?')) return
+  try {
+    await adminApi.deleteTarpitThreshold(id)
+    thresholds.value = thresholds.value.filter(t => t.id !== id)
+  } catch (e) {
+    toast(e instanceof Error ? e.message : 'Failed to remove threshold rule')
+  }
+}
+
+function formatWindow(seconds: number): string {
+  if (seconds % 86400 === 0) return `${seconds / 86400}d`
+  if (seconds % 3600 === 0) return `${seconds / 3600}h`
+  if (seconds % 60 === 0) return `${seconds / 60}m`
+  return `${seconds}s`
+}
+
 onMounted(() => {
   loadRules()
   loadSettings()
+  loadThresholds()
 })
 </script>
 
@@ -105,23 +175,61 @@ onMounted(() => {
     </div>
 
     <section class="section">
-      <h2>Global Thresholds</h2>
+      <h2>Tarpit Enforcement</h2>
       <div v-if="settings" class="thresholds-card">
         <label class="checkbox-label">
           <input v-model="settings.enabled" type="checkbox" /> Tarpit/ban enforcement enabled
         </label>
-        <div class="field-inline">
-          <label>Failed attempts before ban</label>
-          <input v-model.number="settings.threshold_count" type="number" min="1" class="input-sm" />
-        </div>
-        <div class="field-inline">
-          <label>Window (seconds)</label>
-          <input v-model.number="settings.threshold_window_seconds" type="number" min="1" class="input-sm" />
-        </div>
         <button class="btn-primary" :disabled="savingSettings" @click="saveSettings">
           {{ savingSettings ? 'Saving…' : 'Save' }}
         </button>
       </div>
+    </section>
+
+    <section class="section">
+      <div class="section-header">
+        <h2>Threshold Rules</h2>
+        <button class="btn-secondary" @click="showAddThreshold = !showAddThreshold">
+          {{ showAddThreshold ? 'Cancel' : 'Add rule' }}
+        </button>
+      </div>
+
+      <div v-if="showAddThreshold" class="add-form">
+        <input v-model.number="newThreshold.fail_count" type="number" min="1" class="input-sm" placeholder="Failed attempts" />
+        <span class="section-note">in</span>
+        <input v-model.number="newThreshold.window_seconds" type="number" min="1" class="input-sm" placeholder="Window (seconds)" />
+        <span class="section-note">seconds</span>
+        <button
+          class="btn-primary"
+          :disabled="addingThreshold || !newThreshold.fail_count || !newThreshold.window_seconds"
+          @click="handleAddThreshold"
+        >
+          {{ addingThreshold ? 'Adding…' : 'Add' }}
+        </button>
+      </div>
+
+      <div v-if="thresholdsLoading" class="loading">Loading…</div>
+      <table v-else-if="thresholds.length" class="data-table">
+        <thead>
+          <tr>
+            <th>Failed attempts</th>
+            <th>Window</th>
+            <th>Enabled</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="t in thresholds" :key="t.id">
+            <td>{{ t.fail_count }}</td>
+            <td>{{ formatWindow(t.window_seconds) }}</td>
+            <td>
+              <input type="checkbox" v-model="t.enabled" @change="handleToggleThreshold(t)" />
+            </td>
+            <td><button class="btn-del-sm" @click="handleDeleteThreshold(t.id)">×</button></td>
+          </tr>
+        </tbody>
+      </table>
+      <p v-else class="empty">No threshold rules — tarpit/ban auto-trigger is inert until at least one is added.</p>
     </section>
 
     <section class="section">
@@ -190,6 +298,7 @@ onMounted(() => {
   padding: 1rem; background: #1a1d27; border-radius: 6px;
 }
 .checkbox-label { display: flex; align-items: center; gap: 0.375rem; color: #94a3b8; font-size: 0.875rem; }
+.section-note { color: #64748b; font-size: 0.875rem; }
 .field-inline {
   display: flex; align-items: center; gap: 0.5rem; color: #94a3b8; font-size: 0.875rem;
   label { white-space: nowrap; }

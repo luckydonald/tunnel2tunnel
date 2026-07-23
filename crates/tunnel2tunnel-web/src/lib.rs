@@ -117,6 +117,12 @@ pub async fn start(config: WebConfig, pool: PgPool) -> anyhow::Result<()> {
         .route("/api/admin/tarpit-settings",
             get(routes::tarpit::get_tarpit_settings)
             .put(routes::tarpit::update_tarpit_settings))
+        .route("/api/admin/tarpit-thresholds",
+            get(routes::tarpit::list_tarpit_thresholds)
+            .post(routes::tarpit::create_tarpit_threshold))
+        .route("/api/admin/tarpit-thresholds/{id}",
+            put(routes::tarpit::update_tarpit_threshold)
+            .delete(routes::tarpit::delete_tarpit_threshold))
         // server info (authenticated)
         .route("/api/server-info",
             get(routes::server_info::get_server_info))

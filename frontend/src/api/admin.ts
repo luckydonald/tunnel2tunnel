@@ -63,8 +63,21 @@ export interface CreateBanRuleParams {
 }
 
 export interface TarpitSettings {
-  threshold_count: number
-  threshold_window_seconds: number
+  enabled: boolean
+}
+
+export interface TarpitThreshold {
+  id: string
+  fail_count: number
+  window_seconds: number
+  enabled: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface TarpitThresholdParams {
+  fail_count: number
+  window_seconds: number
   enabled: boolean
 }
 
@@ -182,6 +195,23 @@ export const adminApi = {
       method: 'PUT',
       body: JSON.stringify(settings),
     }),
+
+  listTarpitThresholds: () => apiFetch<TarpitThreshold[]>('/api/admin/tarpit-thresholds'),
+
+  createTarpitThreshold: (params: TarpitThresholdParams) =>
+    apiFetch<TarpitThreshold>('/api/admin/tarpit-thresholds', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    }),
+
+  updateTarpitThreshold: (id: string, params: TarpitThresholdParams) =>
+    apiFetch<TarpitThreshold>(`/api/admin/tarpit-thresholds/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(params),
+    }),
+
+  deleteTarpitThreshold: (id: string) =>
+    apiFetch<void>(`/api/admin/tarpit-thresholds/${id}`, { method: 'DELETE' }),
 
   sampleError: () => apiFetch<void>('/api/admin/sample-error'),
 }

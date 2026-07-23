@@ -13,6 +13,7 @@ use uuid::Uuid;
 
 use tunnel2tunnel_core::models::{
     ban_rule::BanRule, connection_log::ConnectionLog, settings::Settings,
+    tarpit_threshold::TarpitThreshold,
 };
 
 use crate::{extractors::AdminUser, error::WebError, routes::entities::ConnLogResponse, AppState};
@@ -172,19 +173,15 @@ pub async fn delete_ban_rule(
     }
 }
 
-// ── Global threshold settings ────────────────────────────────────────────────
+// ── Global tarpit enable/disable ─────────────────────────────────────────────
 
 #[derive(Serialize)]
 pub struct TarpitSettingsResponse {
-    pub threshold_count: u32,
-    pub threshold_window_seconds: u64,
     pub enabled: bool,
 }
 
 #[derive(Deserialize)]
 pub struct UpdateTarpitSettingsBody {
-    pub threshold_count: u32,
-    pub threshold_window_seconds: u64,
     pub enabled: bool,
 }
 
@@ -192,27 +189,13 @@ pub async fn get_tarpit_settings(
     AdminUser(_admin): AdminUser,
     State(state): State<AppState>,
 ) -> Result<Json<TarpitSettingsResponse>, WebError> {
-    let threshold_count = Settings::get(&state.db, "tarpit_threshold_count")
-        .await
-        .map_err(WebError::Core)?
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(5);
-    let threshold_window_seconds = Settings::get(&state.db, "tarpit_threshold_window_seconds")
-        .await
-        .map_err(WebError::Core)?
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(600);
     let enabled = Settings::get(&state.db, "tarpit_enabled")
         .await
         .map_err(WebError::Core)?
         .map(|v| v == "true")
         .unwrap_or(true);
 
-    Ok(Json(TarpitSettingsResponse {
-        threshold_count,
-        threshold_window_seconds,
-        enabled,
-    }))
+    Ok(Json(TarpitSettingsResponse { enabled }))
 }
 
 pub async fn update_tarpit_settings(
@@ -220,26 +203,104 @@ pub async fn update_tarpit_settings(
     State(state): State<AppState>,
     Json(body): Json<UpdateTarpitSettingsBody>,
 ) -> Result<StatusCode, WebError> {
-    if body.threshold_count == 0 {
-        return Err(WebError::BadRequest("threshold_count must be positive".into()));
-    }
-    if body.threshold_window_seconds == 0 {
-        return Err(WebError::BadRequest("threshold_window_seconds must be positive".into()));
-    }
-    Settings::set(&state.db, "tarpit_threshold_count", &body.threshold_count.to_string())
-        .await
-        .map_err(WebError::Core)?;
-    Settings::set(
-        &state.db,
-        "tarpit_threshold_window_seconds",
-        &body.threshold_window_seconds.to_string(),
-    )
-    .await
-    .map_err(WebError::Core)?;
     Settings::set(&state.db, "tarpit_enabled", if body.enabled { "true" } else { "false" })
         .await
         .map_err(WebError::Core)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+// ── Threshold rules CRUD ─────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct TarpitThresholdResponse {
+    pub id: Uuid,
+    pub fail_count: i32,
+    pub window_seconds: i64,
+    pub enabled: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<TarpitThreshold> for TarpitThresholdResponse {
+    fn from(t: TarpitThreshold) -> Self {
+        use time::format_description::well_known::Rfc3339;
+        Self {
+            id: t.id,
+            fail_count: t.fail_count,
+            window_seconds: t.window_seconds,
+            enabled: t.enabled,
+            created_at: t.ts.created_at.format(&Rfc3339).unwrap_or_default(),
+            updated_at: t.ts.updated_at.format(&Rfc3339).unwrap_or_default(),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct TarpitThresholdBody {
+    pub fail_count: i32,
+    pub window_seconds: i64,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn validate_threshold_body(body: &TarpitThresholdBody) -> Result<(), WebError> {
+    if body.fail_count <= 0 {
+        return Err(WebError::BadRequest("fail_count must be positive".into()));
+    }
+    if body.window_seconds <= 0 {
+        return Err(WebError::BadRequest("window_seconds must be positive".into()));
+    }
+    Ok(())
+}
+
+pub async fn list_tarpit_thresholds(
+    AdminUser(_admin): AdminUser,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<TarpitThresholdResponse>>, WebError> {
+    let rules = TarpitThreshold::list_all(&state.db).await.map_err(WebError::Core)?;
+    Ok(Json(rules.into_iter().map(TarpitThresholdResponse::from).collect()))
+}
+
+pub async fn create_tarpit_threshold(
+    AdminUser(_admin): AdminUser,
+    State(state): State<AppState>,
+    Json(body): Json<TarpitThresholdBody>,
+) -> Result<(StatusCode, Json<TarpitThresholdResponse>), WebError> {
+    validate_threshold_body(&body)?;
+    let rule = TarpitThreshold::create(&state.db, body.fail_count, body.window_seconds, body.enabled)
+        .await
+        .map_err(WebError::Core)?;
+    Ok((StatusCode::CREATED, Json(TarpitThresholdResponse::from(rule))))
+}
+
+pub async fn update_tarpit_threshold(
+    AdminUser(_admin): AdminUser,
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<TarpitThresholdBody>,
+) -> Result<Json<TarpitThresholdResponse>, WebError> {
+    validate_threshold_body(&body)?;
+    let rule = TarpitThreshold::update(&state.db, id, body.fail_count, body.window_seconds, body.enabled)
+        .await
+        .map_err(WebError::Core)?
+        .ok_or(WebError::NotFound)?;
+    Ok(Json(TarpitThresholdResponse::from(rule)))
+}
+
+pub async fn delete_tarpit_threshold(
+    AdminUser(_admin): AdminUser,
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, WebError> {
+    if TarpitThreshold::delete(&state.db, id).await.map_err(WebError::Core)? {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(WebError::NotFound)
+    }
 }
 
 #[cfg(test)]

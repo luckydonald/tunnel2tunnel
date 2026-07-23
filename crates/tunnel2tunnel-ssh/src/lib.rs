@@ -96,9 +96,9 @@ pub async fn start(config: SshConfig, pool: PgPool) -> Result<()> {
     let session_registry: SessionRegistry = Arc::new(Mutex::new(HashMap::new()));
     let fail2ban = config.fail2ban_log_path.map(Arc::new);
     let tarpit_state: TarpitState = tarpit::new_state();
-    let thresholds: SharedThresholds = Arc::new(Mutex::new(tarpit::Thresholds::default()));
+    let thresholds: SharedThresholds = Arc::new(Mutex::new(tarpit::ThresholdConfig::default()));
 
-    tarpit::spawn_settings_refresher(pool.clone(), tarpit_state.clone(), thresholds.clone());
+    tarpit::spawn_settings_refresher(pool.clone(), tarpit_state.clone(), thresholds.clone()).await;
 
     let mut server = T2tServer {
         pool: pool.clone(),

@@ -7,4 +7,5 @@ pub mod entity_port_discovery_rule;
 pub mod friendship;
 pub mod settings;
 pub mod ssh_key;
+pub mod tarpit_threshold;
 pub mod user;
