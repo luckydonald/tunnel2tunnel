@@ -2,7 +2,13 @@
 import { ref, onMounted } from 'vue'
 import AppShell from '@/components/AppShell.vue'
 import { adminApi, type BanRule, type TarpitAction, type TarpitSettings, type TarpitThreshold } from '@/api/admin'
-import { banScopeTypeLabel, banScopeTypeOptions, tarpitActionLabel, tarpitActionOptions } from '@/labels'
+import {
+  banScopeTypeLabel,
+  ruleScopeTypeOptions,
+  tarpitActionLabel,
+  tarpitActionOptions,
+  type RuleScopeType,
+} from '@/labels'
 import { useToast } from '@/composables/useToast'
 
 const { show: toast } = useToast()
@@ -23,40 +29,60 @@ async function loadRules(): Promise<void> {
 
 const showAdd = ref(false)
 type NewRule = {
-  scope_type: 'peer_ip' | 'user'
+  scope_type: RuleScopeType
   peer_ip: string
   user_id: string
   reason: string
   active_until: string
   action: TarpitAction
+  fail_count: number
+  window_seconds: number
 }
 const blankRule = (): NewRule => ({
-  scope_type: 'peer_ip',
+  scope_type: 'global',
   peer_ip: '',
   user_id: '',
   reason: '',
   active_until: '',
-  action: 'ban',
+  action: 'trap',
+  fail_count: 5,
+  window_seconds: 600,
 })
 const newRule = ref<NewRule>(blankRule())
 const adding = ref(false)
 
+function canAdd(r: NewRule): boolean {
+  if (r.scope_type === 'global') return !!r.fail_count && !!r.window_seconds
+  if (r.scope_type === 'peer_ip') return !!r.peer_ip
+  return !!r.user_id
+}
+
 async function handleAdd(): Promise<void> {
   adding.value = true
   try {
-    await adminApi.createBanRule({
-      scope_type: newRule.value.scope_type,
-      peer_ip: newRule.value.scope_type === 'peer_ip' ? newRule.value.peer_ip : null,
-      user_id: newRule.value.scope_type === 'user' ? newRule.value.user_id : null,
-      reason: newRule.value.reason || null,
-      active_until: newRule.value.active_until ? new Date(newRule.value.active_until).toISOString() : null,
-      action: newRule.value.action,
-    })
+    if (newRule.value.scope_type === 'global') {
+      await adminApi.createTarpitThreshold({
+        fail_count: newRule.value.fail_count,
+        window_seconds: newRule.value.window_seconds,
+        enabled: true,
+        action: newRule.value.action,
+      })
+      await loadThresholds()
+    } else {
+      await adminApi.createBanRule({
+        scope_type: newRule.value.scope_type,
+        peer_ip: newRule.value.scope_type === 'peer_ip' ? newRule.value.peer_ip : null,
+        user_id: newRule.value.scope_type === 'user' ? newRule.value.user_id : null,
+        reason: newRule.value.reason || null,
+        active_until: newRule.value.active_until ? new Date(newRule.value.active_until).toISOString() : null,
+        action: newRule.value.action,
+      })
+      await loadRules()
+    }
     showAdd.value = false
     newRule.value = blankRule()
-    await loadRules()
   } catch (e) {
-    toast(e instanceof Error ? e.message : 'Failed to add ban rule')
+    toast(e instanceof Error ? e.message : 'Failed to add rule')
   } finally {
     adding.value = false
   }
@@ -122,31 +148,6 @@ async function loadThresholds(): Promise<void> {
     toast(e instanceof Error ? e.message : 'Failed to load threshold rules')
   } finally {
     thresholdsLoading.value = false
-  }
-}
-
-const showAddThreshold = ref(false)
-type NewThreshold = { fail_count: number; window_seconds: number; action: TarpitAction }
-const blankThreshold = (): NewThreshold => ({ fail_count: 5, window_seconds: 600, action: 'trap' })
-const newThreshold = ref<NewThreshold>(blankThreshold())
-const addingThreshold = ref(false)
-
-async function handleAddThreshold(): Promise<void> {
-  addingThreshold.value = true
-  try {
-    await adminApi.createTarpitThreshold({
-      fail_count: newThreshold.value.fail_count,
-      window_seconds: newThreshold.value.window_seconds,
-      enabled: true,
-      action: newThreshold.value.action,
-    })
-    showAddThreshold.value = false
-    newThreshold.value = blankThreshold()
-    await loadThresholds()
-  } catch (e) {
-    toast(e instanceof Error ? e.message : 'Failed to add threshold rule')
-  } finally {
-    addingThreshold.value = false
   }
 }
 
@@ -217,29 +218,37 @@ onMounted(() => {
 
     <section class="section">
       <div class="section-header">
-        <h2>Threshold Rules</h2>
-        <button class="btn-secondary" @click="showAddThreshold = !showAddThreshold">
-          {{ showAddThreshold ? 'Cancel' : 'Add rule' }}
-        </button>
+        <h2>Rules</h2>
+        <button class="btn-secondary" @click="showAdd = !showAdd">{{ showAdd ? 'Cancel' : 'Add rule' }}</button>
       </div>
 
-      <div v-if="showAddThreshold" class="add-form">
-        <input v-model.number="newThreshold.fail_count" type="number" min="1" class="input-sm" placeholder="Failed attempts" />
-        <span class="section-note">in</span>
-        <input v-model.number="newThreshold.window_seconds" type="number" min="1" class="input-sm" placeholder="Window (seconds)" />
-        <span class="section-note">seconds,</span>
-        <select v-model="newThreshold.action" class="select-sm">
+      <div v-if="showAdd" class="add-form">
+        <select v-model="newRule.scope_type" class="select-sm">
+          <option v-for="opt in ruleScopeTypeOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+        </select>
+
+        <template v-if="newRule.scope_type === 'global'">
+          <input v-model.number="newRule.fail_count" type="number" min="1" class="input-sm" placeholder="Failed attempts" />
+          <span class="section-note">in</span>
+          <input v-model.number="newRule.window_seconds" type="number" min="1" class="input-sm" placeholder="Window (seconds)" />
+          <span class="section-note">seconds</span>
+        </template>
+        <template v-else>
+          <input v-if="newRule.scope_type === 'peer_ip'" v-model="newRule.peer_ip" type="text" class="input-sm" placeholder="Peer IP" />
+          <input v-else v-model="newRule.user_id" type="text" class="input-sm" placeholder="User ID (UUID)" />
+          <input v-model="newRule.reason" type="text" class="input-sm" placeholder="Reason (optional)" />
+          <input v-model="newRule.active_until" type="datetime-local" class="input-sm" title="Active until (blank = indefinite)" />
+        </template>
+
+        <select v-model="newRule.action" class="select-sm">
           <option v-for="opt in tarpitActionOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
         </select>
-        <button
-          class="btn-primary"
-          :disabled="addingThreshold || !newThreshold.fail_count || !newThreshold.window_seconds"
-          @click="handleAddThreshold"
-        >
-          {{ addingThreshold ? 'Adding…' : 'Add' }}
+        <button class="btn-primary" :disabled="adding || !canAdd(newRule)" @click="handleAdd">
+          {{ adding ? 'Adding…' : 'Add' }}
         </button>
       </div>
 
+      <h3 class="subsection-title">Global thresholds</h3>
       <div v-if="thresholdsLoading" class="loading">Loading…</div>
       <table v-else-if="thresholds.length" class="data-table">
         <thead>
@@ -272,34 +281,8 @@ onMounted(() => {
         </tbody>
       </table>
       <p v-else class="empty">No threshold rules — tarpit/ban auto-trigger is inert until at least one is added.</p>
-    </section>
 
-    <section class="section">
-      <div class="section-header">
-        <h2>Rules</h2>
-        <button class="btn-secondary" @click="showAdd = !showAdd">{{ showAdd ? 'Cancel' : 'Add rule' }}</button>
-      </div>
-
-      <div v-if="showAdd" class="add-form">
-        <select v-model="newRule.scope_type" class="select-sm">
-          <option v-for="opt in banScopeTypeOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-        </select>
-        <input v-if="newRule.scope_type === 'peer_ip'" v-model="newRule.peer_ip" type="text" class="input-sm" placeholder="Peer IP" />
-        <input v-else v-model="newRule.user_id" type="text" class="input-sm" placeholder="User ID (UUID)" />
-        <input v-model="newRule.reason" type="text" class="input-sm" placeholder="Reason (optional)" />
-        <input v-model="newRule.active_until" type="datetime-local" class="input-sm" title="Active until (blank = indefinite)" />
-        <select v-model="newRule.action" class="select-sm">
-          <option v-for="opt in tarpitActionOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-        </select>
-        <button
-          class="btn-primary"
-          :disabled="adding || (newRule.scope_type === 'peer_ip' ? !newRule.peer_ip : !newRule.user_id)"
-          @click="handleAdd"
-        >
-          {{ adding ? 'Adding…' : 'Add' }}
-        </button>
-      </div>
-
+      <h3 class="subsection-title">IP / user rules</h3>
       <div v-if="rulesLoading" class="loading">Loading…</div>
       <table v-else-if="rules.length" class="data-table">
         <thead>
@@ -343,6 +326,7 @@ onMounted(() => {
   h2 { font-size: 1rem; color: #94a3b8; margin-bottom: 1rem; text-transform: uppercase; letter-spacing: 0.06em; }
 }
 .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; h2 { margin: 0; } }
+.subsection-title { font-size: 0.8125rem; color: #64748b; margin: 1.25rem 0 0.5rem; text-transform: uppercase; letter-spacing: 0.05em; }
 
 .thresholds-card {
   display: flex; align-items: center; gap: 1.25rem; flex-wrap: wrap;

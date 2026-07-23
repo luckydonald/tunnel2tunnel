@@ -53,6 +53,17 @@ export const banScopeTypeOptions = (
   Object.entries(banScopeTypeLabel) as [BanScopeType, string][]
 ).map(([value, label]) => ({ value, label }))
 
+export type RuleScopeType = BanScopeType | 'global'
+
+export const ruleScopeTypeLabel: Record<RuleScopeType, string> = {
+  global:  'Global (auto-trigger threshold)',
+  ...banScopeTypeLabel,
+}
+
+export const ruleScopeTypeOptions = (
+  Object.entries(ruleScopeTypeLabel) as [RuleScopeType, string][]
+).map(([value, label]) => ({ value, label }))
+
 export const tarpitActionLabel: Record<TarpitAction, string> = {
   trap: 'Trap',
   ban:  'Ban',
