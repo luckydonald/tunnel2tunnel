@@ -7,3 +7,4 @@
 - [russh auth types + entity.name](russh_method_set.md) — `MethodKind`/`MethodSet` at `russh::` root (not `russh::auth`); `entity.name` is `Option<String>`, unwrap before `%` in tracing
 - [Coolify compose pattern](coolify_compose_pattern.md) — magic vars, custom env vars, volumes; update 5 files when adding a new env var
 - [SSH host key persistence](ssh_key_persistence.md) — ssh-key 0.7 encrypt/decrypt API; load-or-generate pattern; mount `/data` as volume
+- [Tarpit e2e test flake](project_tarpit_test_flake.md) — `repeated_bans_eventually_engage_banner_drip` fails pre-existingly, shared-DB peer_ip pollution, not a regression signal
