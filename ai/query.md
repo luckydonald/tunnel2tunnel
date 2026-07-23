@@ -787,3 +787,5 @@ Generally:
 > </details>
 >
 
+❯ Simpify the `MultiButton` component as basically a wrapper applying `:not(:first-child)` and `:not(:last-child)` sylings setting the borders and spaces on the affected sides to 0.
+
