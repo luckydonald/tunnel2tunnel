@@ -738,3 +738,12 @@ Generally:
 
 ❯ Btw, while at it, currently there's one global rule, and addable rules for user/ips. Instead that one global rule should _also_ be allowed to configure multiple times - to have `x in 60 minutes` + `y in 24 hours`, `z in a week`, `i in 30 days` and so on, so there are multiple windows in which they can get strikes.
 
+❯ Task Notification:
+> - Task `aa104ced8a9ad571c` <kbd>completed</kbd>
+> - Tool `toolu_012ZXLU657rrB4TGJvtnThqA`
+> - > Agent "Find tarpit engine logic and settings admin UI" finished
+> - [Query (`1975` chars, `1.94 KB`)](output/agents/017.aa104ced8a9ad571c/prompt.md)
+> - [Answer (`17867` chars, `17.5 KB`)](output/agents/017.aa104ced8a9ad571c/result.md)
+> - [Raw log (`178642` chars, `175 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/6b1c7bbf-317f-4cd4-9829-855c18ee5b7b/tasks/aa104ced8a9ad571c.output)
+> - `11` tools, `40435` tokens, `1.52428 s`
+
