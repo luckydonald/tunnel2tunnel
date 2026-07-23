@@ -764,3 +764,5 @@ Generally:
 > - [Raw log (`315264` chars, `310 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/6b1c7bbf-317f-4cd4-9829-855c18ee5b7b/tasks/a92f9713fdde7e212.output)
 > - `14` tools, `67776` tokens, `1.74597 s`
 
+❯ Ah, good point that the admin ban button does something else. Please have that button being instead two merged buttons (where left and right button part are attached, create a MultiButton component for that. Like the bootstrap Button groups; have no border radius and spacing between them), `( Trap | Ban )` where the action to take would be the decision to ban or trap, like the windows would. That also streamlines the states again, because automatic window based decisions could be distinguished by the reference to said window config, and admin actions can be detected by reference to the admin user.
+
