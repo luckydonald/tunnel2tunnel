@@ -766,3 +766,24 @@ Generally:
 
 ❯ Ah, good point that the admin ban button does something else. Please have that button being instead two merged buttons (where left and right button part are attached, create a MultiButton component for that. Like the bootstrap Button groups; have no border radius and spacing between them), `( Trap | Ban )` where the action to take would be the decision to ban or trap, like the windows would. That also streamlines the states again, because automatic window based decisions could be distinguished by the reference to said window config, and admin actions can be detected by reference to the admin user.
 
+❯ Question answered.
+> <details><summary>
+>
+>> 1. Admin picks "Trap" via the new button — should that log row also reference the `ban_rules` row (so you can trace it back to which admin/rule), or stay reference-less like today (only `Ban` picks get a traceable reference)?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Trap reference** (1/1) <kbd>Single Select</kbd><br>
+>> Admin picks "Trap" via the new button — should that log row also reference the `ban_rules` row (so you can trace it back to which admin/rule), or stay reference-less like today (only `Ban` picks get a traceable reference)?
+> - [ ] 1\. Always reference the source (Recommended)
+>   - _Every trap-flavored log row from an admin-created rule points to that ban_rules row too, symmetric with threshold-triggered traps pointing to tarpit_threshold_id. Drop the earlier XOR framing — whichever source decided it gets referenced, regardless of action._
+> - [ ] 2\. Only reference on Ban
+>   - _Keep it minimal: only auto_ban/admin_ban get a traceable reference; an admin's "Trap" pick just sets tarpit_action='trap' with no ban_rules_id, same blind spot as today._
+> - [x] 3\. _Type something:_
+>   - > Always reference the source. But to my understanding the tarpit-threshold (aka window) and admin decision would be exclusive? Or am I wrong here? After all the admin would decide this at some other time as a window.
+>
+> </details>
+>
+

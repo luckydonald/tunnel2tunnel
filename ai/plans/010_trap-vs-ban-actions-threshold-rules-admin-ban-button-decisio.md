@@ -23,7 +23,7 @@ ALTER TABLE connection_logs ADD COLUMN banned_by_ban_rule_id UUID REFERENCES ban
 ALTER TABLE connection_logs ADD CONSTRAINT connection_logs_ban_reference_xor_check
   CHECK (tarpit_threshold_id IS NULL OR banned_by_ban_rule_id IS NULL);
 ```
-`tarpit_action` records what actually happened (`'trap'` also covers the existing `tarpit_method` banner_drip/slow_auth/fake_shell flavor, unchanged); exactly one (or neither) of the two reference columns is set. The admin behind an `admin_ban` is reached via `banned_by_ban_rule_id → ban_rules.created_by`, no direct user FK needed on `connection_logs`.
+`tarpit_action` records what actually happened (`'trap'` also covers the existing `tarpit_method` banner_drip/slow_auth/fake_shell flavor, unchanged). The two reference columns stay strictly exclusive — a given ban event comes from exactly one source, a threshold trip *or* an admin rule match, never both — and now **both** get set whenever their source decided the outcome, regardless of whether that source's configured action was `trap` or `ban` (confirmed with user: reference tracks *source*, not *action*). The admin behind an admin-triggered event is reached via `banned_by_ban_rule_id → ban_rules.created_by`, no direct user FK needed on `connection_logs`.
 
 **`tunnel2tunnel-core::models::tarpit_threshold::TarpitThreshold`**: add `action: String`; thread through `create`/`update`.
 **`tunnel2tunnel-core::models::ban_rule::BanRule`**: add `action: String`; thread through `create` (no `update` exists today — fine, rules are delete+recreate).
@@ -39,11 +39,11 @@ pub enum BanSource { Threshold(Uuid), AdminRule(Uuid) } // Uuid = tarpit_thresho
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TarpitOutcome {
     None,
-    Trap { method: TarpitMethod, threshold_id: Option<Uuid> },
+    Trap { method: TarpitMethod, source: Option<BanSource> },
     Ban { source: BanSource },
 }
 ```
-`ThresholdConfig` gains a second list: `pub ban_rules: Vec<BanRule>` alongside `pub rules: Vec<TarpitThreshold>` (both refreshed together in `refresh_once`, replacing the current one-off `BanRule::list_active` merge-and-discard). `TarpitEntry` gains `ban_source: Option<BanSource>`, set:
+`Trap` and `Ban` both carry the same `BanSource` shape now (only `None` when the referenced row was deleted after the ban took effect — see fallback below) — kept as separate enum variants because control flow genuinely differs (`Ban` short-circuits straight to reject; `Trap` still goes through round-robin/slow-auth/fake-shell). `ThresholdConfig` gains a second list: `pub ban_rules: Vec<BanRule>` alongside `pub rules: Vec<TarpitThreshold>` (both refreshed together in `refresh_once`, replacing the current one-off `BanRule::list_active` merge-and-discard). `TarpitEntry` gains `ban_source: Option<BanSource>`, set:
 - In `record_failure`: when multiple rules trip in one call, prefer any `action == "ban"` rule over `"trap"`; tie-break by longest window (ban *duration* keeps using the max window across all tripped rules regardless of action, unchanged). Store the winning rule's id as `BanSource::Threshold(id)`.
 - In `refresh_once`'s ban_rules merge: `entry.ban_source = Some(BanSource::AdminRule(rule.id))` (not the admin's user id directly — reached via the rule, matching the Threshold pattern and staying live-editable if the rule is later edited... though today `ban_rules` has no `update`, only delete+recreate, so this mainly matters for consistency).
 
@@ -51,19 +51,17 @@ Shared resolver (pure, unit-testable):
 ```rust
 fn resolve_outcome(ban_source: &BanSource, trigger_count: u64, rules: &[TarpitThreshold], ban_rules: &[BanRule]) -> TarpitOutcome
 ```
-- `Threshold(id)`: look up in `rules`; not found (deleted) → fall back to `Trap{method: round_robin(trigger_count), threshold_id: None}`; found+`"ban"` → `Ban{source: Threshold(id)}`; found+`"trap"` → `Trap{method: round_robin(trigger_count), threshold_id: Some(id)}`.
-- `AdminRule(id)`: same shape, looked up in `ban_rules` instead; not found (rule deleted after ban took effect) → same lenient `Trap{..., threshold_id: None}` fallback; found+`"ban"` → `Ban{source: AdminRule(id)}`; found+`"trap"` → `Trap{..., threshold_id: None}` (an admin "Trap" pick doesn't reference a `tarpit_thresholds` row, so `connection_logs.tarpit_threshold_id` stays `NULL` for it — only `tarpit_action='trap'` records that an admin chose it; if we want that traceable too we'd need a `banned_by_ban_rule_id` on the trap path as well — see open call below).
+- `Threshold(id)`: look up in `rules`; not found (rule deleted after the ban took effect) → lenient fallback `Trap{method: round_robin(trigger_count), source: None}` (no reference — the row it would've pointed to is gone); found+`"ban"` → `Ban{source: Threshold(id)}`; found+`"trap"` → `Trap{method: round_robin(trigger_count), source: Some(Threshold(id))}`.
+- `AdminRule(id)`: same shape, looked up in `ban_rules` instead; not found → same lenient `Trap{..., source: None}` fallback; found+`"ban"` → `Ban{source: AdminRule(id)}`; found+`"trap"` → `Trap{method: round_robin(trigger_count), source: Some(AdminRule(id))}`.
 
-`decide_pre_auth_tarpit`/`decide_in_auth_tarpit` gain a `thresholds: &SharedThresholds` param (already exists as a field, just needs passing to these two call sites) and return `TarpitOutcome` instead of `Option<TarpitMethod>`. Pre-auth keeps the banner-drip-ineligibility downgrade (only applies when resolved outcome is `Trap{method: BannerDrip, ..}`).
-
-**Open call (flag before implementing):** should an admin's "Trap" pick also carry a reference (i.e. add `banned_by_ban_rule_id` to the log row even for `tarpit_action='trap'`, not just `'ban'`)? That would mean *every* trap-flavored log row from an admin-created rule points back to it, same as threshold-triggered traps point to `tarpit_threshold_id`. I think yes, for symmetry — will drop the `tarpit_threshold_id IS NULL OR banned_by_ban_rule_id IS NULL` XOR framing above to "exactly the source that decided this, regardless of action" and always set whichever reference matches the `BanSource`, not just for `Ban`. Confirming this reading before writing code.
+`decide_pre_auth_tarpit`/`decide_in_auth_tarpit` gain a `thresholds: &SharedThresholds` param (already exists as a field, just needs passing to these two call sites) and return `TarpitOutcome` instead of `Option<TarpitMethod>`. Pre-auth keeps the banner-drip-ineligibility downgrade (only applies when resolved outcome is `Trap{method: BannerDrip, ..}`, preserving `source` as-is).
 
 ## `crates/tunnel2tunnel-ssh/src/lib.rs`
 
-- Accept loop matches `TarpitOutcome`: `Ban{source}` → spawn a new `tarpit::log_hard_ban(pool, peer_ip, source)` (one `ConnectionLog::create` row: `fail_reason: "ip banned"`, `tarpit_action: "ban"`, the matching reference column set) then `continue` — socket drops, connection closes instantly, `russh` never touches it. `Trap{method: BannerDrip, threshold_id}` → existing `banner_drip::run` spawn, now passed the reference (threshold id, or nothing) to log correctly. `Trap{other, ..}` / `None` → existing handler path, caching the whole outcome (replacing `handler.tarpit_method`).
+- Accept loop matches `TarpitOutcome`: `Ban{source}` → spawn a new `tarpit::log_hard_ban(pool, peer_ip, source)` (one `ConnectionLog::create` row: `fail_reason: "ip banned"`, `tarpit_action: "ban"`, the reference column matching `source` set) then `continue` — socket drops, connection closes instantly, `russh` never touches it. `Trap{method: BannerDrip, source}` → existing `banner_drip::run` spawn, now passed `source` to log the reference correctly. `Trap{other, ..}` / `None` → existing handler path, caching the whole outcome (replacing `handler.tarpit_method`).
 - `T2tHandler.tarpit_method: Option<TarpitMethod>` → `tarpit_outcome: Option<TarpitOutcome>`; `resolve_tarpit_method` → `resolve_tarpit_outcome`.
 - Each of the ~7 auth-failure call sites (`auth_password`, `auth_keyboard_interactive`, 5 branches in `auth_publickey`): mechanical swap from `if method == Some(FakeShell) {...} if method == Some(SlowAuth) {...}` to matching `TarpitOutcome::Trap{method: FakeShell,..}` / `Trap{method: SlowAuth,..}` / `_ => {}` (covers `None` and `Ban` — both just fall through to the existing `Auth::Reject`, since a Handler callback has no third "just drop" return available).
-- `log_auth_failure` gains an `outcome: &TarpitOutcome` param, derives `tarpit_action`/`tarpit_threshold_id`/`banned_by_ban_rule_id` for `ConnectionLog::create`. `log_auth_success` untouched (a banned identity never reaches success today, unchanged).
+- `log_auth_failure` gains an `outcome: &TarpitOutcome` param. Derives, uniformly for both `Trap{source,..}` and `Ban{source}`: `tarpit_action` (`"trap"`/`"ban"`/`None`), and from `source` — `Some(Threshold(id))` → `tarpit_threshold_id = Some(id)`; `Some(AdminRule(id))` → `banned_by_ban_rule_id = Some(id)`; `None` → both `None` (the lenient-fallback case). `log_auth_success` untouched (a banned identity never reaches success today, unchanged).
 
 ## Web layer
 
