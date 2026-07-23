@@ -714,3 +714,12 @@ Generally:
 
 ❯ For the connection log view, add a row with information of which strike it is.
 
+❯ Task Notification:
+> - Task `a05c7e3f5a282c970` <kbd>completed</kbd>
+> - Tool `toolu_01BCE3y7hjdkH3MgmGvVzw5d`
+> - > Agent "Find connection log + strike/tarpit code" finished
+> - [Query (`1124` chars, `1.1 KB`)](output/agents/015.a05c7e3f5a282c970/prompt.md)
+> - [Answer (`6202` chars, `6.08 KB`)](output/agents/015.a05c7e3f5a282c970/result.md)
+> - [Raw log (`216508` chars, `212 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/6b1c7bbf-317f-4cd4-9829-855c18ee5b7b/tasks/a05c7e3f5a282c970.output)
+> - `10` tools, `54417` tokens, `0.708967 s`
+
