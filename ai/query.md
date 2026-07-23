@@ -723,3 +723,12 @@ Generally:
 > - [Raw log (`216508` chars, `212 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/6b1c7bbf-317f-4cd4-9829-855c18ee5b7b/tasks/a05c7e3f5a282c970.output)
 > - `10` tools, `54417` tokens, `0.708967 s`
 
+❯ Task Notification:
+> - Task `adc0ac23122c26f14` <kbd>completed</kbd>
+> - Tool `toolu_01E8W96ggvV5YdRGgThSfefm`
+> - > Agent "Find EntityDetail logs endpoint and route wiring" finished
+> - [Query (`1081` chars, `1.06 KB`)](output/agents/016.adc0ac23122c26f14/prompt.md)
+> - [Answer (`24918` chars, `24.8 KB`)](output/agents/016.adc0ac23122c26f14/result.md)
+> - [Raw log (`138648` chars, `137 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/6b1c7bbf-317f-4cd4-9829-855c18ee5b7b/tasks/adc0ac23122c26f14.output)
+> - `10` tools, `30813` tokens, `1.5155 s`
+
