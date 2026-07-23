@@ -747,3 +747,5 @@ Generally:
 > - [Raw log (`178642` chars, `175 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/6b1c7bbf-317f-4cd4-9829-855c18ee5b7b/tasks/aa104ced8a9ad571c.output)
 > - `11` tools, `40435` tokens, `1.52428 s`
 
+❯ Let's acutally limit this implemetation plan to just the refactoring of the rules.
+
