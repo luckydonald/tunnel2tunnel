@@ -820,3 +820,5 @@ Generally:
 
 ❯ the disconnect times doesn't seem to be recorded or displayed correctly.
 
+❯ /caveman:caveman
+
