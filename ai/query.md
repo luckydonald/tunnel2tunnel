@@ -822,3 +822,12 @@ Generally:
 
 ❯ /caveman:caveman
 
+❯ Task Notification:
+> - Task `a01a8cb9ac01e6919` <kbd>completed</kbd>
+> - Tool `toolu_01PE6MNBwmU3sZVwHcm7RTae`
+> - > Agent "Find disconnect time recording code" finished
+> - [Query (`916` chars, `916 B`)](output/agents/021.a01a8cb9ac01e6919/prompt.md)
+> - [Answer (`3547` chars, `3.49 KB`)](output/agents/021.a01a8cb9ac01e6919/result.md)
+> - [Raw log (`88663` chars, `86.9 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/664181c1-f628-40cf-9565-ab64bf63c255/tasks/a01a8cb9ac01e6919.output)
+> - `11` tools, `34500` tokens, `0.92205 s`
+
