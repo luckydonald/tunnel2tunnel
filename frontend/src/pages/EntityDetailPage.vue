@@ -661,6 +661,7 @@ async function handleDeleteEntity(): Promise<void> {
           <thead>
             <tr>
               <th>Time</th>
+              <th>Ended</th>
               <th>Peer IP</th>
               <th>Fingerprint</th>
               <th>Result</th>
@@ -671,6 +672,7 @@ async function handleDeleteEntity(): Promise<void> {
           <tbody>
             <tr v-for="l in connLogs" :key="l.id">
               <td class="td-ts">{{ new Date(l.started_at).toLocaleString() }}</td>
+              <td class="td-ts">{{ l.ended_at ? new Date(l.ended_at).toLocaleString() : '—' }}</td>
               <td>{{ l.peer_ip ?? '—' }}</td>
               <td><code v-if="l.key_fingerprint" class="fp">{{ l.key_fingerprint }}</code><span v-else>—</span></td>
               <td>
