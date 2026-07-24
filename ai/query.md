@@ -818,3 +818,5 @@ Generally:
 > - [Raw log (`145127` chars, `142 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/8d2a9763-67fc-45b5-b231-ef2c6d9df6d3/tasks/a7e0f2bd1d9f23d59.output)
 > - `13` tools, `29215` tokens, `0.7908 s`
 
+❯ the disconnect times doesn't seem to be recorded or displayed correctly.
+
