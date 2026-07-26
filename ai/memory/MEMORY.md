@@ -7,4 +7,6 @@
 - [russh auth types + entity.name](russh_method_set.md) — `MethodKind`/`MethodSet` at `russh::` root (not `russh::auth`); `entity.name` is `Option<String>`, unwrap before `%` in tracing
 - [Coolify compose pattern](coolify_compose_pattern.md) — magic vars, custom env vars, volumes; update 5 files when adding a new env var
 - [SSH host key persistence](ssh_key_persistence.md) — ssh-key 0.7 encrypt/decrypt API; load-or-generate pattern; mount `/data` as volume
-- [Tarpit e2e test flake](project_tarpit_test_flake.md) — `repeated_bans_eventually_engage_banner_drip` fails pre-existingly, shared-DB peer_ip pollution, not a regression signal
+- [Tarpit e2e test flake](project_tarpit_test_flake.md) — RESOLVED 2026-07-26: fix is binding the client socket's *source* address, not varying the destination
+- [Local Postgres port](project_local_postgres_port.md) — `t2t-pg` podman maps host 5433 not 5432; a separate Docker container can squat 5432
+- [Test thoroughness](feedback_test_thoroughness.md) — cover every path no matter runtime cost; assert relationships/bounds, not just presence
