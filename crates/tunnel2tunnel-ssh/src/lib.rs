@@ -199,7 +199,7 @@ impl Server for T2tServer {
             peer_ip,
             entity: None,
             bridges: HashMap::new(),
-            log_id: None,
+            connection_log_ids: Vec::new(),
             tarpit_outcome: None,
             fake_shell: false,
         }
@@ -227,7 +227,10 @@ struct T2tHandler {
     peer_ip: String,
     entity: Option<AuthedEntity>,
     bridges: HashMap<ChannelId, (Handle, ChannelId)>,
-    log_id: Option<Uuid>,
+    /// ids of every `connection_logs` row created for this TCP connection
+    /// (successful login and/or any number of failed/trap attempts before
+    /// it) — all of them get `ended_at` stamped together in `Drop`.
+    connection_log_ids: Vec<Uuid>,
     /// Decided once per connection (either at accept time for a peer_ip-level
     /// ban, or lazily on first real auth attempt for a user-level ban).
     /// `Trap{method: BannerDrip, ..}` never appears here — by the time any
@@ -257,7 +260,7 @@ impl T2tHandler {
 
     #[allow(clippy::too_many_arguments)]
     async fn log_auth_failure(
-        &self,
+        &mut self,
         user_id: Option<Uuid>,
         fingerprint: Option<&str>,
         attempted_password: Option<&str>,
@@ -280,7 +283,7 @@ impl T2tHandler {
         };
 
         let now = time::OffsetDateTime::now_utc();
-        if let Err(e) = ConnectionLog::create(
+        match ConnectionLog::create(
             &self.pool,
             None,
             user_id,
@@ -298,7 +301,8 @@ impl T2tHandler {
         )
         .await
         {
-            tracing::warn!(err = %e, "failed to write auth failure log");
+            Ok(log) => self.connection_log_ids.push(log.id),
+            Err(e) => tracing::warn!(err = %e, "failed to write auth failure log"),
         }
 
         if counts_toward_ban {
@@ -340,7 +344,7 @@ impl T2tHandler {
         )
         .await
         {
-            Ok(log) => self.log_id = Some(log.id),
+            Ok(log) => self.connection_log_ids.push(log.id),
             Err(e) => tracing::warn!(err = %e, "failed to write auth success log"),
         }
 
@@ -1027,12 +1031,17 @@ impl Drop for T2tHandler {
             });
         }
 
-        // Mark connection log as ended
-        if let Some(log_id) = self.log_id {
+        // Mark every connection log row created for this connection as ended
+        // (the successful login, if any, plus any failed/trap attempts that
+        // preceded it on the same TCP connection).
+        if !self.connection_log_ids.is_empty() {
             let pool = self.pool.clone();
+            let log_ids = self.connection_log_ids.clone();
             tokio::spawn(async move {
-                if let Err(e) = ConnectionLog::set_ended(&pool, log_id).await {
-                    tracing::warn!(err = %e, "failed to mark connection ended");
+                for log_id in log_ids {
+                    if let Err(e) = ConnectionLog::set_ended(&pool, log_id).await {
+                        tracing::warn!(err = %e, "failed to mark connection ended");
+                    }
                 }
             });
         }

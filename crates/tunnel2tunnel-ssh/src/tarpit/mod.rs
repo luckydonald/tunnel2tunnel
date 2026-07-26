@@ -464,7 +464,10 @@ pub async fn log_hard_ban(pool: PgPool, peer_ip: String, source: BanSource) {
         BanSource::Threshold(id) => (Some(id), None),
         BanSource::AdminRule(id) => (None, Some(id)),
     };
-    if let Err(e) = ConnectionLog::create(
+    // The connection is already closed by the time this runs (the accept
+    // loop `continue`s right after spawning this), so there's no later
+    // disconnect event to wait for — stamp `ended_at` immediately.
+    match ConnectionLog::create(
         &pool,
         None,
         None,
@@ -482,7 +485,12 @@ pub async fn log_hard_ban(pool: PgPool, peer_ip: String, source: BanSource) {
     )
     .await
     {
-        tracing::warn!(err = %e, "failed to write hard-ban log");
+        Ok(log) => {
+            if let Err(e) = ConnectionLog::set_ended(&pool, log.id).await {
+                tracing::warn!(err = %e, "failed to mark hard-ban connection ended");
+            }
+        }
+        Err(e) => tracing::warn!(err = %e, "failed to write hard-ban log"),
     }
 }
 

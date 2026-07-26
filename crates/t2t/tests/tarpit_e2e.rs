@@ -9,19 +9,19 @@
 //! Requires a reachable PostgreSQL 18 server (see CLAUDE.md). `DATABASE_URL`
 //! overrides the default.
 
-use std::net::TcpListener as StdTcpListener;
+use std::net::{SocketAddr, TcpListener as StdTcpListener};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use getrandom::rand_core::UnwrapErr;
 use getrandom::SysRng;
-use russh::client::{connect as client_connect, Config as ClientConfig, Handle as ClientHandle};
+use russh::client::{connect_stream, Config as ClientConfig, Handle as ClientHandle};
 use russh::keys::key::PrivateKeyWithHashAlg;
 use russh::keys::{Algorithm, PrivateKey};
 use russh::ChannelMsg;
 use time::OffsetDateTime;
 use tokio::io::AsyncReadExt;
-use tokio::net::TcpStream;
+use tokio::net::{TcpSocket, TcpStream};
 use tokio::time::sleep;
 use uuid::Uuid;
 
@@ -34,6 +34,27 @@ use tunnel2tunnel_core::{
     pubkey::parse_authorized_keys_line,
 };
 use tunnel2tunnel_ssh::{start as start_ssh, SshConfig};
+
+/// Asserts that `log.ended_at` was actually stamped, that it isn't nonsensically
+/// before `started_at`, and that at least `min_gap` elapsed between the two —
+/// e.g. a trap that's supposed to delay the connection before ending it.
+fn assert_ended_after_started(log: &ConnectionLog, min_gap: Duration) {
+    let ended_at = log
+        .ended_at
+        .expect("connection_logs row must have ended_at set once its connection closed");
+    assert!(
+        ended_at >= log.started_at,
+        "ended_at ({ended_at:?}) must not be before started_at ({:?})",
+        log.started_at
+    );
+    let gap: Duration = (ended_at - log.started_at)
+        .try_into()
+        .expect("ended_at >= started_at was just asserted, gap must be non-negative");
+    assert!(
+        gap >= min_gap,
+        "expected at least {min_gap:?} between started_at and ended_at, got {gap:?}"
+    );
+}
 
 /// All tests in this file share the same loopback peer_ip (127.0.0.1) and
 /// the same long-lived dev database, so failure/success counting from one
@@ -120,9 +141,43 @@ impl russh::client::Handler for TestClient {
 }
 
 async fn connect_client(port: u16) -> ClientHandle<TestClient> {
-    client_connect(Arc::new(ClientConfig::default()), ("127.0.0.1", port), TestClient)
+    connect_client_at("127.0.0.1", port).await
+}
+
+/// Connects to the t2t server on `port`, sourced from `host` — i.e. the
+/// server's `peer_ip` for this connection will be exactly `host`. A plain
+/// `TcpStream::connect((host, port))` would NOT do this: the destination
+/// address doesn't determine which local/source address the kernel picks
+/// for an outgoing loopback connection (it always defaults to 127.0.0.1
+/// unless the socket is explicitly bound first), so the socket is built by
+/// hand here and bound to `host` before connecting.
+async fn connect_client_at(host: &str, port: u16) -> ClientHandle<TestClient> {
+    let stream = tcp_connect_from(host, port).await;
+    connect_stream(Arc::new(ClientConfig::default()), stream, TestClient)
         .await
         .expect("client connect")
+}
+
+/// See `connect_client_at` — same "bind the source address first" trick,
+/// for tests that talk raw TCP instead of going through `russh::client`.
+async fn tcp_connect_from(host: &str, port: u16) -> TcpStream {
+    let local: SocketAddr = format!("{host}:0").parse().expect("valid loopback source addr");
+    let socket = TcpSocket::new_v4().expect("create v4 socket");
+    socket.bind(local).expect("bind to loopback source addr");
+    let dest = SocketAddr::from(([127, 0, 0, 1], port));
+    socket.connect(dest).await.expect("connect to t2t server")
+}
+
+/// A fresh, never-before-used loopback address (127.0.0.0/8 all routes to
+/// loopback on Linux) — lets a test drive the peer_ip-scoped tarpit logic
+/// without being polluted by (or polluting) any other test's history in the
+/// shared dev DB. In particular, `ConnectionLog::peer_ip_has_known_good_history`
+/// permanently disables banner-drip eligibility for a peer_ip the first time
+/// it ever logs a successful login.
+fn random_loopback_ip() -> String {
+    let mut buf = [0u8; 3];
+    let _ = getrandom::fill(&mut buf);
+    format!("127.{}.{}.{}", buf[0].max(1), buf[1], buf[2].max(1))
 }
 
 /// Reproduces the reference legitimate-login sequence from
@@ -187,6 +242,42 @@ async fn legit_login_sequence_is_never_tarpitted() {
     assert!(log.success, "login row must be marked successful");
     assert_eq!(log.success_reason.as_deref(), Some("correct login"));
     assert_eq!(log.tarpit_method, None, "a successful login must never carry a tarpit_method");
+    assert_ended_after_started(log, Duration::ZERO);
+}
+
+/// A single unregistered-key login attempt, isolated in its own connection.
+/// The client `Handle` is dropped when the surrounding scope ends, closing
+/// the connection so `T2tHandler`'s `Drop` gets a chance to run.
+#[tokio::test]
+async fn single_failed_login_marks_ended_at_on_disconnect() {
+    let _guard = TEST_GUARD.lock().await;
+    let pool = test_pool().await;
+    let port = spawn_server(pool.clone()).await;
+    let since = OffsetDateTime::now_utc();
+
+    {
+        let (bad_key, _, _) = generate_keypair();
+        let mut handle = connect_client(port).await;
+        let key_with_alg = PrivateKeyWithHashAlg::new(Arc::new(bad_key), None);
+        let result = handle
+            .authenticate_publickey("test", key_with_alg)
+            .await
+            .expect("authenticate_publickey");
+        assert!(!result.success(), "unregistered key must never be accepted");
+    } // `handle` dropped here -> connection closes
+
+    sleep(Duration::from_millis(200)).await;
+    let log: ConnectionLog = sqlx::query_as(
+        "SELECT * FROM connection_logs WHERE peer_ip = $1 AND started_at >= $2 \
+         ORDER BY started_at DESC LIMIT 1",
+    )
+    .bind("127.0.0.1")
+    .bind(since)
+    .fetch_one(&pool)
+    .await
+    .expect("a connection_logs row must exist for this failed attempt");
+    assert!(!log.success);
+    assert_ended_after_started(&log, Duration::ZERO);
 }
 
 #[tokio::test]
@@ -245,6 +336,24 @@ async fn repeated_bad_key_attempts_trigger_slow_auth_delay() {
         last_elapsed >= Duration::from_secs(2),
         "6th attempt should have been slow-auth-delayed after crossing the ban threshold, took {last_elapsed:?}"
     );
+
+    // The 6th attempt's `handle` (scoped to the loop body above) already
+    // dropped, closing its connection, so its row's `ended_at` should be set
+    // by the time we query it here.
+    sleep(Duration::from_millis(200)).await;
+    let log: ConnectionLog = sqlx::query_as(
+        "SELECT * FROM connection_logs WHERE peer_ip = $1 ORDER BY started_at DESC LIMIT 1",
+    )
+    .bind("127.0.0.1")
+    .fetch_one(&pool)
+    .await
+    .expect("a connection_logs row must exist for the slow-auth-delayed attempt");
+    assert_eq!(log.tarpit_method.as_deref(), Some("slow_auth"));
+    // `tarpit::slow_auth::BASE_DELAY` (crates/tunnel2tunnel-ssh/src/tarpit/slow_auth.rs:8)
+    // is 3s plus up to 4s of jitter; not reachable from this crate (`mod tarpit;`
+    // in tunnel2tunnel-ssh/src/lib.rs is private), so the guaranteed minimum is
+    // duplicated here — keep in sync with that const.
+    assert_ended_after_started(&log, Duration::from_secs(3));
 }
 
 /// Drives `count` failed publickey attempts (always an unregistered key)
@@ -254,9 +363,13 @@ async fn repeated_bad_key_attempts_trigger_slow_auth_delay() {
 /// `connection_logs` failure row is written and the in-memory ban counter
 /// advances the same way.
 async fn drive_failures(port: u16, count: usize) {
+    drive_failures_at("127.0.0.1", port, count).await;
+}
+
+async fn drive_failures_at(host: &str, port: u16, count: usize) {
     for _ in 0..count {
         let (bad_key, _, _) = generate_keypair();
-        let mut handle = connect_client(port).await;
+        let mut handle = connect_client_at(host, port).await;
         let key_with_alg = PrivateKeyWithHashAlg::new(Arc::new(bad_key), None);
         let _ = handle.authenticate_publickey("test", key_with_alg).await;
     }
@@ -275,11 +388,15 @@ async fn repeated_bans_eventually_engage_banner_drip() {
     let pool = test_pool().await;
     let port = spawn_server(pool.clone()).await;
 
-    drive_failures(port, 15).await;
+    // A fresh loopback address, never seen before in the shared dev DB, so
+    // this test's peer_ip can't have already been marked as having "known
+    // good history" (permanently disabling banner-drip) by some earlier
+    // test or session that logged a successful login from plain 127.0.0.1.
+    let peer_ip = random_loopback_ip();
 
-    let mut socket = TcpStream::connect(("127.0.0.1", port))
-        .await
-        .expect("connect to banner-drip-tarpitted port");
+    drive_failures_at(&peer_ip, port, 15).await;
+
+    let mut socket = tcp_connect_from(&peer_ip, port).await;
     let mut buf = vec![0u8; 4096];
     let n = tokio::time::timeout(Duration::from_secs(15), socket.read(&mut buf))
         .await
@@ -291,6 +408,28 @@ async fn repeated_bans_eventually_engage_banner_drip() {
         !text.starts_with("SSH-"),
         "banner-drip must never send the real SSH-2.0 identification line, got: {text:?}"
     );
+
+    // Force the server's drip loop to notice the connection is gone: closing
+    // our end makes its `write_all` fail, at which point it stamps `ended_at`
+    // (crates/tunnel2tunnel-ssh/src/tarpit/banner_drip.rs). A write right
+    // after our FIN often still succeeds locally (the RST only comes back
+    // after that write, and gets surfaced as an error on the *next* one), so
+    // the server may need two drip ticks — not just one — to actually
+    // observe the failure and break its loop.
+    drop(socket);
+    // `DRIP_INTERVAL` (crates/tunnel2tunnel-ssh/src/tarpit/banner_drip.rs:24)
+    // is a private 10s const, unreachable from this crate — duplicated here,
+    // keep in sync with that const.
+    sleep(Duration::from_secs(21)).await;
+    let log: ConnectionLog = sqlx::query_as(
+        "SELECT * FROM connection_logs WHERE peer_ip = $1 AND tarpit_method = 'banner_drip' \
+         ORDER BY started_at DESC LIMIT 1",
+    )
+    .bind(&peer_ip)
+    .fetch_one(&pool)
+    .await
+    .expect("a connection_logs row must exist for the banner-drip trap");
+    assert_ended_after_started(&log, Duration::from_secs(10));
 }
 
 /// After 2 ban-threshold crossings (10 failures), `trigger_count == 2` and
@@ -333,6 +472,22 @@ async fn repeated_bans_eventually_engage_fake_shell() {
         String::from_utf8_lossy(&data).contains('$'),
         "expected the fake shell's bogus '$ ' prompt, got: {data:?}"
     );
+
+    // Closing the connection should let `T2tHandler`'s `Drop` mark this
+    // fake-shell trap's row ended. Drop the channel first — the client
+    // `Handle` alone doesn't necessarily tear down the TCP connection while
+    // a `Channel` derived from it is still alive.
+    drop(channel);
+    drop(handle);
+    sleep(Duration::from_millis(200)).await;
+    let log: ConnectionLog = sqlx::query_as(
+        "SELECT * FROM connection_logs WHERE tarpit_action = 'trap' AND tarpit_method = 'fake_shell' \
+         ORDER BY started_at DESC LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("a connection_logs row must exist for the fake-shell trap");
+    assert_ended_after_started(&log, Duration::ZERO);
 }
 
 /// A threshold rule configured with `action = "ban"` must reject instantly —
@@ -375,6 +530,18 @@ async fn ban_action_threshold_rejects_instantly_without_tarpit() {
         ),
         Err(_) => panic!("expected the connection to close quickly, but read timed out"),
     }
+
+    // `log_hard_ban` (crates/tunnel2tunnel-ssh/src/tarpit/mod.rs) is
+    // `tokio::spawn`ed from the accept loop rather than awaited inline, so
+    // give it a moment to land before checking the row.
+    sleep(Duration::from_millis(200)).await;
+    let log: ConnectionLog = sqlx::query_as(
+        "SELECT * FROM connection_logs WHERE tarpit_action = 'ban' ORDER BY started_at DESC LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("a connection_logs row must exist for the hard ban");
+    assert_ended_after_started(&log, Duration::ZERO);
 
     TarpitThreshold::soft_delete(&pool, threshold.id).await.ok();
 }
