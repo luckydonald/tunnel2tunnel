@@ -831,3 +831,5 @@ Generally:
 > - [Raw log (`88663` chars, `86.9 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/664181c1-f628-40cf-9565-ab64bf63c255/tasks/a01a8cb9ac01e6919.output)
 > - `11` tools, `34500` tokens, `0.92205 s`
 
+❯ /plan I am not seeing any "Ended" in the connection log, it's `ended_at` is always `null`. This should be filled on client disconnect. This includes the server-forced disconnect ("Fail", "Ban"), disconnecting from an ongoing trap ("Trap"), and obviously disconnecting from a normal session ("OK"). Please investigate each of those pathes.
+
