@@ -566,6 +566,16 @@ mod tests {
     }
 
     #[test]
+    fn record_failure_bans_on_very_first_attempt_when_fail_count_is_one() {
+        let mut map = HashMap::new();
+        let t = vec![rule(1, 60)];
+        let now = Instant::now();
+        assert!(record_failure(&mut map, "1.2.3.4", &t, now));
+        assert_eq!(map["1.2.3.4"].trigger_count, 1);
+        assert_eq!(map["1.2.3.4"].ban_source, Some(BanSource::Threshold(t[0].id)));
+    }
+
+    #[test]
     fn record_failure_window_resets_stale_count() {
         let mut map = HashMap::new();
         let t = thresholds();

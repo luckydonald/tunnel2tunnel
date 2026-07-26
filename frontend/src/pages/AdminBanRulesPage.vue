@@ -228,7 +228,14 @@ onMounted(() => {
         </select>
 
         <template v-if="newRule.scope_type === 'global'">
-          <input v-model.number="newRule.fail_count" type="number" min="1" class="input-sm" placeholder="Failed attempts" />
+          <input
+            v-model.number="newRule.fail_count"
+            type="number"
+            min="1"
+            class="input-sm"
+            placeholder="Failed attempts"
+            title="Minimum 1 — a value of 1 traps on the very first failed attempt"
+          />
           <span class="section-note">in</span>
           <input v-model.number="newRule.window_seconds" type="number" min="1" class="input-sm" placeholder="Window (seconds)" />
           <span class="section-note">seconds</span>

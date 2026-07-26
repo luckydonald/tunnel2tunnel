@@ -841,3 +841,38 @@ Generally:
 
 ❯ document your learnings
 
+❯ /plan I want to be able to set a rule to trap with 0 (or would it be 1?) login attempts, so the ever first wrong password (or etc.) would trigger the trapping already.
+
+❯ Task Notification:
+> - Task `a69d8cc213805f58d` <kbd>completed</kbd>
+> - Tool `toolu_01MyA6tC3dikUymy7semfGm5`
+> - > Agent "Find tarpit trigger threshold logic" finished
+> - [Query (`879` chars, `879 B`)](output/agents/022.a69d8cc213805f58d/prompt.md)
+> - [Answer (`39` chars, `39 B`)](output/agents/022.a69d8cc213805f58d/result.md)
+> - [Raw log (`20235` chars, `19.8 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/807e6a2a-2c09-4d2f-a998-46f801db811e/tasks/a69d8cc213805f58d.output)
+> - `1` tools, `50585` tokens, `0.106217 s`
+
+❯ Check fork result on tarpit threshold logic, continue building plan for 0-attempt trap trigger.
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. fail_count=1 already traps on the very first failed attempt (DB CHECK requires >0, no off-by-one bug). What do you actually want?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Trap trigger** (1/1) <kbd>Single Select</kbd><br>
+>> fail_count=1 already traps on the very first failed attempt (DB CHECK requires >0, no off-by-one bug). What do you actually want?
+> - [x] 1\. Just allow fail_count=1 (recommended)
+>   - _Already works today. Confirm frontend min=1 is fine, maybe update label copy ('1 = trap immediately'). No backend change needed._
+> - [ ] 2\. Trap before any auth attempt
+>   - _Different mechanism — pre-auth trap on connect, before username/password is even sent. Needs new logic in decide_pre_auth_tarpit, not the fail_count counter._
+> - [ ] 3\. Allow fail_count=0 with special meaning
+>   - _Change DB CHECK to >=0 and give 0 explicit meaning (e.g. 'trap always', bypassing the counter). Adds complexity for a case fail_count=1 already covers._
+> - [ ] 4\. _Type something._
+>
+> </details>
+>
+
