@@ -837,3 +837,5 @@ Generally:
 
 ❯ I want automated tests for those pathes.
 
+❯ Also test out the slow waitful one, I want them all tested, no matter what. Also make the assertions a bit smarter, i.e. asserting that end is before start, and possibly a certain minimal distance appart, etc.
+
