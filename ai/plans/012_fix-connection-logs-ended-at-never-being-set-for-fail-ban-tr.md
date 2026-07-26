@@ -26,12 +26,24 @@ All changes in `crates/tunnel2tunnel-ssh/src/lib.rs` and `crates/tunnel2tunnel-s
 
 No DB/model changes needed — `ConnectionLog::set_ended` (`crates/tunnel2tunnel-core/src/models/connection_log.rs:81`) already does the right single-row `UPDATE ... SET ended_at = NOW()`.
 
-## Verification
+## Automated tests
+
+Both existing e2e suites already spin up a real `t2t` SSH server against a real Postgres and drive real auth attempts (`crates/t2t/tests/tarpit_e2e.rs` via an in-process `russh::client`, `crates/t2t/tests/tunnel_e2e.rs` via real `ssh` subprocesses) — reuse their existing helpers (`spawn_server`, `connect_client`, `generate_keypair`, `TEST_GUARD`) rather than inventing a new harness. All new assertions read the row back with `sqlx::query_as::<_, ConnectionLog>(...)` directly (every `ConnectionLog` field is `pub`, and `sqlx` is already a regular dependency of the `t2t` crate) since most of these rows have no `entity_id` to key off via `list_for_entity`.
+
+All additions land in `crates/t2t/tests/tarpit_e2e.rs`:
+
+1. **OK** — extend `legit_login_sequence_is_never_tarpitted`: the connection already closes by the time the test reads the row back (the client `Handle` is local to `legit_login_sequence` and drops when that function returns), so just add `assert!(log.ended_at.is_some(), ...)` next to the existing `log.success`/`success_reason` assertions.
+
+2. **Fail** — new test `single_failed_login_marks_ended_at_on_disconnect`: one unregistered-key `authenticate_publickey` attempt in an inner scope (so the client `Handle` drops before the row is queried), then query the latest `connection_logs` row for `peer_ip = '127.0.0.1'` filtered by `started_at >= <test-start time>` (mirrors `auth_none_probe_never_counts_toward_ban`'s `since` pattern), assert `!log.success` and `log.ended_at.is_some()`.
+
+3. **Ban** — extend `ban_action_threshold_rejects_instantly_without_tarpit`: after the existing "closes instantly" assertions, sleep briefly (`log_hard_ban` is `tokio::spawn`ed from the accept loop, not awaited inline) then query the latest row with `tarpit_action = 'ban'` and assert `ended_at.is_some()` — this is the case with no `T2tHandler`/`Drop` at all, so it's the one that most directly exercises the new immediate `set_ended` call in `log_hard_ban`.
+
+4. **Trap** — extend `repeated_bans_eventually_engage_fake_shell`: after reading the bogus `$` prompt, explicitly `drop(handle)` to close the connection, sleep briefly, then query the latest row with `tarpit_action = 'trap' AND tarpit_method = 'fake_shell'` and assert `ended_at.is_some()`.
+   - Also extend `repeated_bad_key_attempts_trigger_slow_auth_delay`: after the loop (each iteration's `handle` is already scoped to drop per-iteration), query the latest `peer_ip = '127.0.0.1'` row and assert `ended_at.is_some()` — covers the `slow_auth` trap variant.
+   - Banner-drip (`repeated_bans_eventually_engage_banner_drip`) is **not** touched: it already calls `set_ended` correctly today (see Context), and forcing its drip loop to exit for a test would require waiting out `DRIP_INTERVAL` (10s), making the test slow for no regression coverage gained.
+
+## Manual verification
 
 1. `cargo build -p t2t` to confirm it compiles (signature change to `&mut self` on `log_auth_failure`, field rename).
-2. Run the stack locally per `CLAUDE.md`'s "Running locally" section.
-3. Manually exercise each path and check the `connection_logs` row afterward (via `EntityDetailPage.vue` or `AdminConnectionLogsPage.vue`, or a direct `SELECT id, fail_reason, success_reason, tarpit_action, started_at, ended_at FROM connection_logs ORDER BY started_at DESC LIMIT 10;`):
-   - **OK**: register an entity/key, `ssh` in successfully, then disconnect — confirm `ended_at` populates (re-verifying the already-believed-correct path).
-   - **Fail**: attempt auth with an unregistered key — confirm the row gets `ended_at` once the client connection closes.
-   - **Ban**: trigger a hard ban (repeated failures past threshold, or an admin ban rule) and make one more connection attempt while banned — confirm that row's `ended_at` is set immediately (same request cycle).
-   - **Trap**: trigger fake-shell or slow-auth tarpit and disconnect from it — confirm `ended_at` populates. Confirm banner-drip trap still works as before (regression check, not expected to change).
+2. `cargo test -p t2t` (requires local Postgres per `CLAUDE.md`) — all four new/extended assertions above should pass.
+3. Spot-check via `EntityDetailPage.vue` / `AdminConnectionLogsPage.vue` after a real login+disconnect, matching the automated OK-path coverage.
