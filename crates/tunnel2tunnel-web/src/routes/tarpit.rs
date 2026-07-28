@@ -28,7 +28,18 @@ pub struct LogSearchQuery {
     pub user_id: Option<Uuid>,
     pub success: Option<bool>,
     pub method: Option<String>,
+    pub method_present: Option<bool>,
+    pub action: Option<String>,
+    pub action_present: Option<bool>,
     pub q: Option<String>,
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub started_at_gte: Option<OffsetDateTime>,
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub started_at_lte: Option<OffsetDateTime>,
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub ended_at_gte: Option<OffsetDateTime>,
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub ended_at_lte: Option<OffsetDateTime>,
 }
 
 #[derive(Serialize)]
@@ -57,7 +68,14 @@ pub async fn search_connection_logs(
         q.user_id,
         q.success,
         q.method.as_deref(),
+        q.method_present,
+        q.action.as_deref(),
+        q.action_present,
         q.q.as_deref(),
+        q.started_at_gte,
+        q.started_at_lte,
+        q.ended_at_gte,
+        q.ended_at_lte,
         page,
         page_size,
     )

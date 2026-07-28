@@ -880,3 +880,51 @@ Generally:
 
 › In the connection logs page, add optional filters for started & ended, too (both fields: ≤, ≥, between). Also under "Any result" add "Tarpit" as last filter option, so you can say "a tarput, but any".
 
+› Question answered.
+> <details><summary>
+>
+>> 1. What should the new “Tarpit” result option match?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Tarpit match** (1/1) <kbd>Single Select</kbd><br>
+>> What should the new “Tarpit” result option match?
+> - [ ] 1\. Any tarpit method (Recommended)
+>   - _Show every log with a non-empty tarpit_method, regardless of Success/Failure and regardless of the separate method selector._
+> - [ ] 2\. Trap action only
+>   - _Show only records whose tarpit_action is `trap`, excluding ban-action records._
+> - [ ] 3\. Any tarpit metadata
+>   - _Show records with either a tarpit method or tarpit action populated._
+> - [x] 4\. _Type something:_
+>   - > Alright, add "Tarpit action" as filter too. But that dropdown and the tarpid method one should also have "Some …" (must be set) and "No …" option (must be null).
+>
+> </details>
+>
+
+› Question answered.
+> <details><summary>
+>
+>> 1. For the Result dropdown’s new “Tarpit” option, what exactly should count as Tarpit?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Result: Tarpit** (1/1) <kbd>Single Select</kbd><br>
+>> For the Result dropdown’s new “Tarpit” option, what exactly should count as Tarpit?
+> - [ ] 1\. Action is set (Recommended)
+>   - _Match entries with tarpit_action set; then leave Tarpit action at Any or narrow it to Trap/Ban._
+> - [ ] 2\. Method is set
+>   - _Match entries with tarpit_method set, regardless of whether an action was recorded._
+> - [ ] 3\. Either is set
+>   - _Match any entry with a tarpit method or action recorded._
+> - [x] 4\. _Type something:_
+>   - > There is no new "Tarpit" option. Only the current "tarpit method". Ah, what's new is the "ban", I guess I meant that.
+>
+> </details>
+>
+
+> › Implement the [Plan](./plans/014_connection-log-date-and-tarpit-filters.md).
+

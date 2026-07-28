@@ -37,7 +37,14 @@ export interface LogSearchParams {
   user_id?: string
   success?: boolean
   method?: TarpitMethod
+  method_present?: boolean
+  action?: TarpitAction
+  action_present?: boolean
   q?: string
+  started_at_gte?: string
+  started_at_lte?: string
+  ended_at_gte?: string
+  ended_at_lte?: string
 }
 
 export interface LogSearchResult {

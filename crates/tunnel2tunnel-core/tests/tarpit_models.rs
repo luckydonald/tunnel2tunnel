@@ -131,7 +131,10 @@ async fn search_filters_by_success_and_peer_ip() {
     ConnectionLog::create(&pool, None, None, Some(&peer_ip), None, None, None, None, Some("correct login"), None, None, None, None, now)
         .await.unwrap();
 
-    let (rows, total) = ConnectionLog::search(&pool, Some(&peer_ip), None, Some(false), None, None, 1, 50)
+    let (rows, total) = ConnectionLog::search(
+        &pool, Some(&peer_ip), None, Some(false), None, None, None, None, None,
+        None, None, None, None, 1, 50,
+    )
         .await
         .expect("search");
     assert_eq!(total, 1);
@@ -153,12 +156,18 @@ async fn search_paginates_and_filters_by_tarpit_method() {
         .await.unwrap();
 
     // page 1 of 2 with page_size=2 over the 5 slow_auth rows
-    let (page1, total) = ConnectionLog::search(&pool, Some(&peer_ip), None, None, Some("slow_auth"), None, 1, 2)
+    let (page1, total) = ConnectionLog::search(
+        &pool, Some(&peer_ip), None, None, Some("slow_auth"), None, None, None, None,
+        None, None, None, None, 1, 2,
+    )
         .await.expect("search page 1");
     assert_eq!(total, 5, "method filter should exclude the 6th (no tarpit_method) row");
     assert_eq!(page1.len(), 2);
 
-    let (page3, total3) = ConnectionLog::search(&pool, Some(&peer_ip), None, None, Some("slow_auth"), None, 3, 2)
+    let (page3, total3) = ConnectionLog::search(
+        &pool, Some(&peer_ip), None, None, Some("slow_auth"), None, None, None, None,
+        None, None, None, None, 3, 2,
+    )
         .await.expect("search page 3");
     assert_eq!(total3, 5);
     assert_eq!(page3.len(), 1, "5 rows at page_size 2 leaves exactly 1 row on page 3");
@@ -166,6 +175,88 @@ async fn search_paginates_and_filters_by_tarpit_method() {
     let ids_p1: Vec<_> = page1.iter().map(|r| r.id).collect();
     let ids_p3: Vec<_> = page3.iter().map(|r| r.id).collect();
     assert!(ids_p1.iter().all(|id| !ids_p3.contains(id)), "pages must not overlap");
+}
+
+#[tokio::test]
+async fn search_filters_tarpit_presence_actions_and_timestamps() {
+    let pool = test_pool().await;
+    let peer_ip = format!("203.0.113.{}", rand_octet());
+    let now = OffsetDateTime::now_utc();
+    let old_started = now - TimeDuration::hours(2);
+    let trapped_started = now - TimeDuration::hours(1);
+
+    let ordinary = ConnectionLog::create(
+        &pool, None, None, Some(&peer_ip), None, None, None, Some("unknown key"), None,
+        None, None, None, None, old_started,
+    ).await.unwrap();
+    let trapped = ConnectionLog::create(
+        &pool, None, None, Some(&peer_ip), None, None, None, Some("unknown key"), None,
+        Some("slow_auth"), Some("trap"), None, None, trapped_started,
+    ).await.unwrap();
+    ConnectionLog::create(
+        &pool, None, None, Some(&peer_ip), None, None, None, Some("banned"), None,
+        None, Some("ban"), None, None, now,
+    ).await.unwrap();
+
+    sqlx::query("UPDATE connection_logs SET ended_at = $2 WHERE id = $1")
+        .bind(ordinary.id)
+        .bind(old_started)
+        .execute(&pool)
+        .await.unwrap();
+    sqlx::query("UPDATE connection_logs SET ended_at = $2 WHERE id = $1")
+        .bind(trapped.id)
+        .bind(trapped_started)
+        .execute(&pool)
+        .await.unwrap();
+
+    let (_, method_some_total) = ConnectionLog::search(
+        &pool, Some(&peer_ip), None, None, None, Some(true), None, None, None,
+        None, None, None, None, 1, 50,
+    ).await.unwrap();
+    assert_eq!(method_some_total, 1);
+
+    let (_, method_none_total) = ConnectionLog::search(
+        &pool, Some(&peer_ip), None, None, None, Some(false), None, None, None,
+        None, None, None, None, 1, 50,
+    ).await.unwrap();
+    assert_eq!(method_none_total, 2);
+
+    let (_, action_some_total) = ConnectionLog::search(
+        &pool, Some(&peer_ip), None, None, None, None, None, Some(true), None,
+        None, None, None, None, 1, 50,
+    ).await.unwrap();
+    assert_eq!(action_some_total, 2);
+
+    let (ban_rows, ban_total) = ConnectionLog::search(
+        &pool, Some(&peer_ip), None, None, None, None, Some("ban"), None, None,
+        None, None, None, None, 1, 50,
+    ).await.unwrap();
+    assert_eq!(ban_total, 1);
+    assert_eq!(ban_rows[0].tarpit_action.as_deref(), Some("ban"));
+
+    let (_, started_after_total) = ConnectionLog::search(
+        &pool, Some(&peer_ip), None, None, None, None, None, None, None,
+        Some(trapped_started), None, None, None, 1, 50,
+    ).await.unwrap();
+    assert_eq!(started_after_total, 2, "the lower bound is inclusive");
+
+    let (_, started_before_total) = ConnectionLog::search(
+        &pool, Some(&peer_ip), None, None, None, None, None, None, None,
+        None, Some(trapped_started), None, None, 1, 50,
+    ).await.unwrap();
+    assert_eq!(started_before_total, 2, "the upper bound is inclusive");
+
+    let (_, ended_after_total) = ConnectionLog::search(
+        &pool, Some(&peer_ip), None, None, None, None, None, None, None,
+        None, None, Some(trapped_started), None, 1, 50,
+    ).await.unwrap();
+    assert_eq!(ended_after_total, 1, "open logs do not match ended-time filters");
+
+    let (_, ended_before_total) = ConnectionLog::search(
+        &pool, Some(&peer_ip), None, None, None, None, None, None, None,
+        None, None, None, Some(old_started), 1, 50,
+    ).await.unwrap();
+    assert_eq!(ended_before_total, 1, "the ended-time upper bound is inclusive");
 }
 
 #[tokio::test]

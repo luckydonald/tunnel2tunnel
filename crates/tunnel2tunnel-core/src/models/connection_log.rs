@@ -166,7 +166,14 @@ impl ConnectionLog {
         user_id: Option<Uuid>,
         success: Option<bool>,
         tarpit_method: Option<&str>,
+        tarpit_method_present: Option<bool>,
+        tarpit_action: Option<&str>,
+        tarpit_action_present: Option<bool>,
         q: Option<&str>,
+        started_at_gte: Option<OffsetDateTime>,
+        started_at_lte: Option<OffsetDateTime>,
+        ended_at_gte: Option<OffsetDateTime>,
+        ended_at_lte: Option<OffsetDateTime>,
         page: i64,
         page_size: i64,
     ) -> Result<(Vec<Self>, i64), CoreError> {
@@ -177,19 +184,33 @@ impl ConnectionLog {
                AND ($2::uuid IS NULL OR user_id = $2) \
                AND ($3::bool IS NULL OR success = $3) \
                AND ($4::text IS NULL OR tarpit_method = $4) \
-               AND ($5::text IS NULL \
-                    OR peer_ip ILIKE '%' || $5 || '%' \
-                    OR key_fingerprint ILIKE '%' || $5 || '%' \
-                    OR attempted_password ILIKE '%' || $5 || '%' \
-                    OR fail_reason ILIKE '%' || $5 || '%') \
+               AND ($5::bool IS NULL OR (tarpit_method IS NOT NULL) = $5) \
+               AND ($6::text IS NULL OR tarpit_action = $6) \
+               AND ($7::bool IS NULL OR (tarpit_action IS NOT NULL) = $7) \
+               AND ($8::text IS NULL \
+                    OR peer_ip ILIKE '%' || $8 || '%' \
+                    OR key_fingerprint ILIKE '%' || $8 || '%' \
+                    OR attempted_password ILIKE '%' || $8 || '%' \
+                    OR fail_reason ILIKE '%' || $8 || '%') \
+               AND ($9::timestamptz IS NULL OR started_at >= $9) \
+               AND ($10::timestamptz IS NULL OR started_at <= $10) \
+               AND ($11::timestamptz IS NULL OR ended_at >= $11) \
+               AND ($12::timestamptz IS NULL OR ended_at <= $12) \
              ORDER BY started_at DESC \
-             LIMIT $6 OFFSET $7",
+             LIMIT $13 OFFSET $14",
         )
         .bind(peer_ip)
         .bind(user_id)
         .bind(success)
         .bind(tarpit_method)
+        .bind(tarpit_method_present)
+        .bind(tarpit_action)
+        .bind(tarpit_action_present)
         .bind(q)
+        .bind(started_at_gte)
+        .bind(started_at_lte)
+        .bind(ended_at_gte)
+        .bind(ended_at_lte)
         .bind(page_size)
         .bind(offset)
         .fetch_all(pool)
@@ -202,17 +223,31 @@ impl ConnectionLog {
                AND ($2::uuid IS NULL OR user_id = $2) \
                AND ($3::bool IS NULL OR success = $3) \
                AND ($4::text IS NULL OR tarpit_method = $4) \
-               AND ($5::text IS NULL \
-                    OR peer_ip ILIKE '%' || $5 || '%' \
-                    OR key_fingerprint ILIKE '%' || $5 || '%' \
-                    OR attempted_password ILIKE '%' || $5 || '%' \
-                    OR fail_reason ILIKE '%' || $5 || '%')",
+               AND ($5::bool IS NULL OR (tarpit_method IS NOT NULL) = $5) \
+               AND ($6::text IS NULL OR tarpit_action = $6) \
+               AND ($7::bool IS NULL OR (tarpit_action IS NOT NULL) = $7) \
+               AND ($8::text IS NULL \
+                    OR peer_ip ILIKE '%' || $8 || '%' \
+                    OR key_fingerprint ILIKE '%' || $8 || '%' \
+                    OR attempted_password ILIKE '%' || $8 || '%' \
+                    OR fail_reason ILIKE '%' || $8 || '%') \
+               AND ($9::timestamptz IS NULL OR started_at >= $9) \
+               AND ($10::timestamptz IS NULL OR started_at <= $10) \
+               AND ($11::timestamptz IS NULL OR ended_at >= $11) \
+               AND ($12::timestamptz IS NULL OR ended_at <= $12)",
         )
         .bind(peer_ip)
         .bind(user_id)
         .bind(success)
         .bind(tarpit_method)
+        .bind(tarpit_method_present)
+        .bind(tarpit_action)
+        .bind(tarpit_action_present)
         .bind(q)
+        .bind(started_at_gte)
+        .bind(started_at_lte)
+        .bind(ended_at_gte)
+        .bind(ended_at_lte)
         .fetch_one(pool)
         .await
         .map_err(CoreError::Sqlx)?;

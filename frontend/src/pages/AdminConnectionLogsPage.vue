@@ -9,6 +9,9 @@ import { useToast } from '@/composables/useToast'
 
 const { show: toast } = useToast()
 
+type DateFilterMode = '' | 'gte' | 'lte' | 'between'
+type NullableTarpitFilter<T extends string> = '' | 'some' | 'none' | T
+
 const logs = ref<ConnLog[]>([])
 const total = ref(0)
 const page = ref(1)
@@ -18,10 +21,38 @@ const loading = ref(false)
 const filterPeerIp = ref('')
 const filterUserId = ref('')
 const filterSuccess = ref<'' | 'true' | 'false'>('')
-const filterMethod = ref<'' | ConnLog['tarpit_method']>('')
+const filterMethod = ref<NullableTarpitFilter<NonNullable<ConnLog['tarpit_method']>>>('')
+const filterAction = ref<NullableTarpitFilter<NonNullable<ConnLog['tarpit_action']>>>('')
 const filterQ = ref('')
+const filterStartedMode = ref<DateFilterMode>('')
+const filterStartedAt = ref('')
+const filterStartedAtEnd = ref('')
+const filterEndedMode = ref<DateFilterMode>('')
+const filterEndedAt = ref('')
+const filterEndedAtEnd = ref('')
+
+function dateFilterBounds(
+  label: string,
+  mode: DateFilterMode,
+  value: string,
+  endValue: string,
+): { gte?: string; lte?: string } | null {
+  if (mode === '') return {}
+  if (!value || (mode === 'between' && !endValue)) {
+    toast(`${label} filter needs ${mode === 'between' ? 'both timestamps' : 'a timestamp'}`)
+    return null
+  }
+
+  const gte = mode === 'gte' || mode === 'between' ? new Date(value).toISOString() : undefined
+  const lte = mode === 'lte' || mode === 'between' ? new Date(mode === 'between' ? endValue : value).toISOString() : undefined
+  return { gte, lte }
+}
 
 async function search(): Promise<void> {
+  const startedBounds = dateFilterBounds('Started', filterStartedMode.value, filterStartedAt.value, filterStartedAtEnd.value)
+  const endedBounds = dateFilterBounds('Ended', filterEndedMode.value, filterEndedAt.value, filterEndedAtEnd.value)
+  if (!startedBounds || !endedBounds) return
+
   loading.value = true
   try {
     const result = await adminApi.searchConnectionLogs({
@@ -30,8 +61,15 @@ async function search(): Promise<void> {
       peer_ip: filterPeerIp.value || undefined,
       user_id: filterUserId.value || undefined,
       success: filterSuccess.value === '' ? undefined : filterSuccess.value === 'true',
-      method: filterMethod.value || undefined,
+      method: filterMethod.value === 'some' || filterMethod.value === 'none' ? undefined : filterMethod.value || undefined,
+      method_present: filterMethod.value === 'some' ? true : filterMethod.value === 'none' ? false : undefined,
+      action: filterAction.value === 'some' || filterAction.value === 'none' ? undefined : filterAction.value || undefined,
+      action_present: filterAction.value === 'some' ? true : filterAction.value === 'none' ? false : undefined,
       q: filterQ.value || undefined,
+      started_at_gte: startedBounds.gte,
+      started_at_lte: startedBounds.lte,
+      ended_at_gte: endedBounds.gte,
+      ended_at_lte: endedBounds.lte,
     })
     logs.value = result.items
     total.value = result.total
@@ -132,8 +170,61 @@ onMounted(search)
       </select>
       <select v-model="filterMethod" class="select-sm">
         <option value="">Any tarpit method</option>
+        <option value="some">Some tarpit method</option>
+        <option value="none">No tarpit method</option>
         <option v-for="opt in tarpitMethodOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
       </select>
+      <select v-model="filterAction" class="select-sm">
+        <option value="">Any tarpit action</option>
+        <option value="some">Some tarpit action</option>
+        <option value="none">No tarpit action</option>
+        <option value="trap">Trap</option>
+        <option value="ban">Ban</option>
+      </select>
+      <select v-model="filterStartedMode" class="select-sm">
+        <option value="">Any started time</option>
+        <option value="gte">Started ≥</option>
+        <option value="lte">Started ≤</option>
+        <option value="between">Started between</option>
+      </select>
+      <input
+        v-if="filterStartedMode"
+        v-model="filterStartedAt"
+        type="datetime-local"
+        class="input-sm"
+        :placeholder="filterStartedMode === 'between' ? 'From' : 'Timestamp'"
+        @keyup.enter="applyFilters"
+      />
+      <input
+        v-if="filterStartedMode === 'between'"
+        v-model="filterStartedAtEnd"
+        type="datetime-local"
+        class="input-sm"
+        placeholder="To"
+        @keyup.enter="applyFilters"
+      />
+      <select v-model="filterEndedMode" class="select-sm">
+        <option value="">Any ended time</option>
+        <option value="gte">Ended ≥</option>
+        <option value="lte">Ended ≤</option>
+        <option value="between">Ended between</option>
+      </select>
+      <input
+        v-if="filterEndedMode"
+        v-model="filterEndedAt"
+        type="datetime-local"
+        class="input-sm"
+        :placeholder="filterEndedMode === 'between' ? 'From' : 'Timestamp'"
+        @keyup.enter="applyFilters"
+      />
+      <input
+        v-if="filterEndedMode === 'between'"
+        v-model="filterEndedAtEnd"
+        type="datetime-local"
+        class="input-sm"
+        placeholder="To"
+        @keyup.enter="applyFilters"
+      />
       <input v-model="filterQ" type="text" class="input-sm" placeholder="Search…" @keyup.enter="applyFilters" />
       <button class="btn-primary" @click="applyFilters">Search</button>
     </div>
