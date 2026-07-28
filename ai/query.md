@@ -878,3 +878,5 @@ Generally:
 
 › How is the "Online"/"Offline" badge calcated?
 
+› In the connection logs page, add optional filters for started & ended, too (both fields: ≤, ≥, between). Also under "Any result" add "Tarpit" as last filter option, so you can say "a tarput, but any".
+
