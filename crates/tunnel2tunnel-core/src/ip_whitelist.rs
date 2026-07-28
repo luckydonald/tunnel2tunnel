@@ -1,5 +1,5 @@
-use std::net::IpAddr;
 use ipnetwork::IpNetwork;
+use std::net::IpAddr;
 
 /// Evaluate an `ip_whitelist` rule set against a peer IP address.
 ///
@@ -58,8 +58,12 @@ fn pattern_matches(pattern: &str, peer_ip: &str) -> bool {
 }
 
 fn matches_cidr(pattern: &str, peer_ip: &str) -> bool {
-    let Ok(network) = pattern.parse::<IpNetwork>() else { return false };
-    let Ok(ip) = peer_ip.parse::<IpAddr>() else { return false };
+    let Ok(network) = pattern.parse::<IpNetwork>() else {
+        return false;
+    };
+    let Ok(ip) = peer_ip.parse::<IpAddr>() else {
+        return false;
+    };
     network.contains(ip)
 }
 

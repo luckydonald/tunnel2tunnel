@@ -1,5 +1,5 @@
-use sqlx::postgres::PgPoolOptions;
 use crate::error::CoreError;
+use sqlx::postgres::PgPoolOptions;
 
 pub async fn connect(database_url: &str) -> Result<sqlx::PgPool, CoreError> {
     PgPoolOptions::new()

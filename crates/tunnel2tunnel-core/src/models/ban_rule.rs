@@ -76,11 +76,13 @@ impl BanRule {
     }
 
     pub async fn soft_delete(pool: &PgPool, id: Uuid) -> Result<bool, CoreError> {
-        let r = sqlx::query("UPDATE ban_rules SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL")
-            .bind(id)
-            .execute(pool)
-            .await
-            .map_err(CoreError::Sqlx)?;
+        let r = sqlx::query(
+            "UPDATE ban_rules SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL",
+        )
+        .bind(id)
+        .execute(pool)
+        .await
+        .map_err(CoreError::Sqlx)?;
         Ok(r.rows_affected() > 0)
     }
 

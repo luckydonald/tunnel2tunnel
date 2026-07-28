@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use tunnel2tunnel_core::models::user::User;
 
-use crate::{extractors::AdminUser, error::WebError, AppState};
+use crate::{error::WebError, extractors::AdminUser, AppState};
 
 #[derive(Serialize)]
 pub struct UserResponse {
@@ -31,7 +31,12 @@ impl From<User> for UserResponse {
             is_admin: u.is_admin,
             is_locked: u.is_locked,
             description: u.description,
-            created_at: u.ts.timestamps.created_at.format(&Rfc3339).unwrap_or_default(),
+            created_at: u
+                .ts
+                .timestamps
+                .created_at
+                .format(&Rfc3339)
+                .unwrap_or_default(),
         }
     }
 }
@@ -128,7 +133,9 @@ pub async fn update_user(
         body.email.as_deref().or(target.email.as_deref()),
         new_is_admin,
         new_is_locked,
-        body.description.as_deref().or(target.description.as_deref()),
+        body.description
+            .as_deref()
+            .or(target.description.as_deref()),
     )
     .await
     .map_err(WebError::Core)?

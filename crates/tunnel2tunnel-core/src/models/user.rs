@@ -1,8 +1,8 @@
-use serde::Serialize;
-use uuid::Uuid;
-use sqlx::PgPool;
 use crate::error::CoreError;
 use crate::timestamps::TimestampsSoftDelete;
+use serde::Serialize;
+use sqlx::PgPool;
+use uuid::Uuid;
 
 #[derive(Debug, Clone, sqlx::FromRow, Serialize)]
 pub struct User {
@@ -20,23 +20,22 @@ pub struct User {
 
 impl User {
     pub async fn find_by_id(pool: &PgPool, id: Uuid) -> Result<Option<Self>, CoreError> {
-        sqlx::query_as::<_, User>(
-            "SELECT * FROM users WHERE id = $1 AND deleted_at IS NULL",
-        )
-        .bind(id)
-        .fetch_optional(pool)
-        .await
-        .map_err(CoreError::Sqlx)
+        sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1 AND deleted_at IS NULL")
+            .bind(id)
+            .fetch_optional(pool)
+            .await
+            .map_err(CoreError::Sqlx)
     }
 
-    pub async fn find_by_username(pool: &PgPool, username: &str) -> Result<Option<Self>, CoreError> {
-        sqlx::query_as::<_, User>(
-            "SELECT * FROM users WHERE username = $1 AND deleted_at IS NULL",
-        )
-        .bind(username)
-        .fetch_optional(pool)
-        .await
-        .map_err(CoreError::Sqlx)
+    pub async fn find_by_username(
+        pool: &PgPool,
+        username: &str,
+    ) -> Result<Option<Self>, CoreError> {
+        sqlx::query_as::<_, User>("SELECT * FROM users WHERE username = $1 AND deleted_at IS NULL")
+            .bind(username)
+            .fetch_optional(pool)
+            .await
+            .map_err(CoreError::Sqlx)
     }
 
     pub async fn create(
@@ -68,13 +67,12 @@ impl User {
     }
 
     pub async fn exists_by_username(pool: &PgPool, username: &str) -> Result<bool, CoreError> {
-        let (count,): (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM users WHERE username = $1 AND deleted_at IS NULL",
-        )
-        .bind(username)
-        .fetch_one(pool)
-        .await
-        .map_err(CoreError::Sqlx)?;
+        let (count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM users WHERE username = $1 AND deleted_at IS NULL")
+                .bind(username)
+                .fetch_one(pool)
+                .await
+                .map_err(CoreError::Sqlx)?;
         Ok(count > 0)
     }
 
@@ -116,25 +114,23 @@ impl User {
         new_password: &str,
     ) -> Result<bool, CoreError> {
         let hash = crate::auth::hash_password(new_password)?;
-        let r = sqlx::query(
-            "UPDATE users SET password_hash = $2 WHERE id = $1 AND deleted_at IS NULL",
-        )
-        .bind(id)
-        .bind(&hash)
-        .execute(pool)
-        .await
-        .map_err(CoreError::Sqlx)?;
+        let r =
+            sqlx::query("UPDATE users SET password_hash = $2 WHERE id = $1 AND deleted_at IS NULL")
+                .bind(id)
+                .bind(&hash)
+                .execute(pool)
+                .await
+                .map_err(CoreError::Sqlx)?;
         Ok(r.rows_affected() > 0)
     }
 
     pub async fn soft_delete(pool: &PgPool, id: Uuid) -> Result<bool, CoreError> {
-        let r = sqlx::query(
-            "UPDATE users SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL",
-        )
-        .bind(id)
-        .execute(pool)
-        .await
-        .map_err(CoreError::Sqlx)?;
+        let r =
+            sqlx::query("UPDATE users SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL")
+                .bind(id)
+                .execute(pool)
+                .await
+                .map_err(CoreError::Sqlx)?;
         Ok(r.rows_affected() > 0)
     }
 

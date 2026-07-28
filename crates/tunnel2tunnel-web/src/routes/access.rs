@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use tunnel2tunnel_core::models::{entity::Entity, entity_access::EntityAccess};
 
-use crate::{extractors::AuthUser, error::WebError, AppState};
+use crate::{error::WebError, extractors::AuthUser, AppState};
 
 #[derive(Serialize)]
 pub struct AccessResponse {

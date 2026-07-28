@@ -11,7 +11,7 @@ use tunnel2tunnel_core::models::{
     user::User,
 };
 
-use crate::{extractors::AuthUser, error::WebError, AppState};
+use crate::{error::WebError, extractors::AuthUser, AppState};
 
 #[derive(Serialize)]
 pub struct FriendshipResponse {
@@ -66,7 +66,9 @@ pub async fn list_friends(
     let rows = Friendship::list_for_user(&state.db, user.id)
         .await
         .map_err(WebError::Core)?;
-    Ok(Json(rows.into_iter().map(FriendshipResponse::from).collect()))
+    Ok(Json(
+        rows.into_iter().map(FriendshipResponse::from).collect(),
+    ))
 }
 
 #[derive(Deserialize)]
@@ -100,7 +102,10 @@ pub async fn send_request(
         .await
         .map_err(WebError::Core)?;
 
-    Ok((StatusCode::CREATED, Json(FriendshipResponse::from(friendship))))
+    Ok((
+        StatusCode::CREATED,
+        Json(FriendshipResponse::from(friendship)),
+    ))
 }
 
 #[derive(Deserialize)]

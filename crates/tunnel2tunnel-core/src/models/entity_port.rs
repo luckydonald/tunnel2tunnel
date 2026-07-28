@@ -1,8 +1,8 @@
+use crate::error::CoreError;
+use crate::timestamps::Timestamps;
 use serde::Serialize;
 use sqlx::PgPool;
 use uuid::Uuid;
-use crate::error::CoreError;
-use crate::timestamps::Timestamps;
 
 #[derive(Debug, Clone, sqlx::FromRow, Serialize)]
 pub struct EntityPort {
@@ -106,24 +106,20 @@ impl EntityPort {
     }
 
     pub async fn find_by_id(pool: &PgPool, id: Uuid) -> Result<Option<Self>, CoreError> {
-        sqlx::query_as::<_, EntityPort>(
-            "SELECT * FROM entity_ports WHERE id = $1",
-        )
-        .bind(id)
-        .fetch_optional(pool)
-        .await
-        .map_err(CoreError::Sqlx)
+        sqlx::query_as::<_, EntityPort>("SELECT * FROM entity_ports WHERE id = $1")
+            .bind(id)
+            .fetch_optional(pool)
+            .await
+            .map_err(CoreError::Sqlx)
     }
 
     pub async fn delete(pool: &PgPool, id: Uuid, entity_id: Uuid) -> Result<bool, CoreError> {
-        let r = sqlx::query(
-            "DELETE FROM entity_ports WHERE id = $1 AND entity_id = $2",
-        )
-        .bind(id)
-        .bind(entity_id)
-        .execute(pool)
-        .await
-        .map_err(CoreError::Sqlx)?;
+        let r = sqlx::query("DELETE FROM entity_ports WHERE id = $1 AND entity_id = $2")
+            .bind(id)
+            .bind(entity_id)
+            .execute(pool)
+            .await
+            .map_err(CoreError::Sqlx)?;
         Ok(r.rows_affected() > 0)
     }
 }

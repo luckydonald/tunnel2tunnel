@@ -66,8 +66,13 @@ pub enum BanSource {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TarpitOutcome {
     None,
-    Trap { method: TarpitMethod, source: Option<BanSource> },
-    Ban { source: BanSource },
+    Trap {
+        method: TarpitMethod,
+        source: Option<BanSource>,
+    },
+    Ban {
+        source: BanSource,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -146,7 +151,11 @@ pub struct ThresholdConfig {
 
 impl Default for ThresholdConfig {
     fn default() -> Self {
-        Self { enabled: true, rules: Vec::new(), ban_rules: Vec::new() }
+        Self {
+            enabled: true,
+            rules: Vec::new(),
+            ban_rules: Vec::new(),
+        }
     }
 }
 
@@ -237,20 +246,26 @@ fn resolve_outcome(
 ) -> TarpitOutcome {
     match ban_source {
         BanSource::Threshold(id) => match rules.iter().find(|r| &r.id == id) {
-            None => TarpitOutcome::Trap { method: TarpitMethod::round_robin(trigger_count), source: None },
-            Some(rule) if rule.action == "ban" => {
-                TarpitOutcome::Ban { source: BanSource::Threshold(*id) }
-            }
+            None => TarpitOutcome::Trap {
+                method: TarpitMethod::round_robin(trigger_count),
+                source: None,
+            },
+            Some(rule) if rule.action == "ban" => TarpitOutcome::Ban {
+                source: BanSource::Threshold(*id),
+            },
             Some(_) => TarpitOutcome::Trap {
                 method: TarpitMethod::round_robin(trigger_count),
                 source: Some(BanSource::Threshold(*id)),
             },
         },
         BanSource::AdminRule(id) => match ban_rules.iter().find(|r| &r.id == id) {
-            None => TarpitOutcome::Trap { method: TarpitMethod::round_robin(trigger_count), source: None },
-            Some(rule) if rule.action == "ban" => {
-                TarpitOutcome::Ban { source: BanSource::AdminRule(*id) }
-            }
+            None => TarpitOutcome::Trap {
+                method: TarpitMethod::round_robin(trigger_count),
+                source: None,
+            },
+            Some(rule) if rule.action == "ban" => TarpitOutcome::Ban {
+                source: BanSource::AdminRule(*id),
+            },
             Some(_) => TarpitOutcome::Trap {
                 method: TarpitMethod::round_robin(trigger_count),
                 source: Some(BanSource::AdminRule(*id)),
@@ -305,9 +320,12 @@ pub async fn decide_pre_auth_tarpit(
     let (banned, ban_source, trigger_count, cached_ineligible) = {
         let map = state.lock().await;
         match map.get(peer_ip) {
-            Some(e) if e.is_banned(now) => {
-                (true, e.ban_source.clone(), e.trigger_count, !e.banner_drip_eligible)
-            }
+            Some(e) if e.is_banned(now) => (
+                true,
+                e.ban_source.clone(),
+                e.trigger_count,
+                !e.banner_drip_eligible,
+            ),
             _ => (false, None, 0, false),
         }
     };
@@ -321,10 +339,17 @@ pub async fn decide_pre_auth_tarpit(
     };
     let mut outcome = match ban_source {
         Some(source) => resolve_outcome(&source, trigger_count, &rules, &ban_rules),
-        None => TarpitOutcome::Trap { method: TarpitMethod::round_robin(trigger_count), source: None },
+        None => TarpitOutcome::Trap {
+            method: TarpitMethod::round_robin(trigger_count),
+            source: None,
+        },
     };
 
-    if let TarpitOutcome::Trap { method: TarpitMethod::BannerDrip, source } = &outcome {
+    if let TarpitOutcome::Trap {
+        method: TarpitMethod::BannerDrip,
+        source,
+    } = &outcome
+    {
         let ineligible = cached_ineligible
             || ConnectionLog::peer_ip_has_known_good_history(pool, peer_ip)
                 .await
@@ -334,7 +359,10 @@ pub async fn decide_pre_auth_tarpit(
             map.entry(peer_ip.to_string())
                 .or_insert_with(|| TarpitEntry::new(now))
                 .banner_drip_eligible = false;
-            outcome = TarpitOutcome::Trap { method: TarpitMethod::SlowAuth, source: source.clone() };
+            outcome = TarpitOutcome::Trap {
+                method: TarpitMethod::SlowAuth,
+                source: source.clone(),
+            };
         }
     }
     outcome
@@ -386,12 +414,19 @@ pub async fn decide_in_auth_tarpit(
     };
     let outcome = match ban_source {
         Some(source) => resolve_outcome(&source, trigger_count, &rules, &ban_rules),
-        None => TarpitOutcome::Trap { method: TarpitMethod::round_robin(trigger_count), source: None },
+        None => TarpitOutcome::Trap {
+            method: TarpitMethod::round_robin(trigger_count),
+            source: None,
+        },
     };
     match outcome {
-        TarpitOutcome::Trap { method: TarpitMethod::BannerDrip, source } => {
-            TarpitOutcome::Trap { method: TarpitMethod::SlowAuth, source }
-        }
+        TarpitOutcome::Trap {
+            method: TarpitMethod::BannerDrip,
+            source,
+        } => TarpitOutcome::Trap {
+            method: TarpitMethod::SlowAuth,
+            source,
+        },
         other => other,
     }
 }
@@ -402,7 +437,11 @@ pub async fn decide_in_auth_tarpit(
 /// (awaited by the caller) so threshold rules are loaded from the DB before
 /// the server starts accepting connections — otherwise the default empty
 /// rule set would let an initial burst of failures through uncounted.
-pub async fn spawn_settings_refresher(pool: PgPool, state: TarpitState, thresholds: SharedThresholds) {
+pub async fn spawn_settings_refresher(
+    pool: PgPool,
+    state: TarpitState,
+    thresholds: SharedThresholds,
+) {
     refresh_once(&pool, &state, &thresholds).await;
     tokio::spawn(async move {
         loop {
@@ -419,7 +458,9 @@ async fn refresh_once(pool: &PgPool, state: &TarpitState, thresholds: &SharedThr
         .flatten()
         .map(|v| v == "true")
         .unwrap_or(true);
-    let rules = TarpitThreshold::list_enabled(pool).await.unwrap_or_default();
+    let rules = TarpitThreshold::list_enabled(pool)
+        .await
+        .unwrap_or_default();
     let active_ban_rules = BanRule::list_active(pool).await.unwrap_or_default();
 
     {
@@ -446,7 +487,9 @@ async fn refresh_once(pool: &PgPool, state: &TarpitState, thresholds: &SharedThr
                 if remaining.is_negative() {
                     continue;
                 }
-                BanUntil::At(now_mono + Duration::from_secs(remaining.whole_seconds().max(0) as u64))
+                BanUntil::At(
+                    now_mono + Duration::from_secs(remaining.whole_seconds().max(0) as u64),
+                )
             }
         };
         let entry = map.entry(key).or_insert_with(|| TarpitEntry::new(now_mono));
@@ -562,7 +605,10 @@ mod tests {
         assert!(!record_failure(&mut map, "1.2.3.4", &t, now));
         assert!(record_failure(&mut map, "1.2.3.4", &t, now));
         assert_eq!(map["1.2.3.4"].trigger_count, 1);
-        assert_eq!(map["1.2.3.4"].ban_source, Some(BanSource::Threshold(t[0].id)));
+        assert_eq!(
+            map["1.2.3.4"].ban_source,
+            Some(BanSource::Threshold(t[0].id))
+        );
     }
 
     #[test]
@@ -572,7 +618,10 @@ mod tests {
         let now = Instant::now();
         assert!(record_failure(&mut map, "1.2.3.4", &t, now));
         assert_eq!(map["1.2.3.4"].trigger_count, 1);
-        assert_eq!(map["1.2.3.4"].ban_source, Some(BanSource::Threshold(t[0].id)));
+        assert_eq!(
+            map["1.2.3.4"].ban_source,
+            Some(BanSource::Threshold(t[0].id))
+        );
     }
 
     #[test]
@@ -614,7 +663,12 @@ mod tests {
             &t,
             &[],
         );
-        assert_eq!(outcome, TarpitOutcome::Ban { source: BanSource::Threshold(t[0].id) });
+        assert_eq!(
+            outcome,
+            TarpitOutcome::Ban {
+                source: BanSource::Threshold(t[0].id)
+            }
+        );
     }
 
     #[test]
@@ -623,10 +677,16 @@ mod tests {
         // though the "trap" rule has a longer window (ban always outranks
         // trap, regardless of window length).
         let mut map = HashMap::new();
-        let t = vec![rule_with_action(1, 600, "trap"), rule_with_action(1, 60, "ban")];
+        let t = vec![
+            rule_with_action(1, 600, "trap"),
+            rule_with_action(1, 60, "ban"),
+        ];
         let now = Instant::now();
         assert!(record_failure(&mut map, "1.2.3.4", &t, now));
-        assert_eq!(map["1.2.3.4"].ban_source, Some(BanSource::Threshold(t[1].id)));
+        assert_eq!(
+            map["1.2.3.4"].ban_source,
+            Some(BanSource::Threshold(t[1].id))
+        );
     }
 
     #[test]
@@ -635,10 +695,22 @@ mod tests {
         // don't hard-ban forever against a rule that no longer exists.
         let missing_id = Uuid::now_v7();
         let outcome = resolve_outcome(&BanSource::Threshold(missing_id), 0, &[], &[]);
-        assert_eq!(outcome, TarpitOutcome::Trap { method: TarpitMethod::BannerDrip, source: None });
+        assert_eq!(
+            outcome,
+            TarpitOutcome::Trap {
+                method: TarpitMethod::BannerDrip,
+                source: None
+            }
+        );
 
         let outcome = resolve_outcome(&BanSource::AdminRule(missing_id), 0, &[], &[]);
-        assert_eq!(outcome, TarpitOutcome::Trap { method: TarpitMethod::BannerDrip, source: None });
+        assert_eq!(
+            outcome,
+            TarpitOutcome::Trap {
+                method: TarpitMethod::BannerDrip,
+                source: None
+            }
+        );
     }
 
     #[test]
@@ -675,6 +747,9 @@ mod tests {
         )
         .unwrap();
         let line = fail2ban_tarpit_line("Jan  1 00:00:00", "203.0.113.5");
-        assert!(re.is_match(line.trim_end()), "line did not match filter regex: {line:?}");
+        assert!(
+            re.is_match(line.trim_end()),
+            "line did not match filter regex: {line:?}"
+        );
     }
 }

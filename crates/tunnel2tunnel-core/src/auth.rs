@@ -1,8 +1,8 @@
+use crate::error::CoreError;
 use argon2::{
     password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2,
 };
-use crate::error::CoreError;
 
 pub fn hash_password(password: &str) -> Result<String, CoreError> {
     let salt = SaltString::generate(&mut OsRng);
@@ -13,8 +13,7 @@ pub fn hash_password(password: &str) -> Result<String, CoreError> {
 }
 
 pub fn verify_password(password: &str, hash: &str) -> Result<bool, CoreError> {
-    let parsed = PasswordHash::new(hash)
-        .map_err(|e| CoreError::PasswordHash(e.to_string()))?;
+    let parsed = PasswordHash::new(hash).map_err(|e| CoreError::PasswordHash(e.to_string()))?;
     Ok(Argon2::default()
         .verify_password(password.as_bytes(), &parsed)
         .is_ok())

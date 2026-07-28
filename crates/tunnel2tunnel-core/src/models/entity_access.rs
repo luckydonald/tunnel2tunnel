@@ -19,10 +19,7 @@ pub struct EntityAccess {
 }
 
 impl EntityAccess {
-    pub async fn list_for_user(
-        pool: &PgPool,
-        user_id: Uuid,
-    ) -> Result<Vec<Self>, CoreError> {
+    pub async fn list_for_user(pool: &PgPool, user_id: Uuid) -> Result<Vec<Self>, CoreError> {
         sqlx::query_as::<_, EntityAccess>(
             "SELECT ea.* FROM entity_access ea \
              JOIN entities e ON e.id = ea.owner_entity_id \
@@ -75,19 +72,13 @@ impl EntityAccess {
         .map_err(CoreError::Sqlx)
     }
 
-    pub async fn delete(
-        pool: &PgPool,
-        id: Uuid,
-        owner_entity_id: Uuid,
-    ) -> Result<bool, CoreError> {
-        let r = sqlx::query(
-            "DELETE FROM entity_access WHERE id = $1 AND owner_entity_id = $2",
-        )
-        .bind(id)
-        .bind(owner_entity_id)
-        .execute(pool)
-        .await
-        .map_err(CoreError::Sqlx)?;
+    pub async fn delete(pool: &PgPool, id: Uuid, owner_entity_id: Uuid) -> Result<bool, CoreError> {
+        let r = sqlx::query("DELETE FROM entity_access WHERE id = $1 AND owner_entity_id = $2")
+            .bind(id)
+            .bind(owner_entity_id)
+            .execute(pool)
+            .await
+            .map_err(CoreError::Sqlx)?;
         Ok(r.rows_affected() > 0)
     }
 

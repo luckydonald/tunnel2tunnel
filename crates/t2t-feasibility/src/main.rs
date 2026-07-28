@@ -86,7 +86,10 @@ impl Handler for T2tHandler {
         port: &mut u32,
         session: &mut Session,
     ) -> Result<bool, Self::Error> {
-        println!("tcpip_forward  user={}  {}:{}", self.username, address, port);
+        println!(
+            "tcpip_forward  user={}  {}:{}",
+            self.username, address, port
+        );
         self.state
             .lock()
             .await
@@ -242,8 +245,8 @@ async fn main() -> Result<()> {
         .with_max_level(tracing::Level::INFO)
         .init();
 
-    let key = PrivateKey::random(&mut UnwrapErr(SysRng), Algorithm::Ed25519)
-        .expect("keygen failed");
+    let key =
+        PrivateKey::random(&mut UnwrapErr(SysRng), Algorithm::Ed25519).expect("keygen failed");
 
     let config = Arc::new(Config {
         keys: vec![key],

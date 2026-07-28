@@ -1,3 +1,4 @@
+use crate::{extractors::AuthUser, AppState, WebError};
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -5,15 +6,11 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
-use uuid::Uuid;
 use tunnel2tunnel_core::models::{
-    connection_log::ConnectionLog,
-    entity::Entity,
-    entity_port::EntityPort,
-    entity_port_discovery_rule::EntityPortDiscoveryRule,
-    ssh_key::SshKey,
+    connection_log::ConnectionLog, entity::Entity, entity_port::EntityPort,
+    entity_port_discovery_rule::EntityPortDiscoveryRule, ssh_key::SshKey,
 };
-use crate::{extractors::AuthUser, AppState, WebError};
+use uuid::Uuid;
 
 // ── Request types ─────────────────────────────────────────────────────────────
 
@@ -249,7 +246,9 @@ pub async fn create_entity(
     Json(b): Json<CreateEntityBody>,
 ) -> Result<(StatusCode, Json<EntityResponse>), WebError> {
     if b.entity_type != "server" && b.entity_type != "client" {
-        return Err(WebError::BadRequest("entity_type must be 'server' or 'client'".into()));
+        return Err(WebError::BadRequest(
+            "entity_type must be 'server' or 'client'".into(),
+        ));
     }
     let e = Entity::create(
         &state.db,
@@ -358,7 +357,9 @@ pub async fn list_ports(
 ) -> Result<Json<Vec<EntityPortResponse>>, WebError> {
     require_owner(&state.db, entity_id, user.id).await?;
     let ports = EntityPort::list_for_entity(&state.db, entity_id).await?;
-    Ok(Json(ports.into_iter().map(EntityPortResponse::from).collect()))
+    Ok(Json(
+        ports.into_iter().map(EntityPortResponse::from).collect(),
+    ))
 }
 
 pub async fn create_port(
@@ -455,10 +456,8 @@ pub async fn list_reachable_servers(
     if client.entity_type != "client" {
         return Err(WebError::BadRequest("entity must be a client".into()));
     }
-    let servers = EntityPortDiscoveryRule::list_reachable_for_client(
-        &state.db, entity_id, user.id,
-    )
-    .await?;
+    let servers =
+        EntityPortDiscoveryRule::list_reachable_for_client(&state.db, entity_id, user.id).await?;
     let response = servers
         .into_iter()
         .map(|s| ReachableServerResponse {
@@ -549,10 +548,8 @@ pub async fn set_port_discovery_state(
                     }
                 }
             }
-            EntityPortDiscoveryRule::upsert(
-                &state.db, client_id, server_port_id, "disabled", None,
-            )
-            .await?;
+            EntityPortDiscoveryRule::upsert(&state.db, client_id, server_port_id, "disabled", None)
+                .await?;
         }
         _ => {
             return Err(WebError::BadRequest(

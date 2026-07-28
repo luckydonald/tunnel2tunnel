@@ -132,7 +132,9 @@ async fn fetch_through_tunnel(port: u16, timeout: Duration) -> anyhow::Result<St
     loop {
         let attempt = async {
             let mut stream = TcpStream::connect(("127.0.0.1", port)).await?;
-            stream.write_all(b"GET / HTTP/1.1\r\nHost: t2t-test\r\nConnection: close\r\n\r\n").await?;
+            stream
+                .write_all(b"GET / HTTP/1.1\r\nHost: t2t-test\r\nConnection: close\r\n\r\n")
+                .await?;
             let mut buf = Vec::new();
             stream.read_to_end(&mut buf).await?;
             anyhow::Ok(String::from_utf8_lossy(&buf).into_owned())
@@ -142,7 +144,9 @@ async fn fetch_through_tunnel(port: u16, timeout: Duration) -> anyhow::Result<St
         match attempt {
             Ok(response) if response.contains(FIXTURE_BODY) => return Ok(response),
             _ if tokio::time::Instant::now() < deadline => sleep(Duration::from_millis(150)).await,
-            Ok(response) => anyhow::bail!("tunnel never returned the fixture body; last response: {response:?}"),
+            Ok(response) => {
+                anyhow::bail!("tunnel never returned the fixture body; last response: {response:?}")
+            }
             Err(e) => anyhow::bail!("tunnel never became reachable: {e}"),
         }
     }
@@ -151,7 +155,9 @@ async fn fetch_through_tunnel(port: u16, timeout: Duration) -> anyhow::Result<St
 #[tokio::test]
 async fn two_ssh_connections_tunnel_through_rendezvous() {
     if Command::new("ssh").arg("-V").output().await.is_err() {
-        eprintln!("skipping two_ssh_connections_tunnel_through_rendezvous: no `ssh` binary in PATH");
+        eprintln!(
+            "skipping two_ssh_connections_tunnel_through_rendezvous: no `ssh` binary in PATH"
+        );
         return;
     }
 
@@ -187,31 +193,70 @@ async fn two_ssh_connections_tunnel_through_rendezvous() {
     .await
     .expect("create test user");
 
-    let server_entity = Entity::create(&pool, owner.id, "server", Some("e2e-test-server"), None, None, None)
-        .await
-        .expect("create server entity");
-    let client_entity = Entity::create(&pool, owner.id, "client", Some("e2e-test-client"), None, None, None)
-        .await
-        .expect("create client entity");
+    let server_entity = Entity::create(
+        &pool,
+        owner.id,
+        "server",
+        Some("e2e-test-server"),
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("create server entity");
+    let client_entity = Entity::create(
+        &pool,
+        owner.id,
+        "client",
+        Some("e2e-test-client"),
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("create client entity");
 
     let (server_algo, server_key_data) =
         generate_test_keypair(&server_key_path).expect("generate server keypair");
     let (client_algo, client_key_data) =
         generate_test_keypair(&client_key_path).expect("generate client keypair");
 
-    SshKey::create(&pool, server_entity.id, &server_algo, &server_key_data, Some("e2e-test"), None, None)
-        .await
-        .expect("register server key");
-    SshKey::create(&pool, client_entity.id, &client_algo, &client_key_data, Some("e2e-test"), None, None)
-        .await
-        .expect("register client key");
+    SshKey::create(
+        &pool,
+        server_entity.id,
+        &server_algo,
+        &server_key_data,
+        Some("e2e-test"),
+        None,
+        None,
+    )
+    .await
+    .expect("register server key");
+    SshKey::create(
+        &pool,
+        client_entity.id,
+        &client_algo,
+        &client_key_data,
+        Some("e2e-test"),
+        None,
+        None,
+    )
+    .await
+    .expect("register client key");
 
     // Client entity is granted access to the server entity specifically —
     // exercises the same `entity_access` check the SSH server enforces in
     // `channel_open_direct_tcpip`.
-    EntityAccess::create(&pool, server_entity.id, "entity", Some(client_entity.id), None, None)
-        .await
-        .expect("grant client access to server");
+    EntityAccess::create(
+        &pool,
+        server_entity.id,
+        "entity",
+        Some(client_entity.id),
+        None,
+        None,
+    )
+    .await
+    .expect("grant client access to server");
 
     // Local "real" service the tunnel is meant to reach.
     let fixture_port = spawn_fixture_service().await;
@@ -244,7 +289,11 @@ async fn two_ssh_connections_tunnel_through_rendezvous() {
 
     // Connection 1: the "server" entity registers `-R proxy_port:127.0.0.1:fixture_port`.
     let mut server_ssh = Command::new("ssh")
-        .args(["-N", "-R", &format!("{PROXY_PORT}:127.0.0.1:{fixture_port}")])
+        .args([
+            "-N",
+            "-R",
+            &format!("{PROXY_PORT}:127.0.0.1:{fixture_port}"),
+        ])
         .args(["-i", server_key_path.to_str().unwrap()])
         .args(["-p", &ssh_port.to_string()])
         .args(["-o", "StrictHostKeyChecking=no"])
@@ -264,7 +313,11 @@ async fn two_ssh_connections_tunnel_through_rendezvous() {
     // that exposed the address-mismatch bug this test guards against.
     let local_port = free_port();
     let mut client_ssh = Command::new("ssh")
-        .args(["-N", "-L", &format!("{local_port}:{}:{PROXY_PORT}", server_entity.id)])
+        .args([
+            "-N",
+            "-L",
+            &format!("{local_port}:{}:{PROXY_PORT}", server_entity.id),
+        ])
         .args(["-i", client_key_path.to_str().unwrap()])
         .args(["-p", &ssh_port.to_string()])
         .args(["-o", "StrictHostKeyChecking=no"])

@@ -1,9 +1,9 @@
+use crate::error::CoreError;
+use crate::timestamps::TimestampsSoftDelete;
 use serde::Serialize;
 use sqlx::PgPool;
 use time::OffsetDateTime;
 use uuid::Uuid;
-use crate::error::CoreError;
-use crate::timestamps::TimestampsSoftDelete;
 
 #[derive(Debug, Clone, sqlx::FromRow, Serialize)]
 pub struct SshKey {
@@ -88,11 +88,7 @@ impl SshKey {
         .map_err(CoreError::Sqlx)
     }
 
-    pub async fn soft_delete(
-        pool: &PgPool,
-        id: Uuid,
-        entity_id: Uuid,
-    ) -> Result<bool, CoreError> {
+    pub async fn soft_delete(pool: &PgPool, id: Uuid, entity_id: Uuid) -> Result<bool, CoreError> {
         let r = sqlx::query(
             "UPDATE ssh_keys SET deleted_at = NOW() \
              WHERE id = $1 AND entity_id = $2 AND deleted_at IS NULL",

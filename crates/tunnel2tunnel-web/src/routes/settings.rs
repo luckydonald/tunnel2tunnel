@@ -1,20 +1,13 @@
-use axum::{
-    extract::State,
-    http::StatusCode,
-    Json,
-};
+use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use tunnel2tunnel_core::{
     auth::verify_password,
-    models::{
-        entity_access::EntityAccess,
-        ssh_key::SshKey,
-    },
+    models::{entity_access::EntityAccess, ssh_key::SshKey},
 };
 
-use crate::{extractors::AuthUser, error::WebError, AppState};
+use crate::{error::WebError, extractors::AuthUser, AppState};
 
 // ── Change password ────────────────────────────────────────────────────────────
 
@@ -29,13 +22,13 @@ pub async fn change_password(
     AuthUser(user): AuthUser,
     Json(body): Json<ChangePasswordBody>,
 ) -> Result<StatusCode, WebError> {
-    if !verify_password(&body.old_password, &user.password_hash)
-        .map_err(WebError::Core)?
-    {
+    if !verify_password(&body.old_password, &user.password_hash).map_err(WebError::Core)? {
         return Err(WebError::BadRequest("incorrect current password".into()));
     }
     if body.new_password.len() < 8 {
-        return Err(WebError::BadRequest("password must be at least 8 characters".into()));
+        return Err(WebError::BadRequest(
+            "password must be at least 8 characters".into(),
+        ));
     }
 
     use tunnel2tunnel_core::models::user::User;
@@ -93,8 +86,7 @@ pub async fn purge_keys(
     let all_keys = SshKey::list_for_user(&state.db, user.id)
         .await
         .map_err(WebError::Core)?;
-    let owned_ids: std::collections::HashSet<Uuid> =
-        all_keys.iter().map(|k| k.id).collect();
+    let owned_ids: std::collections::HashSet<Uuid> = all_keys.iter().map(|k| k.id).collect();
 
     for id in &body.ids {
         if !owned_ids.contains(id) {

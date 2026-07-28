@@ -1,17 +1,15 @@
-use sqlx::PgPool;
 use crate::error::CoreError;
+use sqlx::PgPool;
 
 pub struct Settings;
 
 impl Settings {
     pub async fn get(pool: &PgPool, key: &str) -> Result<Option<String>, CoreError> {
-        let row: Option<(String,)> = sqlx::query_as(
-            "SELECT value FROM settings WHERE key = $1",
-        )
-        .bind(key)
-        .fetch_optional(pool)
-        .await
-        .map_err(CoreError::Sqlx)?;
+        let row: Option<(String,)> = sqlx::query_as("SELECT value FROM settings WHERE key = $1")
+            .bind(key)
+            .fetch_optional(pool)
+            .await
+            .map_err(CoreError::Sqlx)?;
         Ok(row.map(|(v,)| v))
     }
 

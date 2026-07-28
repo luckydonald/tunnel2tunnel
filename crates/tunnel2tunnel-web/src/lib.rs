@@ -50,100 +50,139 @@ pub async fn start(config: WebConfig, pool: PgPool) -> anyhow::Result<()> {
 
     let app = Router::new()
         // auth
-        .route("/api/auth/login",  post(routes::auth::login))
+        .route("/api/auth/login", post(routes::auth::login))
         .route("/api/auth/logout", post(routes::auth::logout))
-        .route("/api/auth/me",     get(routes::auth::me))
+        .route("/api/auth/me", get(routes::auth::me))
         // entities
-        .route("/api/entities",
-            get(routes::entities::list_entities)
-            .post(routes::entities::create_entity))
-        .route("/api/entities/{id}",
+        .route(
+            "/api/entities",
+            get(routes::entities::list_entities).post(routes::entities::create_entity),
+        )
+        .route(
+            "/api/entities/{id}",
             get(routes::entities::get_entity)
-            .put(routes::entities::update_entity)
-            .delete(routes::entities::delete_entity))
+                .put(routes::entities::update_entity)
+                .delete(routes::entities::delete_entity),
+        )
         // SSH keys
-        .route("/api/entities/{entity_id}/keys",
-            post(routes::entities::add_key))
-        .route("/api/entities/{entity_id}/keys/{key_id}",
-            delete(routes::entities::delete_key))
+        .route(
+            "/api/entities/{entity_id}/keys",
+            post(routes::entities::add_key),
+        )
+        .route(
+            "/api/entities/{entity_id}/keys/{key_id}",
+            delete(routes::entities::delete_key),
+        )
         // ports
-        .route("/api/entities/{entity_id}/ports",
-            get(routes::entities::list_ports)
-            .post(routes::entities::create_port))
-        .route("/api/entities/{entity_id}/ports/{port_id}",
-            put(routes::entities::update_port)
-            .delete(routes::entities::delete_port))
+        .route(
+            "/api/entities/{entity_id}/ports",
+            get(routes::entities::list_ports).post(routes::entities::create_port),
+        )
+        .route(
+            "/api/entities/{entity_id}/ports/{port_id}",
+            put(routes::entities::update_port).delete(routes::entities::delete_port),
+        )
         // entity access rules
-        .route("/api/entities/{entity_id}/access",
-            get(routes::access::list_access)
-            .post(routes::access::create_access))
-        .route("/api/entities/{entity_id}/access/incoming",
-            get(routes::access::list_incoming_access))
-        .route("/api/entities/{entity_id}/access/{rule_id}",
-            delete(routes::access::delete_access))
+        .route(
+            "/api/entities/{entity_id}/access",
+            get(routes::access::list_access).post(routes::access::create_access),
+        )
+        .route(
+            "/api/entities/{entity_id}/access/incoming",
+            get(routes::access::list_incoming_access),
+        )
+        .route(
+            "/api/entities/{entity_id}/access/{rule_id}",
+            delete(routes::access::delete_access),
+        )
         // friends
-        .route("/api/friends",
-            get(routes::friends::list_friends)
-            .post(routes::friends::send_request))
-        .route("/api/friends/{id}",
-            put(routes::friends::update_friendship))
-        .route("/api/friends/{id}/grants",
-            get(routes::friends::list_grants)
-            .post(routes::friends::add_grant))
-        .route("/api/friends/{id}/grants/{entity_id}",
-            delete(routes::friends::remove_grant))
+        .route(
+            "/api/friends",
+            get(routes::friends::list_friends).post(routes::friends::send_request),
+        )
+        .route("/api/friends/{id}", put(routes::friends::update_friendship))
+        .route(
+            "/api/friends/{id}/grants",
+            get(routes::friends::list_grants).post(routes::friends::add_grant),
+        )
+        .route(
+            "/api/friends/{id}/grants/{entity_id}",
+            delete(routes::friends::remove_grant),
+        )
         // port discovery (client entities)
-        .route("/api/entities/{entity_id}/reachable-servers",
-            get(routes::entities::list_reachable_servers))
-        .route("/api/entities/{client_id}/port-discovery/{server_port_id}",
-            put(routes::entities::set_port_discovery_state))
+        .route(
+            "/api/entities/{entity_id}/reachable-servers",
+            get(routes::entities::list_reachable_servers),
+        )
+        .route(
+            "/api/entities/{client_id}/port-discovery/{server_port_id}",
+            put(routes::entities::set_port_discovery_state),
+        )
         // entity connection logs
-        .route("/api/entities/{id}/logs",
-            get(routes::entities::list_connection_logs))
+        .route(
+            "/api/entities/{id}/logs",
+            get(routes::entities::list_connection_logs),
+        )
         // admin
-        .route("/api/admin/users",
-            get(routes::admin::list_users)
-            .post(routes::admin::create_user))
-        .route("/api/admin/users/{id}",
-            put(routes::admin::update_user))
+        .route(
+            "/api/admin/users",
+            get(routes::admin::list_users).post(routes::admin::create_user),
+        )
+        .route("/api/admin/users/{id}", put(routes::admin::update_user))
         // admin: tarpit/ban rules
-        .route("/api/admin/connection-logs",
-            get(routes::tarpit::search_connection_logs))
-        .route("/api/admin/ban-rules",
-            get(routes::tarpit::list_ban_rules)
-            .post(routes::tarpit::create_ban_rule))
-        .route("/api/admin/ban-rules/{id}",
-            delete(routes::tarpit::delete_ban_rule))
-        .route("/api/admin/ban-rules/{id}/restore",
-            post(routes::tarpit::restore_ban_rule))
-        .route("/api/admin/tarpit-settings",
-            get(routes::tarpit::get_tarpit_settings)
-            .put(routes::tarpit::update_tarpit_settings))
-        .route("/api/admin/tarpit-thresholds",
+        .route(
+            "/api/admin/connection-logs",
+            get(routes::tarpit::search_connection_logs),
+        )
+        .route(
+            "/api/admin/ban-rules",
+            get(routes::tarpit::list_ban_rules).post(routes::tarpit::create_ban_rule),
+        )
+        .route(
+            "/api/admin/ban-rules/{id}",
+            delete(routes::tarpit::delete_ban_rule),
+        )
+        .route(
+            "/api/admin/ban-rules/{id}/restore",
+            post(routes::tarpit::restore_ban_rule),
+        )
+        .route(
+            "/api/admin/tarpit-settings",
+            get(routes::tarpit::get_tarpit_settings).put(routes::tarpit::update_tarpit_settings),
+        )
+        .route(
+            "/api/admin/tarpit-thresholds",
             get(routes::tarpit::list_tarpit_thresholds)
-            .post(routes::tarpit::create_tarpit_threshold))
-        .route("/api/admin/tarpit-thresholds/{id}",
+                .post(routes::tarpit::create_tarpit_threshold),
+        )
+        .route(
+            "/api/admin/tarpit-thresholds/{id}",
             put(routes::tarpit::update_tarpit_threshold)
-            .delete(routes::tarpit::delete_tarpit_threshold))
-        .route("/api/admin/tarpit-thresholds/{id}/restore",
-            post(routes::tarpit::restore_tarpit_threshold))
+                .delete(routes::tarpit::delete_tarpit_threshold),
+        )
+        .route(
+            "/api/admin/tarpit-thresholds/{id}/restore",
+            post(routes::tarpit::restore_tarpit_threshold),
+        )
         // server info (authenticated)
-        .route("/api/server-info",
-            get(routes::server_info::get_server_info))
+        .route(
+            "/api/server-info",
+            get(routes::server_info::get_server_info),
+        )
         // Sentry/Bugsink verification (admin only)
-        .route("/api/admin/sample-error",
-            get(routes::diagnostics::sample_error))
+        .route(
+            "/api/admin/sample-error",
+            get(routes::diagnostics::sample_error),
+        )
         // user settings
-        .route("/api/me/password",
-            put(routes::settings::change_password))
-        .route("/api/me/ssh-keys",
-            get(routes::settings::list_my_keys))
-        .route("/api/me/purge-keys",
-            post(routes::settings::purge_keys))
-        .route("/api/me/access-rules",
-            get(routes::settings::list_my_access))
-        .route("/api/me/purge-access",
-            post(routes::settings::purge_access))
+        .route("/api/me/password", put(routes::settings::change_password))
+        .route("/api/me/ssh-keys", get(routes::settings::list_my_keys))
+        .route("/api/me/purge-keys", post(routes::settings::purge_keys))
+        .route(
+            "/api/me/access-rules",
+            get(routes::settings::list_my_access),
+        )
+        .route("/api/me/purge-access", post(routes::settings::purge_access))
         .layer(
             ServiceBuilder::new()
                 // binds a fresh Hub per request for correct error<->request correlation
@@ -157,9 +196,7 @@ pub async fn start(config: WebConfig, pool: PgPool) -> anyhow::Result<()> {
     let app = if let Some(ref dir) = config.static_dir {
         if std::path::Path::new(dir).exists() {
             let index = format!("{dir}/index.html");
-            app.fallback_service(
-                ServeDir::new(dir).fallback(ServeFile::new(index)),
-            )
+            app.fallback_service(ServeDir::new(dir).fallback(ServeFile::new(index)))
         } else {
             tracing::warn!(dir, "static dir not found; SPA not served");
             app

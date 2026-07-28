@@ -1,21 +1,26 @@
+use crate::error::CoreError;
 use base64::{engine::general_purpose, Engine};
 use sha2::{Digest, Sha256};
-use crate::error::CoreError;
 
 /// Parse one line in authorized_keys format: `<algo> <b64_key_data> [comment]`
 /// Returns `(algorithm, key_data_b64, comment)`.
-pub fn parse_authorized_keys_line(line: &str) -> Result<(String, String, Option<String>), CoreError> {
+pub fn parse_authorized_keys_line(
+    line: &str,
+) -> Result<(String, String, Option<String>), CoreError> {
     let line = line.trim();
     let mut parts = line.splitn(3, ' ');
-    let algorithm = parts.next()
+    let algorithm = parts
+        .next()
         .filter(|s| !s.is_empty())
         .ok_or(CoreError::InvalidKeyFormat)?
         .to_string();
-    let key_data = parts.next()
+    let key_data = parts
+        .next()
         .filter(|s| !s.is_empty())
         .ok_or(CoreError::InvalidKeyFormat)?
         .to_string();
-    let comment = parts.next()
+    let comment = parts
+        .next()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
     Ok((algorithm, key_data, comment))

@@ -1,9 +1,9 @@
+use crate::{extractors::AuthUser, AppState, WebError};
 use axum::{extract::State, Json};
 use serde::{Deserialize, Serialize};
 use tower_sessions::Session;
-use uuid::Uuid;
 use tunnel2tunnel_core::{auth::verify_password, models::user::User};
-use crate::{extractors::AuthUser, AppState, WebError};
+use uuid::Uuid;
 
 #[derive(Deserialize)]
 pub struct LoginRequest {

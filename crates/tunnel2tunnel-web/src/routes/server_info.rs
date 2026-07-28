@@ -1,7 +1,7 @@
+use crate::extractors::AuthUser;
+use crate::{AppState, WebError};
 use axum::{extract::State, Json};
 use serde::Serialize;
-use crate::{AppState, WebError};
-use crate::extractors::AuthUser;
 
 #[derive(Serialize)]
 pub struct ServerInfoResponse {

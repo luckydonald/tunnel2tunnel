@@ -18,7 +18,9 @@ const PROMPT: &str = "$ ";
 /// the client disconnects.
 pub async fn serve(handle: Handle, mut channel: Channel<Msg>) {
     let ch_id = channel.id();
-    let _ = handle.data(ch_id, format!("\r\n{PROMPT}").into_bytes()).await;
+    let _ = handle
+        .data(ch_id, format!("\r\n{PROMPT}").into_bytes())
+        .await;
 
     loop {
         match channel.wait().await {
@@ -36,4 +38,3 @@ pub async fn serve(handle: Handle, mut channel: Channel<Msg>) {
         }
     }
 }
-

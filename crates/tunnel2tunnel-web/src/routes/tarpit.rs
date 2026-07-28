@@ -16,7 +16,7 @@ use tunnel2tunnel_core::models::{
     tarpit_threshold::TarpitThreshold,
 };
 
-use crate::{extractors::AdminUser, error::WebError, routes::entities::ConnLogResponse, AppState};
+use crate::{error::WebError, extractors::AdminUser, routes::entities::ConnLogResponse, AppState};
 
 // ── Connection log search ───────────────────────────────────────────────────
 
@@ -53,7 +53,10 @@ pub struct LogSearchResponse {
 /// Pure pagination normalization — extracted so it's unit-testable without a
 /// DB/HTTP request. Page is floored at 1; page_size clamped to [1, 200].
 fn normalize_pagination(page: Option<i64>, page_size: Option<i64>) -> (i64, i64) {
-    (page.unwrap_or(1).max(1), page_size.unwrap_or(50).clamp(1, 200))
+    (
+        page.unwrap_or(1).max(1),
+        page_size.unwrap_or(50).clamp(1, 200),
+    )
 }
 
 pub async fn search_connection_logs(
@@ -115,11 +118,23 @@ impl From<BanRule> for BanRuleResponse {
             peer_ip: r.peer_ip,
             user_id: r.user_id,
             reason: r.reason,
-            active_until: r.active_until.map(|t| t.format(&Rfc3339).unwrap_or_default()),
+            active_until: r
+                .active_until
+                .map(|t| t.format(&Rfc3339).unwrap_or_default()),
             created_by: r.created_by,
             action: r.action,
-            created_at: r.ts.timestamps.created_at.format(&Rfc3339).unwrap_or_default(),
-            updated_at: r.ts.timestamps.updated_at.format(&Rfc3339).unwrap_or_default(),
+            created_at: r
+                .ts
+                .timestamps
+                .created_at
+                .format(&Rfc3339)
+                .unwrap_or_default(),
+            updated_at: r
+                .ts
+                .timestamps
+                .updated_at
+                .format(&Rfc3339)
+                .unwrap_or_default(),
             deleted_at: r
                 .ts
                 .soft_delete
@@ -159,12 +174,12 @@ fn validate_create_ban_rule(body: &CreateBanRuleBody) -> Result<(), WebError> {
         return Err(WebError::BadRequest("invalid action".into()));
     }
     match body.scope_type.as_str() {
-        "peer_ip" if body.peer_ip.is_none() => {
-            Err(WebError::BadRequest("peer_ip required for scope_type 'peer_ip'".into()))
-        }
-        "user" if body.user_id.is_none() => {
-            Err(WebError::BadRequest("user_id required for scope_type 'user'".into()))
-        }
+        "peer_ip" if body.peer_ip.is_none() => Err(WebError::BadRequest(
+            "peer_ip required for scope_type 'peer_ip'".into(),
+        )),
+        "user" if body.user_id.is_none() => Err(WebError::BadRequest(
+            "user_id required for scope_type 'user'".into(),
+        )),
         _ => Ok(()),
     }
 }
@@ -197,7 +212,10 @@ pub async fn delete_ban_rule(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, WebError> {
-    if BanRule::soft_delete(&state.db, id).await.map_err(WebError::Core)? {
+    if BanRule::soft_delete(&state.db, id)
+        .await
+        .map_err(WebError::Core)?
+    {
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(WebError::NotFound)
@@ -209,7 +227,10 @@ pub async fn restore_ban_rule(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, WebError> {
-    if BanRule::restore(&state.db, id).await.map_err(WebError::Core)? {
+    if BanRule::restore(&state.db, id)
+        .await
+        .map_err(WebError::Core)?
+    {
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(WebError::NotFound)
@@ -246,9 +267,13 @@ pub async fn update_tarpit_settings(
     State(state): State<AppState>,
     Json(body): Json<UpdateTarpitSettingsBody>,
 ) -> Result<StatusCode, WebError> {
-    Settings::set(&state.db, "tarpit_enabled", if body.enabled { "true" } else { "false" })
-        .await
-        .map_err(WebError::Core)?;
+    Settings::set(
+        &state.db,
+        "tarpit_enabled",
+        if body.enabled { "true" } else { "false" },
+    )
+    .await
+    .map_err(WebError::Core)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -275,8 +300,18 @@ impl From<TarpitThreshold> for TarpitThresholdResponse {
             window_seconds: t.window_seconds,
             enabled: t.enabled,
             action: t.action,
-            created_at: t.ts.timestamps.created_at.format(&Rfc3339).unwrap_or_default(),
-            updated_at: t.ts.timestamps.updated_at.format(&Rfc3339).unwrap_or_default(),
+            created_at: t
+                .ts
+                .timestamps
+                .created_at
+                .format(&Rfc3339)
+                .unwrap_or_default(),
+            updated_at: t
+                .ts
+                .timestamps
+                .updated_at
+                .format(&Rfc3339)
+                .unwrap_or_default(),
             deleted_at: t
                 .ts
                 .soft_delete
@@ -309,7 +344,9 @@ fn validate_threshold_body(body: &TarpitThresholdBody) -> Result<(), WebError> {
         return Err(WebError::BadRequest("fail_count must be positive".into()));
     }
     if body.window_seconds <= 0 {
-        return Err(WebError::BadRequest("window_seconds must be positive".into()));
+        return Err(WebError::BadRequest(
+            "window_seconds must be positive".into(),
+        ));
     }
     if !["trap", "ban"].contains(&body.action.as_str()) {
         return Err(WebError::BadRequest("invalid action".into()));
@@ -321,8 +358,15 @@ pub async fn list_tarpit_thresholds(
     AdminUser(_admin): AdminUser,
     State(state): State<AppState>,
 ) -> Result<Json<Vec<TarpitThresholdResponse>>, WebError> {
-    let rules = TarpitThreshold::list_all(&state.db).await.map_err(WebError::Core)?;
-    Ok(Json(rules.into_iter().map(TarpitThresholdResponse::from).collect()))
+    let rules = TarpitThreshold::list_all(&state.db)
+        .await
+        .map_err(WebError::Core)?;
+    Ok(Json(
+        rules
+            .into_iter()
+            .map(TarpitThresholdResponse::from)
+            .collect(),
+    ))
 }
 
 pub async fn create_tarpit_threshold(
@@ -340,7 +384,10 @@ pub async fn create_tarpit_threshold(
     )
     .await
     .map_err(WebError::Core)?;
-    Ok((StatusCode::CREATED, Json(TarpitThresholdResponse::from(rule))))
+    Ok((
+        StatusCode::CREATED,
+        Json(TarpitThresholdResponse::from(rule)),
+    ))
 }
 
 pub async fn update_tarpit_threshold(
@@ -369,7 +416,10 @@ pub async fn delete_tarpit_threshold(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, WebError> {
-    if TarpitThreshold::soft_delete(&state.db, id).await.map_err(WebError::Core)? {
+    if TarpitThreshold::soft_delete(&state.db, id)
+        .await
+        .map_err(WebError::Core)?
+    {
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(WebError::NotFound)
@@ -381,7 +431,10 @@ pub async fn restore_tarpit_threshold(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, WebError> {
-    if TarpitThreshold::restore(&state.db, id).await.map_err(WebError::Core)? {
+    if TarpitThreshold::restore(&state.db, id)
+        .await
+        .map_err(WebError::Core)?
+    {
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(WebError::NotFound)

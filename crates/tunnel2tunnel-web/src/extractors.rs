@@ -1,11 +1,8 @@
-use axum::{
-    extract::FromRequestParts,
-    http::request::Parts,
-};
-use tower_sessions::Session;
-use uuid::Uuid;
-use tunnel2tunnel_core::models::user::User;
 use crate::{AppState, WebError};
+use axum::{extract::FromRequestParts, http::request::Parts};
+use tower_sessions::Session;
+use tunnel2tunnel_core::models::user::User;
+use uuid::Uuid;
 
 pub struct AuthUser(pub User);
 pub struct AdminUser(pub User);
@@ -13,7 +10,10 @@ pub struct AdminUser(pub User);
 impl FromRequestParts<AppState> for AuthUser {
     type Rejection = WebError;
 
-    async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, Self::Rejection> {
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
         let session = Session::from_request_parts(parts, state)
             .await
             .map_err(|_| WebError::Unauthorized)?;
@@ -41,7 +41,10 @@ impl FromRequestParts<AppState> for AuthUser {
 impl FromRequestParts<AppState> for AdminUser {
     type Rejection = WebError;
 
-    async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, Self::Rejection> {
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
         let AuthUser(user) = AuthUser::from_request_parts(parts, state).await?;
         if !user.is_admin {
             return Err(WebError::Forbidden);

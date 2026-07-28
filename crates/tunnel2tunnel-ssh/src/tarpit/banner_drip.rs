@@ -34,7 +34,10 @@ pub fn random_rfc4253_line() -> String {
     // valid tarpit line rather than panicking the accept loop.
     let _ = getrandom::fill(&mut buf);
     let mut line = format!("{:x}", u128::from_be_bytes(buf[..16].try_into().unwrap()));
-    line.push_str(&format!("{:x}", u64::from_be_bytes(buf[16..24].try_into().unwrap())));
+    line.push_str(&format!(
+        "{:x}",
+        u64::from_be_bytes(buf[16..24].try_into().unwrap())
+    ));
     format!("{line}\r\n")
 }
 

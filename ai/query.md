@@ -928,3 +928,5 @@ Generally:
 
 > › Implement the [Plan](./plans/014_connection-log-date-and-tarpit-filters.md).
 
+› Install rustfmt, and run it. If it produces changes commit those as well (new commit, squash this ai query though)
+

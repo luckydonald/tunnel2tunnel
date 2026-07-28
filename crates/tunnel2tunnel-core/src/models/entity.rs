@@ -1,9 +1,9 @@
+use crate::error::CoreError;
+use crate::timestamps::TimestampsSoftDelete;
 use serde::Serialize;
 use sqlx::PgPool;
 use time::OffsetDateTime;
 use uuid::Uuid;
-use crate::error::CoreError;
-use crate::timestamps::TimestampsSoftDelete;
 
 #[derive(Debug, Clone, sqlx::FromRow, Serialize)]
 pub struct Entity {
@@ -40,17 +40,12 @@ impl Entity {
         .map_err(CoreError::Sqlx)
     }
 
-    pub async fn find_by_id_only(
-        pool: &PgPool,
-        id: Uuid,
-    ) -> Result<Option<Self>, CoreError> {
-        sqlx::query_as::<_, Entity>(
-            "SELECT * FROM entities WHERE id = $1 AND deleted_at IS NULL",
-        )
-        .bind(id)
-        .fetch_optional(pool)
-        .await
-        .map_err(CoreError::Sqlx)
+    pub async fn find_by_id_only(pool: &PgPool, id: Uuid) -> Result<Option<Self>, CoreError> {
+        sqlx::query_as::<_, Entity>("SELECT * FROM entities WHERE id = $1 AND deleted_at IS NULL")
+            .bind(id)
+            .fetch_optional(pool)
+            .await
+            .map_err(CoreError::Sqlx)
     }
 
     pub async fn find_by_id_and_user(

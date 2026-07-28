@@ -33,13 +33,16 @@ pub enum WebError {
 impl IntoResponse for WebError {
     fn into_response(self) -> Response {
         let (status, msg) = match &self {
-            WebError::Unauthorized   => (StatusCode::UNAUTHORIZED,            "unauthorized".into()),
-            WebError::Forbidden      => (StatusCode::FORBIDDEN,               "forbidden".into()),
-            WebError::NotFound       => (StatusCode::NOT_FOUND,               "not found".into()),
-            WebError::BadRequest(m)  => (StatusCode::BAD_REQUEST,             m.clone()),
-            WebError::Conflict(m)    => (StatusCode::CONFLICT,                m.clone()),
-            WebError::Internal(m)    => (StatusCode::INTERNAL_SERVER_ERROR,   m.clone()),
-            WebError::Core(_)        => (StatusCode::INTERNAL_SERVER_ERROR,   "internal server error".into()),
+            WebError::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized".into()),
+            WebError::Forbidden => (StatusCode::FORBIDDEN, "forbidden".into()),
+            WebError::NotFound => (StatusCode::NOT_FOUND, "not found".into()),
+            WebError::BadRequest(m) => (StatusCode::BAD_REQUEST, m.clone()),
+            WebError::Conflict(m) => (StatusCode::CONFLICT, m.clone()),
+            WebError::Internal(m) => (StatusCode::INTERNAL_SERVER_ERROR, m.clone()),
+            WebError::Core(_) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal server error".into(),
+            ),
         };
         (status, Json(json!({ "error": msg }))).into_response()
     }

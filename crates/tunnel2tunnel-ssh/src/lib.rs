@@ -7,11 +7,11 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use getrandom::rand_core::UnwrapErr;
 use getrandom::SysRng;
-use russh::keys::{Algorithm, PrivateKey};
 use russh::keys::ssh_key::LineEnding;
+use russh::keys::{Algorithm, PrivateKey};
 use russh::server::{Auth, Config, Handle, Handler, Msg, Server, Session};
-use russh::{MethodKind, MethodSet};
 use russh::{Channel, ChannelId, ChannelMsg};
+use russh::{MethodKind, MethodSet};
 use sqlx::PgPool;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
@@ -20,10 +20,7 @@ use uuid::Uuid;
 use tunnel2tunnel_core::{
     ip_whitelist,
     models::{
-        connection_log::ConnectionLog,
-        entity::Entity,
-        entity_access::EntityAccess,
-        ssh_key::SshKey,
+        connection_log::ConnectionLog, entity::Entity, entity_access::EntityAccess, ssh_key::SshKey,
     },
 };
 
@@ -60,7 +57,9 @@ async fn broadcast(registry: &SessionRegistry, msg: &str, exclude: Option<Uuid>)
         reg.iter()
             .filter(|(conn_id, _)| exclude.map_or(true, |ex| **conn_id != ex))
             .filter_map(|(_, entry)| {
-                entry.session_channel_id.map(|ch| (entry.handle.clone(), ch))
+                entry
+                    .session_channel_id
+                    .map(|ch| (entry.handle.clone(), ch))
             })
             .collect()
     };
@@ -77,15 +76,14 @@ pub fn host_key_fingerprint(path: &str, password: Option<&str>) -> Result<String
     let key = load_or_generate_host_key(path, password)?;
     Ok(format!(
         "{}",
-        key.public_key().fingerprint(russh::keys::ssh_key::HashAlg::Sha256)
+        key.public_key()
+            .fingerprint(russh::keys::ssh_key::HashAlg::Sha256)
     ))
 }
 
 pub async fn start(config: SshConfig, pool: PgPool) -> Result<()> {
-    let key = load_or_generate_host_key(
-        &config.host_key_path,
-        config.host_key_password.as_deref(),
-    )?;
+    let key =
+        load_or_generate_host_key(&config.host_key_path, config.host_key_password.as_deref())?;
 
     let russh_config = Arc::new(Config {
         keys: vec![key],
@@ -143,13 +141,22 @@ pub async fn start(config: SshConfig, pool: PgPool) -> Result<()> {
             continue;
         }
 
-        if let tarpit::TarpitOutcome::Trap { method: TarpitMethod::BannerDrip, source } = &pre_auth_outcome {
+        if let tarpit::TarpitOutcome::Trap {
+            method: TarpitMethod::BannerDrip,
+            source,
+        } = &pre_auth_outcome
+        {
             let pool = server.pool.clone();
             let fail2ban = server.fail2ban.clone();
             let source = source.clone();
             tracing::info!(%peer_ip, "SSH: banner-drip tarpit engaged for new connection");
             tokio::spawn(tarpit::banner_drip::run(
-                socket, peer_ip, pool, fail2ban, "ip banned", source,
+                socket,
+                peer_ip,
+                pool,
+                fail2ban,
+                "ip banned",
+                source,
             ));
             continue;
         }
@@ -251,11 +258,18 @@ impl T2tHandler {
     async fn resolve_tarpit_outcome(&mut self, user_id: Option<Uuid>) -> tarpit::TarpitOutcome {
         if self.tarpit_outcome.is_none() {
             self.tarpit_outcome = Some(
-                tarpit::decide_in_auth_tarpit(&self.tarpit, &self.thresholds, &self.peer_ip, user_id)
-                    .await,
+                tarpit::decide_in_auth_tarpit(
+                    &self.tarpit,
+                    &self.thresholds,
+                    &self.peer_ip,
+                    user_id,
+                )
+                .await,
             );
         }
-        self.tarpit_outcome.clone().unwrap_or(tarpit::TarpitOutcome::None)
+        self.tarpit_outcome
+            .clone()
+            .unwrap_or(tarpit::TarpitOutcome::None)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -324,7 +338,12 @@ impl T2tHandler {
         }
     }
 
-    async fn log_auth_success(&mut self, entity: &Entity, fingerprint: &str, attempted_username: &str) {
+    async fn log_auth_success(
+        &mut self,
+        entity: &Entity,
+        fingerprint: &str,
+        attempted_username: &str,
+    ) {
         let now = time::OffsetDateTime::now_utc();
         match ConnectionLog::create(
             &self.pool,
@@ -389,8 +408,16 @@ impl Handler for T2tHandler {
             "SSH: auth attempt (password) — rejected (password auth not supported)"
         );
         let outcome = self.resolve_tarpit_outcome(None).await;
-        self.log_auth_failure(None, None, Some(password), user, "password auth not supported", &outcome, true)
-            .await;
+        self.log_auth_failure(
+            None,
+            None,
+            Some(password),
+            user,
+            "password auth not supported",
+            &outcome,
+            true,
+        )
+        .await;
 
         if let tarpit::TarpitOutcome::Trap { method, .. } = outcome {
             if method == TarpitMethod::FakeShell {
@@ -421,8 +448,16 @@ impl Handler for T2tHandler {
             "SSH: auth attempt (keyboard-interactive) — rejected"
         );
         let outcome = self.resolve_tarpit_outcome(None).await;
-        self.log_auth_failure(None, None, None, user, "unsupported auth method", &outcome, true)
-            .await;
+        self.log_auth_failure(
+            None,
+            None,
+            None,
+            user,
+            "unsupported auth method",
+            &outcome,
+            true,
+        )
+        .await;
 
         if let tarpit::TarpitOutcome::Trap { method, .. } = outcome {
             if method == TarpitMethod::FakeShell {
@@ -461,10 +496,7 @@ impl Handler for T2tHandler {
         user: &str,
         key: &russh::keys::PublicKey,
     ) -> Result<Auth, Self::Error> {
-        let fp = format!(
-            "{}",
-            key.fingerprint(russh::keys::ssh_key::HashAlg::Sha256)
-        );
+        let fp = format!("{}", key.fingerprint(russh::keys::ssh_key::HashAlg::Sha256));
 
         tracing::info!(peer_ip = %self.peer_ip, %user, %fp, "SSH: auth attempt (publickey)");
 
@@ -474,7 +506,8 @@ impl Handler for T2tHandler {
             Ok(None) => {
                 tracing::info!(%fp, peer_ip = %self.peer_ip, "SSH: auth rejected — unknown key");
                 let outcome = self.resolve_tarpit_outcome(None).await;
-                self.log_auth_failure(None, Some(&fp), None, user, "unknown key", &outcome, true).await;
+                self.log_auth_failure(None, Some(&fp), None, user, "unknown key", &outcome, true)
+                    .await;
                 if let tarpit::TarpitOutcome::Trap { method, .. } = outcome {
                     if method == TarpitMethod::FakeShell {
                         self.fake_shell = true;
@@ -484,11 +517,17 @@ impl Handler for T2tHandler {
                         tarpit::slow_auth::delay().await;
                     }
                 }
-                return Ok(Auth::Reject { proceed_with_methods: None, partial_success: false });
+                return Ok(Auth::Reject {
+                    proceed_with_methods: None,
+                    partial_success: false,
+                });
             }
             Err(e) => {
                 tracing::error!(err = %e, %fp, peer_ip = %self.peer_ip, "SSH: auth error — db error during key lookup");
-                return Ok(Auth::Reject { proceed_with_methods: None, partial_success: false });
+                return Ok(Auth::Reject {
+                    proceed_with_methods: None,
+                    partial_success: false,
+                });
             }
         };
 
@@ -502,7 +541,16 @@ impl Handler for T2tHandler {
             Ok(None) => {
                 tracing::info!(%fp, entity_id = %ssh_key.entity_id, "SSH: auth rejected — entity not found");
                 let outcome = self.resolve_tarpit_outcome(None).await;
-                self.log_auth_failure(None, Some(&fp), None, user, "entity not found", &outcome, true).await;
+                self.log_auth_failure(
+                    None,
+                    Some(&fp),
+                    None,
+                    user,
+                    "entity not found",
+                    &outcome,
+                    true,
+                )
+                .await;
                 if let tarpit::TarpitOutcome::Trap { method, .. } = outcome {
                     if method == TarpitMethod::FakeShell {
                         self.fake_shell = true;
@@ -512,11 +560,17 @@ impl Handler for T2tHandler {
                         tarpit::slow_auth::delay().await;
                     }
                 }
-                return Ok(Auth::Reject { proceed_with_methods: None, partial_success: false });
+                return Ok(Auth::Reject {
+                    proceed_with_methods: None,
+                    partial_success: false,
+                });
             }
             Err(e) => {
                 tracing::error!(err = %e, %fp, "SSH: auth error — db error loading entity");
-                return Ok(Auth::Reject { proceed_with_methods: None, partial_success: false });
+                return Ok(Auth::Reject {
+                    proceed_with_methods: None,
+                    partial_success: false,
+                });
             }
         };
         let user_id = entity.user_id;
@@ -530,11 +584,27 @@ impl Handler for T2tHandler {
             if valid_until < time::OffsetDateTime::now_utc() {
                 tracing::info!(%fp, key_id = %ssh_key.id, "SSH: auth rejected — key expired (deleted_at)");
                 let outcome = self.resolve_tarpit_outcome(Some(user_id)).await;
-                self.log_auth_failure(Some(user_id), Some(&fp), None, user, "key expired", &outcome, true).await;
-                if let tarpit::TarpitOutcome::Trap { method: TarpitMethod::SlowAuth, .. } = outcome {
+                self.log_auth_failure(
+                    Some(user_id),
+                    Some(&fp),
+                    None,
+                    user,
+                    "key expired",
+                    &outcome,
+                    true,
+                )
+                .await;
+                if let tarpit::TarpitOutcome::Trap {
+                    method: TarpitMethod::SlowAuth,
+                    ..
+                } = outcome
+                {
                     tarpit::slow_auth::delay().await;
                 }
-                return Ok(Auth::Reject { proceed_with_methods: None, partial_success: false });
+                return Ok(Auth::Reject {
+                    proceed_with_methods: None,
+                    partial_success: false,
+                });
             }
         }
         // Also check ssh_key's own valid_until field
@@ -542,11 +612,27 @@ impl Handler for T2tHandler {
             if valid_until < time::OffsetDateTime::now_utc() {
                 tracing::info!(%fp, key_id = %ssh_key.id, "SSH: auth rejected — key expired (valid_until)");
                 let outcome = self.resolve_tarpit_outcome(Some(user_id)).await;
-                self.log_auth_failure(Some(user_id), Some(&fp), None, user, "key expired (valid_until)", &outcome, true).await;
-                if let tarpit::TarpitOutcome::Trap { method: TarpitMethod::SlowAuth, .. } = outcome {
+                self.log_auth_failure(
+                    Some(user_id),
+                    Some(&fp),
+                    None,
+                    user,
+                    "key expired (valid_until)",
+                    &outcome,
+                    true,
+                )
+                .await;
+                if let tarpit::TarpitOutcome::Trap {
+                    method: TarpitMethod::SlowAuth,
+                    ..
+                } = outcome
+                {
                     tarpit::slow_auth::delay().await;
                 }
-                return Ok(Auth::Reject { proceed_with_methods: None, partial_success: false });
+                return Ok(Auth::Reject {
+                    proceed_with_methods: None,
+                    partial_success: false,
+                });
             }
         }
 
@@ -555,11 +641,27 @@ impl Handler for T2tHandler {
             if valid_until < time::OffsetDateTime::now_utc() {
                 tracing::info!(entity_id = %entity.id, entity_name = entity.name.as_deref().unwrap_or("(unnamed)"), "SSH: auth rejected — entity expired");
                 let outcome = self.resolve_tarpit_outcome(Some(user_id)).await;
-                self.log_auth_failure(Some(user_id), Some(&fp), None, user, "entity expired", &outcome, true).await;
-                if let tarpit::TarpitOutcome::Trap { method: TarpitMethod::SlowAuth, .. } = outcome {
+                self.log_auth_failure(
+                    Some(user_id),
+                    Some(&fp),
+                    None,
+                    user,
+                    "entity expired",
+                    &outcome,
+                    true,
+                )
+                .await;
+                if let tarpit::TarpitOutcome::Trap {
+                    method: TarpitMethod::SlowAuth,
+                    ..
+                } = outcome
+                {
                     tarpit::slow_auth::delay().await;
                 }
-                return Ok(Auth::Reject { proceed_with_methods: None, partial_success: false });
+                return Ok(Auth::Reject {
+                    proceed_with_methods: None,
+                    partial_success: false,
+                });
             }
         }
 
@@ -573,11 +675,27 @@ impl Handler for T2tHandler {
                     "SSH: auth rejected — IP blocked by whitelist"
                 );
                 let outcome = self.resolve_tarpit_outcome(Some(user_id)).await;
-                self.log_auth_failure(Some(user_id), Some(&fp), None, user, "ip blocked by whitelist", &outcome, true).await;
-                if let tarpit::TarpitOutcome::Trap { method: TarpitMethod::SlowAuth, .. } = outcome {
+                self.log_auth_failure(
+                    Some(user_id),
+                    Some(&fp),
+                    None,
+                    user,
+                    "ip blocked by whitelist",
+                    &outcome,
+                    true,
+                )
+                .await;
+                if let tarpit::TarpitOutcome::Trap {
+                    method: TarpitMethod::SlowAuth,
+                    ..
+                } = outcome
+                {
                     tarpit::slow_auth::delay().await;
                 }
-                return Ok(Auth::Reject { proceed_with_methods: None, partial_success: false });
+                return Ok(Auth::Reject {
+                    proceed_with_methods: None,
+                    partial_success: false,
+                });
             }
         }
 
@@ -608,7 +726,9 @@ impl Handler for T2tHandler {
             });
             return Ok(());
         }
-        let Some(ref authed) = self.entity else { return Ok(()); };
+        let Some(ref authed) = self.entity else {
+            return Ok(());
+        };
         let entity = authed.entity.clone();
         let entity_name = entity.name.as_deref().unwrap_or("(unnamed)").to_string();
         let entity_type = entity.entity_type.clone();
@@ -619,10 +739,13 @@ impl Handler for T2tHandler {
         // Register session entry (without channel yet — filled in below if open succeeds)
         {
             let mut reg = self.session_registry.lock().await;
-            reg.insert(conn_id, SessionEntry {
-                handle: handle.clone(),
-                session_channel_id: None,
-            });
+            reg.insert(
+                conn_id,
+                SessionEntry {
+                    handle: handle.clone(),
+                    session_channel_id: None,
+                },
+            );
         }
 
         // Open a server-initiated session channel to the client for push messages, in the
@@ -705,8 +828,15 @@ impl Handler for T2tHandler {
             tokio::spawn(tarpit::fake_shell::serve(handle, channel));
             return Ok(true);
         }
-        let Some(ref authed) = self.entity else { return Ok(false); };
-        let entity_name = authed.entity.name.as_deref().unwrap_or("(unnamed)").to_string();
+        let Some(ref authed) = self.entity else {
+            return Ok(false);
+        };
+        let entity_name = authed
+            .entity
+            .name
+            .as_deref()
+            .unwrap_or("(unnamed)")
+            .to_string();
         let entity_type = authed.entity.entity_type.clone();
         let conn_id = self.conn_id;
         let ch_id = channel.id();
@@ -754,7 +884,12 @@ impl Handler for T2tHandler {
             return Ok(false);
         };
         let entity_id = authed.entity.id;
-        let entity_name = authed.entity.name.as_deref().unwrap_or("(unnamed)").to_string();
+        let entity_name = authed
+            .entity
+            .name
+            .as_deref()
+            .unwrap_or("(unnamed)")
+            .to_string();
         tracing::info!(%entity_id, proxy_port = port, "server registered port");
         self.server_slots
             .lock()
@@ -780,7 +915,12 @@ impl Handler for T2tHandler {
         let Some(ref authed) = self.entity else {
             return Ok(false);
         };
-        let entity_name = authed.entity.name.as_deref().unwrap_or("(unnamed)").to_string();
+        let entity_name = authed
+            .entity
+            .name
+            .as_deref()
+            .unwrap_or("(unnamed)")
+            .to_string();
         self.server_slots
             .lock()
             .await
@@ -897,12 +1037,7 @@ impl Handler for T2tHandler {
         // `-R port:...`) — OpenSSH matches incoming forwarded-tcpip requests against its
         // registered (address, port) forward table, not the client's requested hostname.
         let server_ch = server_handle
-            .channel_open_forwarded_tcpip(
-                &registered_address,
-                port_to_connect,
-                "127.0.0.1",
-                0,
-            )
+            .channel_open_forwarded_tcpip(&registered_address, port_to_connect, "127.0.0.1", 0)
             .await
             .map_err(|e| anyhow::anyhow!("forwarded-tcpip open failed: {e:?}"))?;
 
@@ -1000,12 +1135,19 @@ impl Drop for T2tHandler {
                 peer_ip = %self.peer_ip,
                 "SSH: connection closed (authenticated)"
             ),
-            None => tracing::info!(peer_ip = %self.peer_ip, "SSH: connection closed (unauthenticated)"),
+            None => {
+                tracing::info!(peer_ip = %self.peer_ip, "SSH: connection closed (unauthenticated)")
+            }
         }
 
         // Broadcast disconnect and clean up session registry
         if let Some(ref authed) = self.entity {
-            let entity_name = authed.entity.name.as_deref().unwrap_or("(unnamed)").to_string();
+            let entity_name = authed
+                .entity
+                .name
+                .as_deref()
+                .unwrap_or("(unnamed)")
+                .to_string();
             let entity_type = authed.entity.entity_type.clone();
             let conn_id = self.conn_id;
             let registry = self.session_registry.clone();
@@ -1024,10 +1166,7 @@ impl Drop for T2tHandler {
             let entity_id = authed.entity.id;
             let slots = self.server_slots.clone();
             tokio::spawn(async move {
-                slots
-                    .lock()
-                    .await
-                    .retain(|(eid, _), _| *eid != entity_id);
+                slots.lock().await.retain(|(eid, _), _| *eid != entity_id);
             });
         }
 
@@ -1110,8 +1249,12 @@ fn load_or_generate_host_key(path: &str, password: Option<&str>) -> Result<Priva
             .context("SSH host key generation failed")?;
         if let Some(parent) = Path::new(path).parent() {
             if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent)
-                    .with_context(|| format!("failed to create directory for SSH host key: {}", parent.display()))?;
+                std::fs::create_dir_all(parent).with_context(|| {
+                    format!(
+                        "failed to create directory for SSH host key: {}",
+                        parent.display()
+                    )
+                })?;
             }
         }
         let key_to_save = if let Some(pw) = password {
@@ -1139,7 +1282,9 @@ fn publickey_only() -> MethodSet {
 
 fn chrono_like_timestamp() -> String {
     let now = time::OffsetDateTime::now_utc();
-    let months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    let months = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
     let month = months[now.month() as usize - 1];
     format!(
         "{} {:2} {:02}:{:02}:{:02}",

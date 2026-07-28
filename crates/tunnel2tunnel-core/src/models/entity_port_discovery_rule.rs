@@ -1,6 +1,6 @@
-use std::collections::HashMap;
 use serde::Serialize;
 use sqlx::PgPool;
+use std::collections::HashMap;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -69,8 +69,13 @@ impl ReachableEntityRow {
             ip_whitelist: self.ip_whitelist,
             valid_until: self.valid_until,
             ts: TimestampsSoftDelete {
-                timestamps: Timestamps { created_at: self.created_at, updated_at: self.updated_at },
-                soft_delete: SoftDelete { deleted_at: self.deleted_at },
+                timestamps: Timestamps {
+                    created_at: self.created_at,
+                    updated_at: self.updated_at,
+                },
+                soft_delete: SoftDelete {
+                    deleted_at: self.deleted_at,
+                },
             },
         };
         (entity, hostname)
@@ -108,7 +113,10 @@ impl DiscoveryPortRow {
             sort_order: self.sort_order,
             host: self.host,
             server_entity_id: self.server_entity_id,
-            ts: Timestamps { created_at: self.created_at, updated_at: self.updated_at },
+            ts: Timestamps {
+                created_at: self.created_at,
+                updated_at: self.updated_at,
+            },
         };
         DiscoveredPort {
             port,
@@ -250,7 +258,10 @@ impl EntityPortDiscoveryRule {
         let mut ports_by_entity: HashMap<Uuid, Vec<DiscoveredPort>> = HashMap::new();
         for row in port_rows {
             let eid = row.entity_id;
-            ports_by_entity.entry(eid).or_default().push(row.into_discovered_port());
+            ports_by_entity
+                .entry(eid)
+                .or_default()
+                .push(row.into_discovered_port());
         }
 
         let result = entity_rows

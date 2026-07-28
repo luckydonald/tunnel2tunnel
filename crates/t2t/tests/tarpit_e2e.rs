@@ -74,9 +74,9 @@ fn free_port() -> u16 {
 async fn test_pool() -> sqlx::PgPool {
     let database_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://t2t:t2t_secret@localhost:5432/tunnel2tunnel".to_string());
-    let pool = db::connect(&database_url)
-        .await
-        .expect("failed to connect to Postgres — see CLAUDE.md for local setup, or set DATABASE_URL");
+    let pool = db::connect(&database_url).await.expect(
+        "failed to connect to Postgres — see CLAUDE.md for local setup, or set DATABASE_URL",
+    );
     sqlx::migrate!("../../migrations")
         .run(&pool)
         .await
@@ -118,9 +118,11 @@ async fn spawn_server(pool: sqlx::PgPool) -> u16 {
 }
 
 fn generate_keypair() -> (PrivateKey, String, String) {
-    let key = PrivateKey::random(&mut UnwrapErr(SysRng), Algorithm::Ed25519).expect("generate keypair");
+    let key =
+        PrivateKey::random(&mut UnwrapErr(SysRng), Algorithm::Ed25519).expect("generate keypair");
     let pub_line = key.public_key().to_openssh().expect("openssh pub line");
-    let (algorithm, key_data, _comment) = parse_authorized_keys_line(&pub_line).expect("parse pub line");
+    let (algorithm, key_data, _comment) =
+        parse_authorized_keys_line(&pub_line).expect("parse pub line");
     (key, algorithm, key_data)
 }
 
@@ -161,7 +163,9 @@ async fn connect_client_at(host: &str, port: u16) -> ClientHandle<TestClient> {
 /// See `connect_client_at` — same "bind the source address first" trick,
 /// for tests that talk raw TCP instead of going through `russh::client`.
 async fn tcp_connect_from(host: &str, port: u16) -> TcpStream {
-    let local: SocketAddr = format!("{host}:0").parse().expect("valid loopback source addr");
+    let local: SocketAddr = format!("{host}:0")
+        .parse()
+        .expect("valid loopback source addr");
     let socket = TcpSocket::new_v4().expect("create v4 socket");
     socket.bind(local).expect("bind to loopback source addr");
     let dest = SocketAddr::from(([127, 0, 0, 1], port));
@@ -216,13 +220,29 @@ async fn legit_login_sequence_is_never_tarpitted() {
     )
     .await
     .expect("create test user");
-    let entity = Entity::create(&pool, owner.id, "client", Some("tarpit-e2e-legit-client"), None, None, None)
-        .await
-        .expect("create entity");
+    let entity = Entity::create(
+        &pool,
+        owner.id,
+        "client",
+        Some("tarpit-e2e-legit-client"),
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("create entity");
     let (key, algorithm, key_data) = generate_keypair();
-    SshKey::create(&pool, entity.id, &algorithm, &key_data, Some("tarpit-e2e"), None, None)
-        .await
-        .expect("register key");
+    SshKey::create(
+        &pool,
+        entity.id,
+        &algorithm,
+        &key_data,
+        Some("tarpit-e2e"),
+        None,
+        None,
+    )
+    .await
+    .expect("register key");
 
     let port = spawn_server(pool.clone()).await;
 
@@ -238,10 +258,15 @@ async fn legit_login_sequence_is_never_tarpitted() {
     let logs = ConnectionLog::list_for_entity(&pool, entity.id, 1)
         .await
         .expect("list_for_entity");
-    let log = logs.first().expect("a connection_logs row must exist for this login");
+    let log = logs
+        .first()
+        .expect("a connection_logs row must exist for this login");
     assert!(log.success, "login row must be marked successful");
     assert_eq!(log.success_reason.as_deref(), Some("correct login"));
-    assert_eq!(log.tarpit_method, None, "a successful login must never carry a tarpit_method");
+    assert_eq!(
+        log.tarpit_method, None,
+        "a successful login must never carry a tarpit_method"
+    );
     assert_ended_after_started(log, Duration::ZERO);
 }
 
@@ -296,7 +321,10 @@ async fn auth_none_probe_never_counts_toward_ban() {
     let count = ConnectionLog::count_recent_failures_for_peer_ip(&pool, "127.0.0.1", since)
         .await
         .expect("count_recent_failures_for_peer_ip");
-    assert_eq!(count, 0, "auth_none probes must never write a connection_logs row");
+    assert_eq!(
+        count, 0,
+        "auth_none probes must never write a connection_logs row"
+    );
 }
 
 #[tokio::test]
