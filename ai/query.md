@@ -876,3 +876,5 @@ Generally:
 > </details>
 >
 
+› How is the "Online"/"Offline" badge calcated?
+
