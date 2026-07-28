@@ -132,7 +132,8 @@ pub async fn start(config: WebConfig, pool: PgPool) -> anyhow::Result<()> {
         // admin: tarpit/ban rules
         .route(
             "/api/admin/connection-logs",
-            get(routes::tarpit::search_connection_logs),
+            get(routes::tarpit::search_connection_logs)
+                .delete(routes::tarpit::delete_connection_logs),
         )
         .route(
             "/api/admin/ban-rules",

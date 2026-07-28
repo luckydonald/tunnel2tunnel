@@ -3,7 +3,7 @@ import { ref, onMounted } from 'vue'
 import { RouterLink } from 'vue-router'
 import AppShell from '@/components/AppShell.vue'
 import MultiButton from '@/components/MultiButton.vue'
-import { adminApi, type ConnLog, type CreateBanRuleParams, type TarpitAction } from '@/api/admin'
+import { adminApi, type ConnLog, type CreateBanRuleParams, type LogSearchParams, type TarpitAction } from '@/api/admin'
 import { failReasonLabel, tarpitActionLabel, tarpitMethodLabel, tarpitMethodOptions } from '@/labels'
 import { useToast } from '@/composables/useToast'
 
@@ -17,6 +17,8 @@ const total = ref(0)
 const page = ref(1)
 const pageSize = 50
 const loading = ref(false)
+const deletingLogs = ref(false)
+const displayedFilters = ref<LogSearchParams>({})
 
 const filterPeerIp = ref('')
 const filterUserId = ref('')
@@ -48,31 +50,41 @@ function dateFilterBounds(
   return { gte, lte }
 }
 
-async function search(): Promise<void> {
+function currentFilters(): LogSearchParams | null {
   const startedBounds = dateFilterBounds('Started', filterStartedMode.value, filterStartedAt.value, filterStartedAtEnd.value)
   const endedBounds = dateFilterBounds('Ended', filterEndedMode.value, filterEndedAt.value, filterEndedAtEnd.value)
-  if (!startedBounds || !endedBounds) return
+  if (!startedBounds || !endedBounds) return null
+
+  return {
+    peer_ip: filterPeerIp.value || undefined,
+    user_id: filterUserId.value || undefined,
+    success: filterSuccess.value === '' ? undefined : filterSuccess.value === 'true',
+    method: filterMethod.value === 'some' || filterMethod.value === 'none' ? undefined : filterMethod.value || undefined,
+    method_present: filterMethod.value === 'some' ? true : filterMethod.value === 'none' ? false : undefined,
+    action: filterAction.value === 'some' || filterAction.value === 'none' ? undefined : filterAction.value || undefined,
+    action_present: filterAction.value === 'some' ? true : filterAction.value === 'none' ? false : undefined,
+    q: filterQ.value || undefined,
+    started_at_gte: startedBounds.gte,
+    started_at_lte: startedBounds.lte,
+    ended_at_gte: endedBounds.gte,
+    ended_at_lte: endedBounds.lte,
+  }
+}
+
+async function search(): Promise<void> {
+  const filters = currentFilters()
+  if (!filters) return
 
   loading.value = true
   try {
     const result = await adminApi.searchConnectionLogs({
+      ...filters,
       page: page.value,
       page_size: pageSize,
-      peer_ip: filterPeerIp.value || undefined,
-      user_id: filterUserId.value || undefined,
-      success: filterSuccess.value === '' ? undefined : filterSuccess.value === 'true',
-      method: filterMethod.value === 'some' || filterMethod.value === 'none' ? undefined : filterMethod.value || undefined,
-      method_present: filterMethod.value === 'some' ? true : filterMethod.value === 'none' ? false : undefined,
-      action: filterAction.value === 'some' || filterAction.value === 'none' ? undefined : filterAction.value || undefined,
-      action_present: filterAction.value === 'some' ? true : filterAction.value === 'none' ? false : undefined,
-      q: filterQ.value || undefined,
-      started_at_gte: startedBounds.gte,
-      started_at_lte: startedBounds.lte,
-      ended_at_gte: endedBounds.gte,
-      ended_at_lte: endedBounds.lte,
     })
     logs.value = result.items
     total.value = result.total
+    displayedFilters.value = filters
   } catch (e) {
     toast(e instanceof Error ? e.message : 'Failed to load connection logs')
   } finally {
@@ -95,6 +107,23 @@ function prevPage(): void {
   if (page.value <= 1) return
   page.value -= 1
   search()
+}
+
+async function deleteDisplayedLogs(): Promise<void> {
+  if (!total.value || !confirm(`Delete all ${total.value} connection logs matching the displayed filters? This cannot be undone.`)) return
+
+  deletingLogs.value = true
+  try {
+    const result = await adminApi.deleteConnectionLogs(displayedFilters.value)
+    logs.value = []
+    total.value = 0
+    page.value = 1
+    toast(`Deleted ${result.deleted} connection logs`)
+  } catch (e) {
+    toast(e instanceof Error ? e.message : 'Failed to delete connection logs')
+  } finally {
+    deletingLogs.value = false
+  }
 }
 
 function statusLabel(l: ConnLog): string {
@@ -285,6 +314,12 @@ onMounted(search)
       </table>
       <p v-else class="empty">No connection logs match.</p>
 
+      <div v-if="total" class="bulk-actions">
+        <button class="btn-danger" :disabled="deletingLogs" @click="deleteDisplayedLogs">
+          {{ deletingLogs ? 'Deleting…' : `Delete ${total} matching logs` }}
+        </button>
+      </div>
+
       <div class="pager">
         <button class="btn-secondary" :disabled="page <= 1" @click="prevPage">Prev</button>
         <span>Page {{ page }} of {{ Math.max(1, Math.ceil(total / pageSize)) }} ({{ total }} total)</span>
@@ -366,6 +401,8 @@ onMounted(search)
   display: flex; align-items: center; gap: 1rem; margin-top: 1rem; color: #94a3b8; font-size: 0.875rem;
 }
 
+.bulk-actions { margin-top: 1rem; }
+
 .btn-primary {
   padding: .375rem .875rem; background: #4f6ef7; border: none; border-radius: 4px;
   color: #fff; font-size: .875rem; cursor: pointer;
@@ -376,6 +413,12 @@ onMounted(search)
   padding: .375rem .875rem; background: none; border: 1px solid #2d3248; border-radius: 4px;
   color: #94a3b8; font-size: .875rem; cursor: pointer;
   &:hover:not(:disabled) { color: #e2e8f0; border-color: #4f6ef7; }
+  &:disabled { opacity: .5; cursor: not-allowed; }
+}
+.btn-danger {
+  padding: .375rem .875rem; background: rgba(239,68,68,.15); border: 1px solid #ef4444; border-radius: 4px;
+  color: #fca5a5; font-size: .875rem; cursor: pointer;
+  &:hover:not(:disabled) { background: rgba(239,68,68,.25); color: #fee2e2; }
   &:disabled { opacity: .5; cursor: not-allowed; }
 }
 

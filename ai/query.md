@@ -930,3 +930,5 @@ Generally:
 
 › Install rustfmt, and run it. If it produces changes commit those as well (new commit, squash this ai query though)
 
+› Based on those current selected (and displayed filters) add a "Delete" button below the table, which will delete all entries matching the current filters. So probably the filter-to-db-query handling can be extracted as a common method for both routes, just one SELECTs and one DELETEs.
+

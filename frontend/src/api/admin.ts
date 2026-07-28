@@ -195,6 +195,15 @@ export const adminApi = {
     return apiFetch<LogSearchResult>(`/api/admin/connection-logs${qs ? `?${qs}` : ''}`)
   },
 
+  deleteConnectionLogs: (params: LogSearchParams = {}) => {
+    const q = new URLSearchParams()
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== null && v !== '') q.set(k, String(v))
+    }
+    const qs = q.toString()
+    return apiFetch<{ deleted: number }>(`/api/admin/connection-logs${qs ? `?${qs}` : ''}`, { method: 'DELETE' })
+  },
+
   listBanRules: () => apiFetch<BanRule[]>('/api/admin/ban-rules'),
 
   createBanRule: (params: CreateBanRuleParams) =>

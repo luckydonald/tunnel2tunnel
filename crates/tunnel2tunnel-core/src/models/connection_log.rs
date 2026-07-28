@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use serde::Serialize;
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, QueryBuilder};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -30,6 +30,79 @@ pub struct ConnectionLog {
     pub ended_at: Option<OffsetDateTime>,
     #[sqlx(flatten)]
     pub ts: Timestamps,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ConnectionLogSearch {
+    pub peer_ip: Option<String>,
+    pub user_id: Option<Uuid>,
+    pub success: Option<bool>,
+    pub tarpit_method: Option<String>,
+    pub tarpit_method_present: Option<bool>,
+    pub tarpit_action: Option<String>,
+    pub tarpit_action_present: Option<bool>,
+    pub q: Option<String>,
+    pub started_at_gte: Option<OffsetDateTime>,
+    pub started_at_lte: Option<OffsetDateTime>,
+    pub ended_at_gte: Option<OffsetDateTime>,
+    pub ended_at_lte: Option<OffsetDateTime>,
+}
+
+impl ConnectionLogSearch {
+    fn push_where<'args>(&'args self, query: &mut QueryBuilder<'args, Postgres>) {
+        let mut separated = query.separated(" AND ");
+        separated.push("TRUE");
+
+        if let Some(peer_ip) = &self.peer_ip {
+            separated.push("peer_ip = ").push_bind(peer_ip);
+        }
+        if let Some(user_id) = self.user_id {
+            separated.push("user_id = ").push_bind(user_id);
+        }
+        if let Some(success) = self.success {
+            separated.push("success = ").push_bind(success);
+        }
+        if let Some(method) = &self.tarpit_method {
+            separated.push("tarpit_method = ").push_bind(method);
+        }
+        if let Some(method_present) = self.tarpit_method_present {
+            separated
+                .push("(tarpit_method IS NOT NULL) = ")
+                .push_bind(method_present);
+        }
+        if let Some(action) = &self.tarpit_action {
+            separated.push("tarpit_action = ").push_bind(action);
+        }
+        if let Some(action_present) = self.tarpit_action_present {
+            separated
+                .push("(tarpit_action IS NOT NULL) = ")
+                .push_bind(action_present);
+        }
+        if let Some(search) = &self.q {
+            separated
+                .push("(peer_ip ILIKE '%' || ")
+                .push_bind(search)
+                .push(" || '%' OR key_fingerprint ILIKE '%' || ")
+                .push_bind(search)
+                .push(" || '%' OR attempted_password ILIKE '%' || ")
+                .push_bind(search)
+                .push(" || '%' OR fail_reason ILIKE '%' || ")
+                .push_bind(search)
+                .push(" || '%')");
+        }
+        if let Some(started_at_gte) = self.started_at_gte {
+            separated.push("started_at >= ").push_bind(started_at_gte);
+        }
+        if let Some(started_at_lte) = self.started_at_lte {
+            separated.push("started_at <= ").push_bind(started_at_lte);
+        }
+        if let Some(ended_at_gte) = self.ended_at_gte {
+            separated.push("ended_at >= ").push_bind(ended_at_gte);
+        }
+        if let Some(ended_at_lte) = self.ended_at_lte {
+            separated.push("ended_at <= ").push_bind(ended_at_lte);
+        }
+    }
 }
 
 impl ConnectionLog {
@@ -159,6 +232,38 @@ impl ConnectionLog {
     }
 
     /// Paginated/filtered/searched admin browser query. Returns (rows, total).
+    pub async fn search_filtered(
+        pool: &PgPool,
+        filters: &ConnectionLogSearch,
+        page: i64,
+        page_size: i64,
+    ) -> Result<(Vec<Self>, i64), CoreError> {
+        let offset = (page - 1).max(0) * page_size;
+        let mut rows_query = QueryBuilder::new("SELECT * FROM connection_logs WHERE ");
+        filters.push_where(&mut rows_query);
+        rows_query
+            .push(" ORDER BY started_at DESC LIMIT ")
+            .push_bind(page_size)
+            .push(" OFFSET ")
+            .push_bind(offset);
+        let rows = rows_query
+            .build_query_as::<ConnectionLog>()
+            .fetch_all(pool)
+            .await
+            .map_err(CoreError::Sqlx)?;
+
+        let mut total_query = QueryBuilder::new("SELECT COUNT(*) FROM connection_logs WHERE ");
+        filters.push_where(&mut total_query);
+        let total = total_query
+            .build_query_scalar::<i64>()
+            .fetch_one(pool)
+            .await
+            .map_err(CoreError::Sqlx)?;
+
+        Ok((rows, total))
+    }
+
+    /// Paginated/filtered/searched admin browser query. Returns (rows, total).
     #[allow(clippy::too_many_arguments)]
     pub async fn search(
         pool: &PgPool,
@@ -177,82 +282,35 @@ impl ConnectionLog {
         page: i64,
         page_size: i64,
     ) -> Result<(Vec<Self>, i64), CoreError> {
-        let offset = (page - 1).max(0) * page_size;
-        let rows = sqlx::query_as::<_, ConnectionLog>(
-            "SELECT * FROM connection_logs \
-             WHERE ($1::text IS NULL OR peer_ip = $1) \
-               AND ($2::uuid IS NULL OR user_id = $2) \
-               AND ($3::bool IS NULL OR success = $3) \
-               AND ($4::text IS NULL OR tarpit_method = $4) \
-               AND ($5::bool IS NULL OR (tarpit_method IS NOT NULL) = $5) \
-               AND ($6::text IS NULL OR tarpit_action = $6) \
-               AND ($7::bool IS NULL OR (tarpit_action IS NOT NULL) = $7) \
-               AND ($8::text IS NULL \
-                    OR peer_ip ILIKE '%' || $8 || '%' \
-                    OR key_fingerprint ILIKE '%' || $8 || '%' \
-                    OR attempted_password ILIKE '%' || $8 || '%' \
-                    OR fail_reason ILIKE '%' || $8 || '%') \
-               AND ($9::timestamptz IS NULL OR started_at >= $9) \
-               AND ($10::timestamptz IS NULL OR started_at <= $10) \
-               AND ($11::timestamptz IS NULL OR ended_at >= $11) \
-               AND ($12::timestamptz IS NULL OR ended_at <= $12) \
-             ORDER BY started_at DESC \
-             LIMIT $13 OFFSET $14",
-        )
-        .bind(peer_ip)
-        .bind(user_id)
-        .bind(success)
-        .bind(tarpit_method)
-        .bind(tarpit_method_present)
-        .bind(tarpit_action)
-        .bind(tarpit_action_present)
-        .bind(q)
-        .bind(started_at_gte)
-        .bind(started_at_lte)
-        .bind(ended_at_gte)
-        .bind(ended_at_lte)
-        .bind(page_size)
-        .bind(offset)
-        .fetch_all(pool)
-        .await
-        .map_err(CoreError::Sqlx)?;
+        let filters = ConnectionLogSearch {
+            peer_ip: peer_ip.map(str::to_owned),
+            user_id,
+            success,
+            tarpit_method: tarpit_method.map(str::to_owned),
+            tarpit_method_present,
+            tarpit_action: tarpit_action.map(str::to_owned),
+            tarpit_action_present,
+            q: q.map(str::to_owned),
+            started_at_gte,
+            started_at_lte,
+            ended_at_gte,
+            ended_at_lte,
+        };
+        Self::search_filtered(pool, &filters, page, page_size).await
+    }
 
-        let total: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM connection_logs \
-             WHERE ($1::text IS NULL OR peer_ip = $1) \
-               AND ($2::uuid IS NULL OR user_id = $2) \
-               AND ($3::bool IS NULL OR success = $3) \
-               AND ($4::text IS NULL OR tarpit_method = $4) \
-               AND ($5::bool IS NULL OR (tarpit_method IS NOT NULL) = $5) \
-               AND ($6::text IS NULL OR tarpit_action = $6) \
-               AND ($7::bool IS NULL OR (tarpit_action IS NOT NULL) = $7) \
-               AND ($8::text IS NULL \
-                    OR peer_ip ILIKE '%' || $8 || '%' \
-                    OR key_fingerprint ILIKE '%' || $8 || '%' \
-                    OR attempted_password ILIKE '%' || $8 || '%' \
-                    OR fail_reason ILIKE '%' || $8 || '%') \
-               AND ($9::timestamptz IS NULL OR started_at >= $9) \
-               AND ($10::timestamptz IS NULL OR started_at <= $10) \
-               AND ($11::timestamptz IS NULL OR ended_at >= $11) \
-               AND ($12::timestamptz IS NULL OR ended_at <= $12)",
-        )
-        .bind(peer_ip)
-        .bind(user_id)
-        .bind(success)
-        .bind(tarpit_method)
-        .bind(tarpit_method_present)
-        .bind(tarpit_action)
-        .bind(tarpit_action_present)
-        .bind(q)
-        .bind(started_at_gte)
-        .bind(started_at_lte)
-        .bind(ended_at_gte)
-        .bind(ended_at_lte)
-        .fetch_one(pool)
-        .await
-        .map_err(CoreError::Sqlx)?;
-
-        Ok((rows, total))
+    pub async fn delete_matching(
+        pool: &PgPool,
+        filters: &ConnectionLogSearch,
+    ) -> Result<u64, CoreError> {
+        let mut delete_query = QueryBuilder::new("DELETE FROM connection_logs WHERE ");
+        filters.push_where(&mut delete_query);
+        delete_query
+            .build()
+            .execute(pool)
+            .await
+            .map(|result| result.rows_affected())
+            .map_err(CoreError::Sqlx)
     }
 
     /// Online/offline + last-disconnect status for a single entity, derived

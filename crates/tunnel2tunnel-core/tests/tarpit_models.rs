@@ -10,7 +10,12 @@ use uuid::Uuid;
 
 use tunnel2tunnel_core::{
     db,
-    models::{ban_rule::BanRule, connection_log::ConnectionLog, entity::Entity, user::User},
+    models::{
+        ban_rule::BanRule,
+        connection_log::{ConnectionLog, ConnectionLogSearch},
+        entity::Entity,
+        user::User,
+    },
 };
 
 async fn test_pool() -> sqlx::PgPool {
@@ -608,6 +613,39 @@ async fn search_filters_tarpit_presence_actions_and_timestamps() {
         ended_before_total, 1,
         "the ended-time upper bound is inclusive"
     );
+
+    let deleted = ConnectionLog::delete_matching(
+        &pool,
+        &ConnectionLogSearch {
+            peer_ip: Some(peer_ip.clone()),
+            tarpit_action: Some("ban".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(deleted, 1);
+
+    let (_, remaining_total) = ConnectionLog::search(
+        &pool,
+        Some(&peer_ip),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        1,
+        50,
+    )
+    .await
+    .unwrap();
+    assert_eq!(remaining_total, 2, "only the matching ban log was deleted");
 }
 
 #[tokio::test]

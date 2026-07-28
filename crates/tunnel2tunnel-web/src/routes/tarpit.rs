@@ -12,7 +12,9 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 use tunnel2tunnel_core::models::{
-    ban_rule::BanRule, connection_log::ConnectionLog, settings::Settings,
+    ban_rule::BanRule,
+    connection_log::{ConnectionLog, ConnectionLogSearch},
+    settings::Settings,
     tarpit_threshold::TarpitThreshold,
 };
 
@@ -50,6 +52,30 @@ pub struct LogSearchResponse {
     pub page_size: i64,
 }
 
+#[derive(Serialize)]
+pub struct DeleteConnectionLogsResponse {
+    pub deleted: u64,
+}
+
+impl From<&LogSearchQuery> for ConnectionLogSearch {
+    fn from(query: &LogSearchQuery) -> Self {
+        Self {
+            peer_ip: query.peer_ip.clone(),
+            user_id: query.user_id,
+            success: query.success,
+            tarpit_method: query.method.clone(),
+            tarpit_method_present: query.method_present,
+            tarpit_action: query.action.clone(),
+            tarpit_action_present: query.action_present,
+            q: query.q.clone(),
+            started_at_gte: query.started_at_gte,
+            started_at_lte: query.started_at_lte,
+            ended_at_gte: query.ended_at_gte,
+            ended_at_lte: query.ended_at_lte,
+        }
+    }
+}
+
 /// Pure pagination normalization — extracted so it's unit-testable without a
 /// DB/HTTP request. Page is floored at 1; page_size clamped to [1, 200].
 fn normalize_pagination(page: Option<i64>, page_size: Option<i64>) -> (i64, i64) {
@@ -65,31 +91,28 @@ pub async fn search_connection_logs(
     Query(q): Query<LogSearchQuery>,
 ) -> Result<Json<LogSearchResponse>, WebError> {
     let (page, page_size) = normalize_pagination(q.page, q.page_size);
-    let (rows, total) = ConnectionLog::search(
-        &state.db,
-        q.peer_ip.as_deref(),
-        q.user_id,
-        q.success,
-        q.method.as_deref(),
-        q.method_present,
-        q.action.as_deref(),
-        q.action_present,
-        q.q.as_deref(),
-        q.started_at_gte,
-        q.started_at_lte,
-        q.ended_at_gte,
-        q.ended_at_lte,
-        page,
-        page_size,
-    )
-    .await
-    .map_err(WebError::Core)?;
+    let filters = ConnectionLogSearch::from(&q);
+    let (rows, total) = ConnectionLog::search_filtered(&state.db, &filters, page, page_size)
+        .await
+        .map_err(WebError::Core)?;
     Ok(Json(LogSearchResponse {
         items: rows.into_iter().map(ConnLogResponse::from).collect(),
         total,
         page,
         page_size,
     }))
+}
+
+pub async fn delete_connection_logs(
+    AdminUser(_admin): AdminUser,
+    State(state): State<AppState>,
+    Query(q): Query<LogSearchQuery>,
+) -> Result<Json<DeleteConnectionLogsResponse>, WebError> {
+    let filters = ConnectionLogSearch::from(&q);
+    let deleted = ConnectionLog::delete_matching(&state.db, &filters)
+        .await
+        .map_err(WebError::Core)?;
+    Ok(Json(DeleteConnectionLogsResponse { deleted }))
 }
 
 // ── Ban rules CRUD ───────────────────────────────────────────────────────────
