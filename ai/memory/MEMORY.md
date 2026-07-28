@@ -10,3 +10,4 @@
 - [Tarpit e2e test flake](project_tarpit_test_flake.md) — RESOLVED 2026-07-26: fix is binding the client socket's *source* address, not varying the destination
 - [Local Postgres port](project_local_postgres_port.md) — `t2t-pg` podman maps host 5433 not 5432; a separate Docker container can squat 5432
 - [Test thoroughness](feedback_test_thoroughness.md) — cover every path no matter runtime cost; assert relationships/bounds, not just presence
+- [History-master replay guards](2026-07-20-history-master-replay-guards.md) — TODO: summarize this file.
