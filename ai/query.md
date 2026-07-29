@@ -1017,3 +1017,25 @@ Generally:
 
 ❯ nonInteractive shall be false per default. Is it really needed to modify the connection settings, too (i.e. here: the username), or can we actually inspect the connection to detect that?
 
+❯ Question answered.
+> <details><summary>
+>
+>> 1. There's a chain of 14 commits since origin/mane (prompt/decision/agent-result auto-commits, 3 plan revisions under "plan 016", 2 plan revisions under "plan 017", then my final code commit). What should "squash" target?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Squash scope** (1/1) <kbd>Single Select</kbd><br>
+>> There's a chain of 14 commits since origin/mane (prompt/decision/agent-result auto-commits, 3 plan revisions under "plan 016", 2 plan revisions under "plan 017", then my final code commit). What should "squash" target?
+> - [x] 1\. Full stray-commit cleanup
+>   - _Run the lplp cleanup procedure: fold ai: updated prompt / save decision / agent results into their nearest plan or code commit, keep each genuine plan revision as its own renamed Plan:/Plan update: commit, keep the final code commit separate._
+> - [ ] 2\. Everything into one commit
+>   - _Squash all 14 commits since origin/mane into a single commit (loses the plan revision history entirely)._
+> - [ ] 3\. Just the last two
+>   - _Squash only the final plan commit (152ad24) and the code commit (039682a) together._
+> - [ ] 4\. _Type something._
+>
+> </details>
+>
+

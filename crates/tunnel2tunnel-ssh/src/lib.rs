@@ -736,7 +736,10 @@ impl Handler for T2tHandler {
 
         let handle = session.handle();
 
-        // Register session entry (without channel yet — filled in below if open succeeds)
+        // Register session entry (without channel yet — filled in by
+        // `channel_open_session` if/when the client itself opens one; a
+        // client running `-N` never does, and that's fine — no push
+        // channel is needed for a pure port-forward).
         {
             let mut reg = self.session_registry.lock().await;
             reg.insert(
@@ -747,65 +750,6 @@ impl Handler for T2tHandler {
                 },
             );
         }
-
-        // Open a server-initiated session channel to the client for push messages, in the
-        // background. `channel_open_session()` awaits a confirmation that round-trips
-        // through this same connection's single-task event loop — awaiting it inline here
-        // (still inside that loop's packet dispatch) would deadlock permanently, since the
-        // loop can never get back around to servicing its own request.
-        let registry = self.session_registry.clone();
-        let welcome_entity_name = entity_name.clone();
-        let welcome_entity_type = entity_type.clone();
-        tokio::spawn(async move {
-            match handle.channel_open_session().await {
-                Ok(ch) => {
-                    let ch_id = ch.id();
-
-                    // Update registry entry with channel id
-                    if let Some(entry) = registry.lock().await.get_mut(&conn_id) {
-                        entry.session_channel_id = Some(ch_id);
-                    }
-
-                    // Send welcome message
-                    let welcome = format!(
-                        "\r\n\x1b[35m✨ Welcome to tunnel2tunnel, {}! ✨\x1b[0m\r\n\
-                         \x1b[34mTwilight Sparkle has verified your access rules — everything checks out.\r\n\
-                         The portal stands ready. Your {} connection is now active. 📚\x1b[0m\r\n\r\n",
-                        welcome_entity_name, welcome_entity_type
-                    );
-                    let _ = handle.data(ch_id, welcome.into_bytes()).await;
-
-                    // Spawn task: keep channel alive and send periodic Derpy pings
-                    let ping_handle = handle.clone();
-                    tokio::spawn(async move {
-                        let mut channel = ch;
-                        let mut interval = tokio::time::interval(Duration::from_secs(5 * 60));
-                        interval.tick().await; // skip first immediate tick
-                        loop {
-                            tokio::select! {
-                                msg = channel.wait() => {
-                                    match msg {
-                                        None | Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) => break,
-                                        _ => {}
-                                    }
-                                }
-                                _ = interval.tick() => {
-                                    let ping = "\r\n\x1b[33m✉ Derpy Hooves stopped by to make sure your tunnel is still up! 🧁\x1b[0m\r\n\r\n";
-                                    if ping_handle.data(ch_id, ping.as_bytes().to_vec()).await.is_err() {
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                    });
-
-                    tracing::debug!(%conn_id, ch = %ch_id, "SSH: session channel opened for push messages");
-                }
-                Err(e) => {
-                    tracing::debug!(%conn_id, err = %e, "SSH: could not open session channel (client may not support it)");
-                }
-            }
-        });
 
         // Broadcast arrival to all other sessions
         let connect_msg = format!(
@@ -860,12 +804,26 @@ impl Handler for T2tHandler {
         );
         let _ = handle.data(ch_id, welcome.into_bytes()).await;
 
+        // Keep the channel alive and send periodic Derpy pings
+        let ping_handle = handle.clone();
         tokio::spawn(async move {
             let mut ch = channel;
+            let mut interval = tokio::time::interval(Duration::from_secs(5 * 60));
+            interval.tick().await; // skip first immediate tick
             loop {
-                match ch.wait().await {
-                    None | Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) => break,
-                    _ => {}
+                tokio::select! {
+                    msg = ch.wait() => {
+                        match msg {
+                            None | Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) => break,
+                            _ => {}
+                        }
+                    }
+                    _ = interval.tick() => {
+                        let ping = "\r\n\x1b[33m✉ Derpy Hooves stopped by to make sure your tunnel is still up! 🧁\x1b[0m\r\n\r\n";
+                        if ping_handle.data(ch_id, ping.as_bytes().to_vec()).await.is_err() {
+                            break;
+                        }
+                    }
                 }
             }
         });

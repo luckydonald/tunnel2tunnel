@@ -21,6 +21,7 @@ const emit = defineEmits<{
 }>()
 
 const hoveredPortId = ref<string | null>(null)
+const nonInteractive = ref(false)
 const t2tHost = computed(() => props.t2tHost ?? window.location.hostname)
 const servers = computed(() => props.reachableServers ?? [])
 
@@ -176,9 +177,14 @@ function toggleDiscovery(portId: string, currentState: string | null): void {
         <span class="cmd-hint" v-if="entity.entity_type === 'client' && !servers.length">
           Replace <code>&lt;server&gt;</code> with the server entity ID
         </span>
+        <label class="checkbox-label cmd-toggle">
+          <input type="checkbox" v-model="nonInteractive" />
+          Non-interactive mode
+        </label>
+        <span class="cmd-hint">Disables text channel providing status updates.</span>
       </div>
-      <pre class="cmd-text">ssh -N \
-  -i ~/.ssh/{{ filename }}<template v-for="port in enabledPorts" :key="port.id"> \
+      <pre class="cmd-text">ssh <template v-if="nonInteractive">-N \
+  </template>-i ~/.ssh/{{ filename }}<template v-for="port in enabledPorts" :key="port.id"> \
   <RouterLink
     v-if="entity.entity_type === 'client' && port.server_entity_id"
     :to="'/entities/' + port.server_entity_id + '#ports'"
@@ -411,6 +417,19 @@ function toggleDiscovery(portId: string, currentState: string | null): void {
     border-radius: 3px;
     font-size: 0.875em;
   }
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  color: #94a3b8;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+.cmd-toggle {
+  margin-left: auto;
 }
 
 .cmd-text {
