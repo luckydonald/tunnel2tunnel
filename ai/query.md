@@ -992,3 +992,26 @@ Generally:
 > - [Raw log (`68988` chars, `67.6 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/528a1a1c-3cc0-48e5-ac44-1169f3f3a253/tasks/a9c297dd2129bd90c.output)
 > - `5` tools, `20779` tokens, `0.507517 s`
 
+❯ Question answered.
+> <details><summary>
+>
+>> 1. The port forward (5902→5900) is already working correctly. The MOTD/chat is a separate feature that only appears over a plain interactive `ssh` session (no `-N`, no `-L`) — `-N` inherently can't show it. How do you want to proceed?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Next step** (1/1) <kbd>Single Select</kbd><br>
+>> The port forward (5902→5900) is already working correctly. The MOTD/chat is a separate feature that only appears over a plain interactive `ssh` session (no `-N`, no `-L`) — `-N` inherently can't show it. How do you want to proceed?
+> - [ ] 1\. Nothing needed
+>   - _The tunnel works as intended; the 'failure session' line is harmless noise from -N. No further action._
+> - [ ] 2\. Open a separate interactive session
+>   - _Run a second, plain `ssh <target> -p 2222` (no -N/-L) alongside the existing tunnel, just to see the MOTD/chat._
+> - [ ] 3\. Change server behavior
+>   - _Plan a code change so the server doesn't try to push a session channel (or logs less noisily) when the client used -N._
+> - [x] 4\. _Type something:_
+>   - > Server optimisation sounds good; however also remove `-N` from the frontend recommendation then, or add a "non-interactive Mode" (Disables text channel providing status updates.) checkbox.
+>
+> </details>
+>
+
