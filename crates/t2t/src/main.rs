@@ -2,7 +2,7 @@ mod sentry;
 
 use anyhow::{Context, Result};
 use tracing_subscriber::EnvFilter;
-use tunnel2tunnel_core::db;
+use tunnel2tunnel_core::{db, models::connection_log::ConnectionLog};
 use tunnel2tunnel_ssh::{host_key_fingerprint, start as start_ssh, SshConfig};
 use tunnel2tunnel_web::{bootstrap_admin, start as start_http, WebConfig};
 
@@ -56,6 +56,14 @@ async fn run() -> Result<()> {
         .context("failed to run database migrations")?;
 
     tracing::info!("migrations applied");
+
+    let closed = ConnectionLog::close_all_open_on_boot(&pool)
+        .await
+        .context("failed to close stale open connection_logs rows on boot")?;
+    tracing::info!(
+        closed,
+        "closed stale open connection_logs rows from a previous run"
+    );
 
     if let (Some(username), Some(password)) = (admin_username, admin_password) {
         bootstrap_admin(&pool, &username, &password)

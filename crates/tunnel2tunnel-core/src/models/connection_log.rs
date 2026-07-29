@@ -160,6 +160,20 @@ impl ConnectionLog {
         Ok(())
     }
 
+    /// Closes every still-open row (`ended_at IS NULL`) at process boot. Any
+    /// connection that was open before this process started is necessarily
+    /// dead — the TCP connection did not survive the restart — so this is not
+    /// a heuristic, it's a correction of rows a prior process couldn't close
+    /// during an ungraceful shutdown (e.g. a Coolify redeploy).
+    pub async fn close_all_open_on_boot(pool: &PgPool) -> Result<u64, CoreError> {
+        let result =
+            sqlx::query("UPDATE connection_logs SET ended_at = NOW() WHERE ended_at IS NULL")
+                .execute(pool)
+                .await
+                .map_err(CoreError::Sqlx)?;
+        Ok(result.rows_affected())
+    }
+
     pub async fn list_for_entity(
         pool: &PgPool,
         entity_id: Uuid,

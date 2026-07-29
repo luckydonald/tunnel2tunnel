@@ -934,3 +934,5 @@ Generally:
 
 ❯ /plan When the server (coolify) redeploys (restarts tunnel2tunnel), it might not have properly marked all connections as closed in the database. Therefore, upon boot, it shall set the ended time of the current db entries.
 
+❯ It should log how many connection log entries it marked as closed.
+

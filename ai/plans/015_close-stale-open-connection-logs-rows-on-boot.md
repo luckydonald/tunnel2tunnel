@@ -42,15 +42,14 @@ just a stale-cleanup heuristic.
 
 2. **`crates/t2t/src/main.rs`**
    In `run()`, right after the migrations block (`main.rs:53-58`) and before
-   `bootstrap_admin`/server startup, call it and log the count:
+   `bootstrap_admin`/server startup, call it and always log the count (even when it's zero, so
+   the boot log makes it clear the cleanup ran):
 
    ```rust
    let closed = tunnel2tunnel_core::models::connection_log::ConnectionLog::close_all_open_on_boot(&pool)
        .await
        .context("failed to close stale open connection_logs rows on boot")?;
-   if closed > 0 {
-       tracing::info!(closed, "closed stale open connection_logs rows from a previous run");
-   }
+   tracing::info!(closed, "closed stale open connection_logs rows from a previous run");
    ```
 
    Add the import at the top alongside the other `tunnel2tunnel_core`/`tunnel2tunnel_ssh` uses,

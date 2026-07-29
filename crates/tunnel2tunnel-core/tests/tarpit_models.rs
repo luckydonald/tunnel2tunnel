@@ -18,6 +18,14 @@ use tunnel2tunnel_core::{
     },
 };
 
+/// `close_all_open_on_boot` mutates every open row in the shared dev database,
+/// which would otherwise race with any concurrently-running test that expects
+/// its own row to stay open (`ended_at IS NULL`) — `cargo test` runs tests in
+/// this file concurrently by default. Tests that depend on that invariant
+/// hold this guard for their duration; the boot-cleanup test holds it too so
+/// the two kinds of test can't interleave.
+static TEST_GUARD: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 async fn test_pool() -> sqlx::PgPool {
     let database_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://t2t:t2t_secret@localhost:5432/tunnel2tunnel".to_string());
@@ -650,6 +658,7 @@ async fn search_filters_tarpit_presence_actions_and_timestamps() {
 
 #[tokio::test]
 async fn entity_statuses_batches_multiple_entities() {
+    let _guard = TEST_GUARD.lock().await;
     let pool = test_pool().await;
     let owner = test_user(&pool).await;
     let online_entity = Entity::create(
@@ -754,6 +763,7 @@ async fn entity_statuses_batches_multiple_entities() {
 
 #[tokio::test]
 async fn entity_status_reflects_open_and_closed_sessions() {
+    let _guard = TEST_GUARD.lock().await;
     let pool = test_pool().await;
     let owner = test_user(&pool).await;
     let entity = Entity::create(
@@ -808,6 +818,101 @@ async fn entity_status_reflects_open_and_closed_sessions() {
         .unwrap();
     assert!(!online);
     assert!(last_disconnected_at.is_some());
+}
+
+#[tokio::test]
+async fn close_all_open_on_boot_closes_only_open_rows() {
+    let _guard = TEST_GUARD.lock().await;
+    let pool = test_pool().await;
+    let owner = test_user(&pool).await;
+    let entity = Entity::create(
+        &pool,
+        owner.id,
+        "server",
+        Some("boot-cleanup-entity"),
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("create entity");
+
+    let open = ConnectionLog::create(
+        &pool,
+        Some(entity.id),
+        Some(owner.id),
+        Some("198.51.100.4"),
+        None,
+        None,
+        None,
+        None,
+        Some("correct login"),
+        None,
+        None,
+        None,
+        None,
+        OffsetDateTime::now_utc(),
+    )
+    .await
+    .expect("insert open session");
+
+    let already_closed = ConnectionLog::create(
+        &pool,
+        Some(entity.id),
+        Some(owner.id),
+        Some("198.51.100.5"),
+        None,
+        None,
+        None,
+        None,
+        Some("correct login"),
+        None,
+        None,
+        None,
+        None,
+        OffsetDateTime::now_utc(),
+    )
+    .await
+    .expect("insert already-closed session");
+    ConnectionLog::set_ended(&pool, already_closed.id)
+        .await
+        .expect("set_ended");
+    let already_closed_at = ConnectionLog::list_for_entity(&pool, entity.id, 10)
+        .await
+        .expect("list_for_entity")
+        .into_iter()
+        .find(|log| log.id == already_closed.id)
+        .expect("already-closed row present")
+        .ended_at
+        .expect("already-closed row has ended_at");
+
+    let closed = ConnectionLog::close_all_open_on_boot(&pool)
+        .await
+        .expect("close_all_open_on_boot");
+    assert!(closed >= 1, "should report at least the row we just opened");
+
+    let rows = ConnectionLog::list_for_entity(&pool, entity.id, 10)
+        .await
+        .expect("list_for_entity");
+
+    let open_row = rows
+        .iter()
+        .find(|log| log.id == open.id)
+        .expect("previously-open row present");
+    assert!(
+        open_row.ended_at.is_some(),
+        "previously-open row must now have ended_at set"
+    );
+
+    let closed_row = rows
+        .iter()
+        .find(|log| log.id == already_closed.id)
+        .expect("already-closed row present");
+    assert_eq!(
+        closed_row.ended_at,
+        Some(already_closed_at),
+        "already-closed row's ended_at must be left untouched"
+    );
 }
 
 #[tokio::test]
