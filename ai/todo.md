@@ -15,5 +15,5 @@
 - [ ] The _Access Rules_ table stays empty on initial page load.
 - [x] The `user` column in the admin connection log UI shall show the username attempted in the ssh connection, and make it a link if it is actually resolving to a registered user (instead of only showing the uuid7 of the user and nothing if it doesn't match.
 - [x] Update the ban rules to allow the following two actions: Trap and Ban. Basically Ban means to instantly block the connection, while Trap means our fun Tarpit approach. This way you can basically have a "you're actually even to spammy for our traps" rules or something. Also upgrade the logs to include that decision; there will be a third state, "Admin Ban", which is what happens if an admin clicks the "Ban" button. The admin user shall be stored along with it, or the offending time window rule.
-- [ ] Introduce softdelete for time window rules.
+- [x] Introduce softdelete for time window rules.
 - [ ] In that event log, if the windows do not allow another login (it's wrong) the state shall be "Deter", basically our soft ban. There will also the state "Ban", which means an admin 
