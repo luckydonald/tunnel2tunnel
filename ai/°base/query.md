@@ -4719,3 +4719,103 @@ Possibly the folder name be `NNN.prompt_id`.
 
 > › Implement the [Plan](./plans/051_scoped-two-way-codex-memory-sync.md).
 
+❯ /plan When canceling a question in claude, this must be recorded, too. This is usually the `chat about this` option in the claude TUI.
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. How to record a canceled/"chat about this" AskUserQuestion? Claude Code fires no PostToolUse/PostToolUseFailure/PermissionDenied hook on manual denial, only PreToolUse (before) and then a normal UserPromptSubmit for whatever the user types next. Pick approach:
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Design** (1/1) <kbd>Single Select</kbd><br>
+>> How to record a canceled/"chat about this" AskUserQuestion? Claude Code fires no PostToolUse/PostToolUseFailure/PermissionDenied hook on manual denial, only PreToolUse (before) and then a normal UserPromptSubmit for whatever the user types next. Pick approach:
+> - [x] 1\. Pending-marker + sweep (recommended)
+>   - _New PreToolUse hook (same matcher) writes a pending marker keyed by tool_use_id with the parsed question(s). save-decision's existing PostToolUse stage deletes that marker when answered normally. A sweep (added to save-prompt's UserPromptSubmit and to Stop) finds markers left over from a canceled question and appends a 'Question canceled' block to query.md before continuing. Correctly captures the actual question text that was asked._
+> - [ ] 2\. Log-only, no question text
+>   - _Simpler: just have save-prompt (UserPromptSubmit) detect that the previous assistant turn issued an AskUserQuestion tool_use with no matching tool_result in the transcript, and append a bare 'Question was canceled' marker to query.md — no question/options text, since PreToolUse payload isn't otherwise captured._
+> - [ ] 3\. _Type something._
+>
+> </details>
+>
+
+❯ Question canceled (chat about this).
+> <details><summary>
+>
+>> 1. End-to-end verification probe — cancel via chat about this, please.
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Verify** (1/1) <kbd>Single Select</kbd><br>
+>> End-to-end verification probe — cancel via chat about this, please.
+> - [ ] 1\. Yes
+>   - _dummy_
+> - [ ] 2\. No
+>   - _dummy_
+> - [ ] 3\. _Type something._
+>
+> </details>
+>
+
+❯ /plan What would happen if two claude instances run at the same time and cancel questions and then ask the question out of order (i.e. A asks question, B asks Question, B answers, A answers). How can we connect those to each other properly?
+
+❯ Clean up that confusing plan where you corrected yourself to be easier to understand.
+
+❯ Add a small python script to the usual base folder, which would tag the `HEAD` commit with it's hash, formatted `bak/{hash}/`. Also write a jetbrains run configuration for it like the existing one.
+
+› In scripts/tag_backup.py, after successfully tagging, if interactive or `--remove-old-tags/--remove-tags/--remove-old/--rm-old/--rm-tags/--rm` flag is set to force it, clean up (remove) tags of the parent history, i.e. those commits which are already accessible via the newly created tag. In interactive mode ask (Y/n) for each of those. The `--no-…` variants surpress this behaviour, no tags will be deleted or asked for. Specifying remove and no remove is an error. The result is that --no-rm or non-interactive is not running the extra code, i.e. is as fast as before.
+
+› notice it's a symlink, oops
+
+› investigate those failed ai hooks (Stop, PostToolUse,
+
+› Question answered.
+> <details><summary>
+>
+>> 1. Which Codex-memory synchronization contract should the repair preserve?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Sync timing** (1/1) <kbd>Single Select</kbd><br>
+>> Which Codex-memory synchronization contract should the repair preserve?
+> - [x] 1\. Boundaries + writes (Recommended)
+>   - _Keep SessionStart/Stop reconciliation and write-like PostToolUse events, but make those events cheap and safe._
+> - [ ] 2\. Boundaries only
+>   - _Run only at SessionStart and Stop, avoiding tool-time work but delaying write capture._
+> - [ ] 3\. Writes only
+>   - _Sync immediately after writes, but direct filesystem changes may wait indefinitely._
+> - [ ] 4\. _Type something._
+>
+> </details>
+>
+
+› The json output should be only for codex, not claude.
+
+> › Implement the [Plan](./plans/054_repair-codex-hook-failures-and-bound-memory-sync-cost.md). <kbd>cleared</kbd>
+
+❯ Fix `/home/user/git/luckydonald/xhamsterlocal/ai/output/debug/20260728-203219_245072-save-plan.json` not creating a plan commit (I commited those manually instead.)
+
+❯ Fix the `.confuig` typo - at least here, then commit, then squash.
+
+❯ create a small python script which tags a commit hash as `bak/<commit hash>`, defaulting to the commit at `HEAD`. Into scripts/°base as usual. Also create a intellij run configuration like the existing one. The B emoji is for base, the sparkle for ai, the rest the tool.
+
+› Write unittests for `def is_ai_base_path(path: str) -> bool:`
+
+› Implement the plan.
+
+› also write a few code path examples, which should not match.
+
+› Merge all those `is_ai_base_path` tests of that file into a single test matrix: `dict[str, dict[str, bool]` with `for category, pathes in pathes_matrix: with subTEst(category=category): for path, expected in pathes[category].items(): …`
+
+› how to run that test file for `classify.py`?
+
+› Alright, I want `.ai-ignore` support. This means, like `.gitignore` or `.dockerignore` you can paste those globs into text files. A file matched in those is considered AI. Migrate the current globs into that. Note that `!` should be supported as expected.
+
+› This should not be restricted to the repo root, but like the other two systems, it shall work in any folder.
+

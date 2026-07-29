@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -12,33 +13,106 @@ classify = importlib.import_module("°split_lib.classify")
 
 
 class IsAiBasePathTests(unittest.TestCase):
-    def test_ai_dir_is_ai_content(self):
-        self.assertTrue(classify.is_ai_base_path("ai/query.md"))
-        self.assertTrue(classify.is_ai_base_path("ai/°base/plans/001_foo.md"))
+    def test_path_classification_matrix(self):
+        paths_matrix: dict[str, dict[str, bool]] = {
+            "AI top-level directories": {
+                "ai/something.py": True,
+                "ai/query.md": True,
+                ".claude/foo/bar.bazt/banana": True,
+                ".claude/settings.json": True,
+                ".codex/1": True,
+                ".codex/config.toml": True,
+                ".agents/idk": True,
+                ".agents/skills/example/SKILL.md": True,
+                ".ai-ignore": False,
+            },
+            "exact AI files": {
+                ".mcp.json": True,
+                "AGENTS.md": True,
+                "CLAUDE.md": True,
+            },
+            "base path segment": {
+                "scripts/°base/git/split.py": True,
+                "deep/nested/°base/thing.py": True,
+            },
+            "ordinary code paths": {
+                "src/main.py": False,
+                "backend/api/routes.py": False,
+                "frontend/src/App.vue": False,
+                "scripts/deploy.py": False,
+                "assets/logo.svg": False,
+                "README.md": False,
+            },
+            "lookalike paths": {
+                "ai-notes.txt": False,
+                ".claude-thing/x.py": False,
+                "base/x.py": False,
+            },
+            "mixed dirs": {
+                ".github/hooks/generated.json": True,
+                ".github/workflows/claude.yml": True,
+                ".github/workflows/claude-issue-agent.yml": True,
+                ".github/workflows/codex-issue-agent.yml": True,
+                ".github/workflows/something-else.yml": False,
+                ".github/issue_templates/README.md": False,
+            },
+        }
 
-    def test_claude_dir_is_ai_content(self):
-        self.assertTrue(classify.is_ai_base_path(".claude/settings.json"))
+        for category, paths in paths_matrix.items():
+            with self.subTest(category=category):
+                for path, expected in paths.items():
+                    self.assertEqual(classify.is_ai_base_path(path), expected, msg=f"Path {path=!r} should {'' if expected else 'not '}be classified as AI path.")
+                # end for
+            # end with
+        # end for
 
-    def test_codex_dir_is_ai_content(self):
-        self.assertTrue(classify.is_ai_base_path(".codex/config.toml"))
-
-    def test_exact_paths_are_ai_content(self):
-        self.assertTrue(classify.is_ai_base_path(".mcp.json"))
-        self.assertTrue(classify.is_ai_base_path("AGENTS.md"))
-        self.assertTrue(classify.is_ai_base_path("CLAUDE.md"))
-
-    def test_base_segment_anywhere_is_ai_content(self):
-        self.assertTrue(classify.is_ai_base_path("scripts/°base/git/split.py"))
-        self.assertTrue(classify.is_ai_base_path("deep/nested/°base/thing.py"))
-
-    def test_code_paths_are_not_ai_content(self):
-        self.assertFalse(classify.is_ai_base_path("src/main.py"))
-        self.assertFalse(classify.is_ai_base_path("README.md"))
-
-    def test_similar_but_non_matching_names_are_not_ai_content(self):
-        self.assertFalse(classify.is_ai_base_path("ai-notes.txt"))
-        self.assertFalse(classify.is_ai_base_path("claude-thing/x.py"))
-        self.assertFalse(classify.is_ai_base_path("base/x.py"))  # no degree sign
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            ignore_file = Path(temporary_directory) / ".ai-ignore"
+            ignore_file.write_text(
+                (
+                    "# An ignored comment\n"
+                    "notes/**\n"
+                    "!notes/public/**\n"
+                    "notes/public/keep.md\n"
+                    "*.prompt\n"
+                    "!private.prompt\n"
+                ),
+                encoding="utf-8",
+            )
+            nested_directory = Path(temporary_directory) / "nested"
+            nested_directory.mkdir()
+            (nested_directory / ".ai-ignore").write_text(
+                data=(
+                    "generated/**\n"
+                    "!generated/keep.py\n"
+                    ".ai-ignore\n"
+                    "\n"
+                    "# comment, don't match or parse {]|**\n"
+                    "missing-last-line"
+                ),
+                encoding="utf-8",
+            )
+            custom_paths_matrix: dict[str, bool] = {
+                "notes/draft.md": True,
+                "notes/public/readme.md": False,
+                "notes/public/keep.md": True,
+                "nested/example.prompt": True,
+                "nested/.ai-ignore": True,
+                "nested/subfolder/.ai-ignore": False,
+                "nested/generated/build.py": True,
+                "nested/generated/keep.py": False,
+                "other/generated/build.py": False,
+                "private.prompt": False,
+                "src/main.py": False,
+            }
+            for path, expected in custom_paths_matrix.items():
+                with self.subTest(category="custom .ai-ignore", path=path):
+                    self.assertEqual(classify.is_ai_base_path(path, ignore_file=ignore_file), expected, msg=f"Path {path=!r} should {'' if expected else 'not '}be classified as AI path.")
+                # end with
+            # end for
+        # end with
+    # end def
+# end class
 
 
 class AiSubjectRegexTests(unittest.TestCase):
