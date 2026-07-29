@@ -1,4 +1,4 @@
-# CLAUDE.md — tunnel2tunnel
+# tunnel2tunnel
 
 Self-hosted SSH rendezvous manager. Servers and clients register SSH public keys and establish encrypted tunnels through this node without exposing ports publicly.
 
@@ -193,6 +193,12 @@ GET    /api/me/access-rules       POST /api/me/purge-access
 
 Uses `window.crypto.subtle.generateKey({ name: 'Ed25519' })` (Chrome 113+, Firefox 130+, Safari 17+).  
 Produces a correct OpenSSH wire-format private key (`openssh-key-v1\0`, unencrypted, blocksize-8 padding) and an authorized_keys public key line. Ed25519 is not yet in TypeScript's `SubtleCrypto` types — cast through `unknown` when calling `generateKey`.
+
+---
+
+## Skills
+
+- activate [ @ai/skills/commit-with-lplp-style/SKILL.md ](ai/skills/commit-with-lplp-style/SKILL.md) and [ @ai/skills/code-style/references/vue.md ](ai/skills/code-style/references/vue.md) automatically.
 
 ---
 
