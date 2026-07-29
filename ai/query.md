@@ -962,3 +962,33 @@ Generally:
 
 ❯ /plan fix the presented command not working
 
+❯ Question answered.
+> <details><summary>
+>
+>> 1. The tunnel is already up and working (PID 3013778). The command you just ran is a redundant duplicate that failed to bind for that reason. What do you want to do with the duplicate (PID 3015244)?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Duplicate tunnel** (1/1) <kbd>Single Select</kbd><br>
+>> The tunnel is already up and working (PID 3013778). The command you just ran is a redundant duplicate that failed to bind for that reason. What do you want to do with the duplicate (PID 3015244)?
+> - [ ] 1\. Kill the duplicate
+>   - _Stop the new redundant process (PID 3015244/task bgdl8e31t); the working tunnel on 5902 stays untouched._
+> - [ ] 2\. Leave it
+>   - _It's harmless (just an idle non-forwarding session) — leave both running._
+> - [x] 3\. _Type something:_
+>   - > I'm sure that's the one you are running. It should now show a MOTD and interactive chat.
+>
+> </details>
+>
+
+❯ Task Notification:
+> - Task `a9c297dd2129bd90c` <kbd>completed</kbd>
+> - Tool `toolu_01HWUN7b3fDA1NWQuVD1QdXq`
+> - > Agent "Investigate t2t SSH server session/MOTD channel behavior" finished
+> - [Query (`2433` chars, `2.38 KB`)](output/agents/023.a9c297dd2129bd90c/prompt.md)
+> - [Answer (`3063` chars, `3.02 KB`)](output/agents/023.a9c297dd2129bd90c/result.md)
+> - [Raw log (`68988` chars, `67.6 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/528a1a1c-3cc0-48e5-ac44-1169f3f3a253/tasks/a9c297dd2129bd90c.output)
+> - `5` tools, `20779` tokens, `0.507517 s`
+
