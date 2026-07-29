@@ -1,5 +1,10 @@
 # Fix: local SSH tunnel command failing on port 5902
 
+## Update (follow-up run)
+
+After the fix below was applied, the tunnel (PID `3013778`) came up successfully and is still listening on `127.0.0.1:5902` / `[::1]:5902`. The user then manually ran the exact same `ssh -N -L 5902:...` command again (task `bgdl8e31t`, PID `3015244`), which failed with the identical "Address already in use" — but this time it's expected: it's a redundant second copy of the already-working tunnel, not a new bug. No code/config change needed; just confirm with the user whether to kill the duplicate or leave it (it's harmless, just non-functional as a forward).
+
+
 ## Context
 
 The user ran:

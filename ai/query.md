@@ -960,3 +960,5 @@ Generally:
 > </details>
 >
 
+❯ /plan fix the presented command not working
+
