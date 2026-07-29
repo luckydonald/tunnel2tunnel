@@ -735,7 +735,7 @@ async function handleDeleteEntity(): Promise<void> {
 
 .td-desc { color: #64748b; }
 
-.port-num   { width: 70px; }
+.port-num   { width: 80px; }
 .port-name  { width: 120px; }
 .port-order { width: 55px; }
 .port-host  { width: 140px; }
