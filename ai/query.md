@@ -1015,3 +1015,5 @@ Generally:
 > </details>
 >
 
+❯ nonInteractive shall be false per default. Is it really needed to modify the connection settings, too (i.e. here: the username), or can we actually inspect the connection to detect that?
+
