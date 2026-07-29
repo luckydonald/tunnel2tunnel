@@ -1039,3 +1039,5 @@ Generally:
 > </details>
 >
 
+❯ Fix the disconnect I'm getting, see @ai/errors/6.ssh.txt and @ai/errors/6.t2t.txt
+

@@ -1,0 +1,88 @@
+🔗 Connecting via SSH to tunnel2tunnel-d5oteit4omkq577f6j4r3rd9.h1.bn-x.de...
+⚡ Executing: ssh -p 2222 -i /home/user/.var/app/io.github.totoshko88.RustConn/.ssh/t2t_fedora-work -v -o IdentitiesOnly=yes -C -o ServerAliveInterval=3 -o ServerAliveCountMax=8 -L 5902:019f1899-9af7-7f30-aeb1-8bb9de8fd347:5900 -o UserKnownHostsFile=/home/user/.var/app/io.github.totoshko88.RustConn/.ssh/known_hosts 019f15ec-fb3b-7f41-ba4b-84a0baa6b3cd@tunnel2tunnel-d5oteit4omkq577f6j4r3rd9.h1.bn-x.de
+
+debug1: OpenSSH_10.3p1, OpenSSL 3.5.7 9 Jun 2026
+debug1: Reading configuration data /etc/ssh/ssh_config
+debug1: /etc/ssh/ssh_config line 47: include /etc/ssh/ssh_config.d/*.conf matched no files
+debug1: auto-mux: Trying existing master at '/run/user/1000/rc-21ef2818b6be-019f15ec-fb3b-7f41-ba4b-84a0baa6b3cd'
+debug1: Control socket "/run/user/1000/rc-21ef2818b6be-019f15ec-fb3b-7f41-ba4b-84a0baa6b3cd" does not exist
+debug1: Connecting to tunnel2tunnel-d5oteit4omkq577f6j4r3rd9.h1.bn-x.de [159.69.185.51] port 2222.
+debug1: Connection established.
+debug1: loaded pubkey from /home/user/.var/app/io.github.totoshko88.RustConn/.ssh/t2t_fedora-work: ED25519 SHA256:5thR88M+9XjHy7q7qRJooValOgq1Ll7vK8j4WeQ1S+s
+debug1: identity file /home/user/.var/app/io.github.totoshko88.RustConn/.ssh/t2t_fedora-work type 2
+debug1: no identity pubkey loaded from /home/user/.var/app/io.github.totoshko88.RustConn/.ssh/t2t_fedora-work
+debug1: Local version string SSH-2.0-OpenSSH_10.3
+debug1: Remote protocol version 2.0, remote software version russh_0.61.2
+debug1: compat_banner: no match: russh_0.61.2
+debug1: Authenticating to tunnel2tunnel-d5oteit4omkq577f6j4r3rd9.h1.bn-x.de:2222 as '019f15ec-fb3b-7f41-ba4b-84a0baa6b3cd'
+debug1: load_hostkeys: fopen /etc/ssh/ssh_known_hosts: No such file or directory
+debug1: load_hostkeys: fopen /etc/ssh/ssh_known_hosts2: No such file or directory
+debug1: SSH2_MSG_KEXINIT sent
+debug1: SSH2_MSG_KEXINIT received
+debug1: kex: algorithm: mlkem768x25519-sha256
+debug1: kex: host key algorithm: ssh-ed25519
+debug1: kex: server->client cipher: chacha20-poly1305@openssh.com MAC: <implicit> compression: zlib@openssh.com
+debug1: kex: client->server cipher: chacha20-poly1305@openssh.com MAC: <implicit> compression: zlib@openssh.com
+debug1: expecting SSH2_MSG_KEX_ECDH_REPLY
+debug1: SSH2_MSG_KEX_ECDH_REPLY received
+debug1: Server host key: ssh-ed25519 SHA256:VB4Aw2A7Tfb0QSQWZD5NMqhBBKTy9BjEslO6qJ5OI1E
+debug1: load_hostkeys: fopen /etc/ssh/ssh_known_hosts: No such file or directory
+debug1: load_hostkeys: fopen /etc/ssh/ssh_known_hosts2: No such file or directory
+debug1: Host '[tunnel2tunnel-d5oteit4omkq577f6j4r3rd9.h1.bn-x.de]:2222' is known and matches the ED25519 host key.
+debug1: Found key in /home/user/.var/app/io.github.totoshko88.RustConn/.ssh/known_hosts:1
+debug1: ssh_packet_send2_wrapped: resetting send seqnr 3
+debug1: rekey out after 134217728 blocks
+debug1: SSH2_MSG_NEWKEYS sent
+debug1: Sending SSH2_MSG_EXT_INFO
+debug1: expecting SSH2_MSG_NEWKEYS
+debug1: ssh_packet_read_poll2: resetting read seqnr 3
+debug1: SSH2_MSG_NEWKEYS received
+debug1: rekey in after 134217728 blocks
+debug1: SSH2_MSG_EXT_INFO received
+debug1: kex_ext_info_client_parse: server-sig-algs=<ssh-ed25519,ecdsa-sha2-nistp256,ecdsa-sha2-nistp384,ecdsa-sha2-nistp521,rsa-sha2-512,rsa-sha2-256,ssh-rsa>
+debug1: SSH2_MSG_SERVICE_ACCEPT received
+debug1: Authentications that can continue: publickey
+debug1: Next authentication method: publickey
+debug1: get_agent_identities: bound agent to hostkey
+debug1: get_agent_identities: agent returned 2 keys
+debug1: Will attempt key: /home/user/.var/app/io.github.totoshko88.RustConn/.ssh/t2t_fedora-work ED25519 SHA256:5thR88M+9XjHy7q7qRJooValOgq1Ll7vK8j4WeQ1S+s explicit agent
+debug1: Offering public key: /home/user/.var/app/io.github.totoshko88.RustConn/.ssh/t2t_fedora-work ED25519 SHA256:5thR88M+9XjHy7q7qRJooValOgq1Ll7vK8j4WeQ1S+s explicit agent
+debug1: Server accepts key: /home/user/.var/app/io.github.totoshko88.RustConn/.ssh/t2t_fedora-work ED25519 SHA256:5thR88M+9XjHy7q7qRJooValOgq1Ll7vK8j4WeQ1S+s explicit agent
+debug1: Enabling compression at level 6.
+Authenticated to tunnel2tunnel-d5oteit4omkq577f6j4r3rd9.h1.bn-x.de ([159.69.185.51]:2222) using "publickey".
+debug1: Local connections to LOCALHOST:5902 forwarded to remote address 019f1899-9af7-7f30-aeb1-8bb9de8fd347:5900
+debug1: Local forwarding listening on ::1 port 5902.
+bind [::1]:5902: Address already in use
+debug1: Local forwarding listening on 127.0.0.1 port 5902.
+bind [127.0.0.1]:5902: Address already in use
+channel_setup_fwd_listener_tcpip: cannot listen to port: 5902
+Could not request local forwarding.
+debug1: setting up multiplex master socket
+debug1: channel 0: new mux listener [/run/user/1000/rc-21ef2818b6be-019f15ec-fb3b-7f41-ba4b-84a0baa6b3cd] (inactive timeout: 0)
+debug1: control_persist_detach: backgrounding master process
+debug1: forking to background
+debug1: Entering interactive session.
+debug1: pledge: id
+debug1: multiplexing control connection
+debug1: channel 1: new mux-control [mux-control] (inactive timeout: 0)
+debug1: Received 'info' extension
+debug1: Requesting forwarding of local forward LOCALHOST:5902 -> 019f1899-9af7-7f30-aeb1-8bb9de8fd347:5900
+debug1: channel 2: new session [client-session] (inactive timeout: 0)
+debug1: mux_client_request_session: master session id: 2
+
+✨ Welcome to tunnel2tunnel, Fedora Work! ✨
+Twilight Sparkle has verified your access rules — everything checks out.
+The portal stands ready. Your client connection is now active. 📚
+Type a message and press Enter to chat with other connected entities.
+
+Connection to tunnel2tunnel-d5oteit4omkq577f6j4r3rd9.h1.bn-x.de closed by remote host.
+debug1: channel 0: free: /run/user/1000/rc-21ef2818b6be-019f15ec-fb3b-7f41-ba4b-84a0baa6b3cd, nchannels 3
+debug1: channel 1: free: mux-control, nchannels 2
+debug1: channel 2: free: client-session, nchannels 1
+Transferred: sent 3844, received 2680 bytes, in 8.6 seconds
+Bytes per second: sent 448.7, received 312.8
+debug1: Exit status -1
+Shared connection to tunnel2tunnel-d5oteit4omkq577f6j4r3rd9.h1.bn-x.de closed.
+debug1: compress outgoing: raw data 442, compressed 281, factor 0.64
+debug1: compress incoming: raw data 313, compressed 259, factor 0.83
+

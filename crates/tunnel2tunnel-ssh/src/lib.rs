@@ -10,7 +10,7 @@ use getrandom::SysRng;
 use russh::keys::ssh_key::LineEnding;
 use russh::keys::{Algorithm, PrivateKey};
 use russh::server::{Auth, Config, Handle, Handler, Msg, Server, Session};
-use russh::{Channel, ChannelId, ChannelMsg};
+use russh::{Channel, ChannelId, ChannelMsg, Pty};
 use russh::{MethodKind, MethodSet};
 use sqlx::PgPool;
 use tokio::net::TcpListener;
@@ -167,7 +167,9 @@ pub async fn start(config: SshConfig, pool: PgPool) -> Result<()> {
         tokio::spawn(async move {
             match russh::server::run_stream(cfg, socket, handler).await {
                 Ok(session) => {
-                    let _ = session.await;
+                    if let Err(e) = session.await {
+                        tracing::warn!(err = %e, "SSH: session ended with error");
+                    }
                 }
                 Err(e) => tracing::debug!(err = %e, "SSH: connection setup failed"),
             }
@@ -829,6 +831,78 @@ impl Handler for T2tHandler {
         });
 
         Ok(true)
+    }
+
+    // No real pty/shell/exec is provided — this server only offers the
+    // welcome/chat channel and tunnel bridging — but every `want_reply`
+    // channel request must still get *some* reply, or an interactive
+    // (non `-N`) OpenSSH client is left waiting forever on it.
+    async fn pty_request(
+        &mut self,
+        channel: ChannelId,
+        _term: &str,
+        _col_width: u32,
+        _row_height: u32,
+        _pix_width: u32,
+        _pix_height: u32,
+        _modes: &[(Pty, u32)],
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        session.channel_success(channel)?;
+        Ok(())
+    }
+
+    async fn env_request(
+        &mut self,
+        channel: ChannelId,
+        _variable_name: &str,
+        _variable_value: &str,
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        session.channel_success(channel)?;
+        Ok(())
+    }
+
+    async fn shell_request(
+        &mut self,
+        channel: ChannelId,
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        session.channel_success(channel)?;
+        Ok(())
+    }
+
+    async fn window_change_request(
+        &mut self,
+        channel: ChannelId,
+        _col_width: u32,
+        _row_height: u32,
+        _pix_width: u32,
+        _pix_height: u32,
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        session.channel_success(channel)?;
+        Ok(())
+    }
+
+    async fn exec_request(
+        &mut self,
+        channel: ChannelId,
+        _data: &[u8],
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        session.channel_failure(channel)?;
+        Ok(())
+    }
+
+    async fn subsystem_request(
+        &mut self,
+        channel: ChannelId,
+        _name: &str,
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        session.channel_failure(channel)?;
+        Ok(())
     }
 
     // Server registers a remote port (-R proxy_port:...)
