@@ -932,3 +932,5 @@ Generally:
 
 › Based on those current selected (and displayed filters) add a "Delete" button below the table, which will delete all entries matching the current filters. So probably the filter-to-db-query handling can be extracted as a common method for both routes, just one SELECTs and one DELETEs.
 
+❯ /plan When the server (coolify) redeploys (restarts tunnel2tunnel), it might not have properly marked all connections as closed in the database. Therefore, upon boot, it shall set the ended time of the current db entries.
+
