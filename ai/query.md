@@ -936,3 +936,27 @@ Generally:
 
 ❯ It should log how many connection log entries it marked as closed.
 
+❯ /plan fix the presented command not working
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. Local port 5902 is already held by an earlier, still-running instance of this same ssh tunnel command (PID 2925881). How do you want to resolve it?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Port conflict fix** (1/1) <kbd>Single Select</kbd><br>
+>> Local port 5902 is already held by an earlier, still-running instance of this same ssh tunnel command (PID 2925881). How do you want to resolve it?
+> - [x] 1\. Kill the stale process
+>   - _Terminate the older ssh process (PID 2925881) holding port 5902, freeing it up for the current tunnel._
+> - [ ] 2\. Use a different local port
+>   - _Keep the old tunnel running and just pick a free local port (e.g. 5903) for the new -L forward._
+> - [ ] 3\. Just tell me, don't act
+>   - _No action needed from Claude — you'll handle it manually now that you know the cause._
+> - [ ] 4\. _Type something._
+>
+> </details>
+>
+
