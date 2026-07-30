@@ -605,7 +605,7 @@ Like `fail2ban`, this should happen after wrong attempts only
   - why it succeded (correct login, reset by admin in webgui, …) (one of those reason fields must be NULL)
 - write a fail2ban compatible log (like the ssh client)
 
-Note that a valid login goes like @/home/user/git/luckydonald/tunnel2tunnel/ai/errors/4.legitimiate.txt 
+Note that a valid login goes like @/home/user/git/luckydonald/tunnel2tunnel/ai/errors/4.legitimiate.txt
 - this should not cause a blocking.
 - specifically add a unittest for this sequence.
 
@@ -1050,4 +1050,6 @@ Generally:
 ❯ I guess on the "long form" the parts, and vice versa the copy fields of the command part light up on mouse over, to show you the connection. The fields shall be the usual github like `<code>…</code>` styling, with that copy buttom afterwards.
 
 ❯ merge ai commits not pushed.
+
+❯ Write tests for the frontend's hover stuff in both directions, and one of those copy thingos, too.
 
