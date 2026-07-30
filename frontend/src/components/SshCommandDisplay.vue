@@ -25,6 +25,13 @@ const nonInteractive = ref(false)
 const t2tHost = computed(() => props.t2tHost ?? window.location.hostname)
 const servers = computed(() => props.reachableServers ?? [])
 
+// Connection-field hover linking between the manual-config block and the ssh command line
+type ConnectionField = 'user' | 'host' | 'port' | 'key'
+const hoveredField = ref<ConnectionField | null>(null)
+function isFieldHovered(field: ConnectionField): boolean {
+  return hoveredField.value === field
+}
+
 // Client-side EntityPort IDs managed by "enabled" discovery rules
 const enabledDiscoveryPortIds = computed(() => {
   const ids = new Set<string>()
@@ -43,36 +50,62 @@ const enabledPorts = computed(() =>
   props.ports.filter(p => p.enabled && !enabledDiscoveryPortIds.value.has(p.id))
 )
 
+// Structured -L/-R forward fields, shared by the ssh command line and the manual-config tables
+interface TunnelFields { type: 'Local' | 'Remote'; bindPort: number; toHost: string; toPort: number }
+
+function portFields(port: EntityPort): TunnelFields {
+  if (props.entity.entity_type === 'server') {
+    return { type: 'Remote', bindPort: port.proxy_port, toHost: port.host, toPort: port.local_port }
+  }
+  if (port.server_entity_id) {
+    const server = servers.value.find(s => s.id === port.server_entity_id)
+    return { type: 'Local', bindPort: port.local_port, toHost: server?.hostname ?? port.server_entity_id, toPort: port.proxy_port }
+  }
+  return { type: 'Local', bindPort: port.local_port, toHost: '<server>', toPort: port.proxy_port }
+}
+
+function flagString(fields: TunnelFields): string {
+  const prefix = fields.type === 'Remote' ? '-R' : '-L'
+  return `${prefix} ${fields.bindPort}:${fields.toHost}:${fields.toPort}`
+}
+
+function portFlag(port: EntityPort): string {
+  return flagString(portFields(port))
+}
+
 // Extra -L flags contributed by auto/enabled discovered ports
-interface DiscoveryFlag { flag: string; portId: string }
+interface DiscoveryFlag extends TunnelFields { flag: string; portId: string; name: string | null }
 const discoveryFlags = computed((): DiscoveryFlag[] => {
   const flags: DiscoveryFlag[] = []
   for (const server of servers.value) {
     const display = server.hostname ?? server.id
     for (const dp of server.ports) {
       if (dp.discovery_state === null) {
-        flags.push({ flag: `-L ${dp.local_port}:${display}:${dp.proxy_port}`, portId: dp.id })
+        const fields: TunnelFields = { type: 'Local', bindPort: dp.local_port, toHost: display, toPort: dp.proxy_port }
+        flags.push({ ...fields, flag: flagString(fields), portId: dp.id, name: dp.name })
       } else if (dp.discovery_state === 'enabled' && dp.client_port_id) {
         const clientPort = props.ports.find(p => p.id === dp.client_port_id)
         const localPort = clientPort?.local_port ?? dp.local_port
-        flags.push({ flag: `-L ${localPort}:${display}:${dp.proxy_port}`, portId: dp.id })
+        const fields: TunnelFields = { type: 'Local', bindPort: localPort, toHost: display, toPort: dp.proxy_port }
+        flags.push({ ...fields, flag: flagString(fields), portId: dp.id, name: dp.name })
       }
     }
   }
   return flags
 })
 
-function portFlag(port: EntityPort): string {
-  if (props.entity.entity_type === 'server') {
-    return `-R ${port.proxy_port}:${port.host}:${port.local_port}`
+// Combined list backing the manual/GUI-client tunnel-setup table
+interface ManualTunnel extends TunnelFields { id: string; name: string | null }
+const manualTunnels = computed((): ManualTunnel[] => {
+  const rows: ManualTunnel[] = enabledPorts.value.map(port => ({ id: port.id, name: port.name, ...portFields(port) }))
+  for (const df of discoveryFlags.value) {
+    rows.push({ id: df.portId, name: df.name, type: df.type, bindPort: df.bindPort, toHost: df.toHost, toPort: df.toPort })
   }
-  if (port.server_entity_id) {
-    const server = servers.value.find(s => s.id === port.server_entity_id)
-    const display = server?.hostname ?? port.server_entity_id
-    return `-L ${port.local_port}:${display}:${port.proxy_port}`
-  }
-  return `-L ${port.local_port}:<server>:${port.proxy_port}`
-}
+  return rows
+})
+
+// All rows share the same forward direction for a given entity — used for the once-per-section explainer
+const tunnelDirection = computed<'Local' | 'Remote'>(() => (props.entity.entity_type === 'server' ? 'Remote' : 'Local'))
 
 function isHovered(portId: string): boolean {
   return hoveredPortId.value === portId
@@ -102,6 +135,14 @@ function toggleDiscovery(portId: string, currentState: string | null): void {
   } else {
     emit('discovery-state-change', portId, 'disabled')
   }
+}
+
+// Copy-to-clipboard for the manual-config code chips
+const copiedField = ref<string | null>(null)
+async function copyValue(field: string, value: string): Promise<void> {
+  await navigator.clipboard.writeText(value)
+  copiedField.value = field
+  setTimeout(() => { if (copiedField.value === field) copiedField.value = null }, 2000)
 }
 </script>
 
@@ -181,7 +222,7 @@ function toggleDiscovery(portId: string, currentState: string | null): void {
         <span class="cmd-hint">Disables text channel providing status updates.</span>
       </div>
       <pre class="cmd-text">ssh <template v-if="nonInteractive">-N \
-  </template>-i ~/.ssh/{{ filename }}<template v-for="port in enabledPorts" :key="port.id"> \
+  </template>-i <span class="cmd-flag" :class="{ 'is-hovered': isFieldHovered('key') }" @mouseenter="hoveredField = 'key'" @mouseleave="hoveredField = null">~/.ssh/{{ filename }}</span><template v-for="port in enabledPorts" :key="port.id"> \
   <RouterLink
     v-if="entity.entity_type === 'client' && port.server_entity_id"
     :to="'/entities/' + port.server_entity_id + '#ports'"
@@ -197,9 +238,143 @@ function toggleDiscovery(portId: string, currentState: string | null): void {
     @mouseleave="hoveredPortId = null"
   >{{ portFlag(port) }}</span></template><template v-for="df in discoveryFlags" :key="df.portId"> \
   <span class="cmd-flag cmd-flag-discovery">{{ df.flag }}</span></template> \
-  {{ entity.id }}@{{ t2tHost }} \
-  -p <RouterLink to="/settings" class="port-link">{{ t2tSshPort }}</RouterLink></pre>
+  <span class="cmd-flag" :class="{ 'is-hovered': isFieldHovered('user') }" @mouseenter="hoveredField = 'user'" @mouseleave="hoveredField = null">{{ entity.id }}</span>@<span class="cmd-flag" :class="{ 'is-hovered': isFieldHovered('host') }" @mouseenter="hoveredField = 'host'" @mouseleave="hoveredField = null">{{ t2tHost }}</span> \
+  -p <RouterLink to="/settings" class="port-link" :class="{ 'is-hovered': isFieldHovered('port') }" @mouseenter="hoveredField = 'port'" @mouseleave="hoveredField = null">{{ t2tSshPort }}</RouterLink></pre>
     </div>
+
+    <!-- Manual configuration for graphical (GUI) SSH clients -->
+    <details class="cmd-block">
+      <summary class="cmd-header manual-summary">
+        <span class="cmd-label">Manual configuration (graphical clients)</span>
+        <span class="cmd-hint">For clients like Bitvise, MobaXterm, Termius, PuTTY, etc.</span>
+      </summary>
+      <div class="manual-body">
+        <div class="manual-group">
+          <div class="manual-group-title">Connection</div>
+
+          <div class="manual-field-row">
+            <span class="manual-field-label">User</span>
+            <code
+              class="cmd-flag manual-field-code"
+              :class="{ 'is-hovered': isFieldHovered('user') }"
+              @mouseenter="hoveredField = 'user'"
+              @mouseleave="hoveredField = null"
+            >{{ entity.id }}</code>
+            <button type="button" class="btn-copy" :class="{ copied: copiedField === 'user' }" @click="copyValue('user', entity.id)">
+              {{ copiedField === 'user' ? 'Copied!' : 'Copy' }}
+            </button>
+          </div>
+          <p class="manual-field-note">The SSH username — this entity's ID.</p>
+
+          <div class="manual-field-row">
+            <span class="manual-field-label">Host</span>
+            <code
+              class="cmd-flag manual-field-code"
+              :class="{ 'is-hovered': isFieldHovered('host') }"
+              @mouseenter="hoveredField = 'host'"
+              @mouseleave="hoveredField = null"
+            >{{ t2tHost }}</code>
+            <button type="button" class="btn-copy" :class="{ copied: copiedField === 'host' }" @click="copyValue('host', t2tHost)">
+              {{ copiedField === 'host' ? 'Copied!' : 'Copy' }}
+            </button>
+          </div>
+          <p class="manual-field-note">Address of this tunnel2tunnel server.</p>
+
+          <div class="manual-field-row">
+            <span class="manual-field-label">Port</span>
+            <code
+              class="cmd-flag manual-field-code"
+              :class="{ 'is-hovered': isFieldHovered('port') }"
+              @mouseenter="hoveredField = 'port'"
+              @mouseleave="hoveredField = null"
+            >{{ t2tSshPort }}</code>
+            <button type="button" class="btn-copy" :class="{ copied: copiedField === 'port' }" @click="copyValue('port', String(t2tSshPort))">
+              {{ copiedField === 'port' ? 'Copied!' : 'Copy' }}
+            </button>
+          </div>
+          <p class="manual-field-note">SSH port this server listens on.</p>
+
+          <div class="manual-field-row">
+            <span class="manual-field-label">Password</span>
+            <code class="cmd-flag manual-field-code manual-field-na">— (none)</code>
+          </div>
+          <p class="manual-field-note">This server only accepts public-key auth; leave the password field blank.</p>
+
+          <div class="manual-field-row">
+            <span class="manual-field-label">Private key</span>
+            <code
+              class="cmd-flag manual-field-code"
+              :class="{ 'is-hovered': isFieldHovered('key') }"
+              @mouseenter="hoveredField = 'key'"
+              @mouseleave="hoveredField = null"
+            >~/.ssh/{{ filename }}</code>
+            <button type="button" class="btn-copy" :class="{ copied: copiedField === 'key' }" @click="copyValue('key', '~/.ssh/' + filename)">
+              {{ copiedField === 'key' ? 'Copied!' : 'Copy' }}
+            </button>
+          </div>
+          <p class="manual-field-note">Path to the key generated/registered for this entity.</p>
+
+          <div class="manual-checkbox-row">
+            <label class="checkbox-label"><input type="checkbox" disabled /> Autostart on boot/login</label>
+            <p class="manual-field-note">Your own preference — not configured by t2t.</p>
+          </div>
+          <div class="manual-checkbox-row">
+            <label class="checkbox-label"><input type="checkbox" checked disabled /> Autostart tunnel on app launch</label>
+            <p class="manual-field-note">Recommended: on, so the tunnel comes up without manual action.</p>
+          </div>
+          <div class="manual-checkbox-row">
+            <label class="checkbox-label"><input type="checkbox" checked disabled /> Autorestart on failure</label>
+            <p class="manual-field-note">Recommended: on, so a dropped connection reconnects automatically.</p>
+          </div>
+        </div>
+
+        <div class="manual-group">
+          <div class="manual-group-title">Tunnel setup</div>
+          <p class="manual-type-explainer">
+            <strong>Local</strong> — the client opens a port on your machine and forwards connections through the SSH server to a destination it can reach.
+            <strong>Remote</strong> — the SSH server opens a port on itself and forwards connections back to a destination your machine can reach.
+            <strong>Dynamic</strong> — turns the whole connection into a SOCKS proxy instead of one fixed forward; most GUI clients offer it as a third type, but t2t doesn't use it.
+            This entity uses <strong>{{ tunnelDirection }}</strong> forwarding for every tunnel below.
+          </p>
+
+          <table v-if="manualTunnels.length" class="ports-table manual-tunnel-table">
+            <thead>
+              <tr>
+                <th>Type</th>
+                <th>Bind address</th>
+                <th>Bind port</th>
+                <th>To host</th>
+                <th>To port</th>
+                <th>Tunnel string</th>
+                <th>Name</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="row in manualTunnels"
+                :key="row.id"
+                :class="{ 'is-hovered': isHovered(row.id) }"
+                @mouseenter="hoveredPortId = row.id"
+                @mouseleave="hoveredPortId = null"
+              >
+                <td><span class="dp-badge" :class="row.type === 'Remote' ? 'enabled' : 'auto'">{{ row.type }}</span></td>
+                <td><code>127.0.0.1</code></td>
+                <td><code>{{ row.bindPort }}</code></td>
+                <td><code>{{ row.toHost }}</code></td>
+                <td><code>{{ row.toPort }}</code></td>
+                <td>
+                  <code class="manual-tunnel-string">{{ row.bindPort }}:{{ row.toHost }}:{{ row.toPort }}</code>
+                  <div class="manual-tunnel-legend">port · to-host · to-port</div>
+                </td>
+                <td>{{ row.name ?? '—' }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <p v-else class="no-ports">No enabled tunnels.</p>
+          <p class="manual-field-note">Bind address defaults to <code>127.0.0.1</code> (loopback only) unless you change it in your client.</p>
+        </div>
+      </div>
+    </details>
 
     <table v-if="ports.length" class="ports-table">
       <thead>
@@ -444,7 +619,8 @@ function toggleDiscovery(portId: string, currentState: string | null): void {
   color: #94a3b8;
   text-decoration: none;
   border-bottom: 1px dotted #4f6ef7;
-  &:hover { color: #7dd3fc; border-bottom-style: solid; }
+  &:hover, &.is-hovered { color: #7dd3fc; border-bottom-style: solid; }
+  &.is-hovered { background: rgba(79, 110, 247, 0.25); }
 }
 
 .cmd-flag {
@@ -470,6 +646,128 @@ function toggleDiscovery(portId: string, currentState: string | null): void {
 
 .cmd-flag-discovery {
   color: #86efac;
+}
+
+// ── Manual/GUI-client configuration ────────────────────────────────────────────
+
+.manual-summary {
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+
+  &::-webkit-details-marker { display: none; }
+
+  &::before {
+    content: '▸';
+    color: #64748b;
+    font-size: 0.75rem;
+    margin-right: 0.25rem;
+  }
+}
+
+details[open] > .manual-summary::before {
+  content: '▾';
+}
+
+.manual-body {
+  padding: 0.875rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.manual-group-title {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #64748b;
+  font-weight: 600;
+  margin-bottom: 0.625rem;
+}
+
+.manual-field-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.125rem;
+}
+
+.manual-field-label {
+  width: 90px;
+  flex-shrink: 0;
+  font-size: 0.8125rem;
+  color: #94a3b8;
+}
+
+.manual-field-code {
+  background: #1a1d27;
+  padding: 0.15em 0.4em;
+  border-radius: 3px;
+  font-size: 0.8125rem;
+}
+
+.manual-field-na {
+  color: #64748b;
+}
+
+.manual-field-note {
+  margin: 0 0 0.75rem calc(90px + 0.5rem);
+  font-size: 0.75rem;
+  color: #64748b;
+
+  code {
+    background: #1a1d27;
+    padding: 0.1em 0.35em;
+    border-radius: 3px;
+  }
+}
+
+.manual-checkbox-row {
+  margin-bottom: 0.25rem;
+
+  .manual-field-note {
+    margin-left: 0;
+  }
+}
+
+.manual-type-explainer {
+  font-size: 0.8125rem;
+  color: #94a3b8;
+  line-height: 1.6;
+  margin: 0 0 1rem;
+
+  strong {
+    color: #cbd5e1;
+  }
+}
+
+.manual-tunnel-string {
+  background: #1a1d27;
+  padding: 0.15em 0.4em;
+  border-radius: 3px;
+  font-size: 0.8125rem;
+  color: #7dd3fc;
+  display: block;
+}
+
+.manual-tunnel-legend {
+  font-size: 0.6875rem;
+  color: #475569;
+  margin-top: 0.2rem;
+}
+
+.btn-copy {
+  padding: 0.2rem 0.6rem;
+  background: none;
+  border: 1px solid #2d3248;
+  border-radius: 3px;
+  color: #94a3b8;
+  font-size: 0.75rem;
+  cursor: pointer;
+  white-space: nowrap;
+
+  &:hover  { color: #e2e8f0; border-color: #4f6ef7; }
+  &.copied { color: #6ee7b7; border-color: #34d399; }
 }
 
 // ── Ports table ───────────────────────────────────────────────────────────────
