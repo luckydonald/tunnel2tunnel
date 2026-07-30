@@ -66,8 +66,9 @@ Placed directly after the existing `cmd-block` (still "under the SSH Command sec
 
 ### 4. Connection fields block
 
-Plain label/value rows (reuse the `.cmd-flag`-style `<code>` look), each with a one-line
-explanation underneath in muted text — mirroring the existing `.cmd-hint` treatment:
+Each field is a label + a GitHub-style `<code>…</code>` value chip (same visual language as the
+`.cmd-flag`/`dp-ports` code pills already in this file) followed by a small copy button, plus a
+one-line explanation underneath in muted text (mirroring the existing `.cmd-hint` treatment):
 
 | Field | Value | Note |
 |---|---|---|
@@ -77,10 +78,21 @@ explanation underneath in muted text — mirroring the existing `.cmd-hint` trea
 | Password | *(none — key-based auth)* | This server only accepts public-key auth; leave password blank. |
 | Private key | `~/.ssh/{{ filename }}` | Path to the key generated/registered for this entity. |
 
-Copyable fields (User/Host/Port/Private key) get a small copy button — reuse the
-`navigator.clipboard.writeText` + timed "Copied!" pattern already used in `PubkeyInput.vue`
-(`copyCmd`/`copied`), generalized here as one `copiedField` ref (`string | null`) + `copyValue(field, value)`,
-consistent with the existing `hoveredPortId` single-ref-tracks-which-item pattern in this file.
+Copy button reuses the `navigator.clipboard.writeText` + timed "Copied!" pattern already used in
+`PubkeyInput.vue` (`copyCmd`/`copied`), generalized here as one `copiedField` ref (`string | null`)
++ `copyValue(field, value)`.
+
+**Hover-linking with the SSH command line above.** Each of these fields corresponds to a literal
+segment of the one-liner in `.cmd-text` (`ssh -i ~/.ssh/{filename} … {entity.id}@{t2tHost} -p {t2tSshPort}`).
+Reuse the same `hoveredPortId`-style approach already driving `.is-hovered` on port flags: add a
+`hoveredField` ref (`'user' | 'host' | 'port' | 'key' | null`). Give the relevant existing spans in
+`.cmd-text` (`{{ entity.id }}`, `{{ t2tHost }}`, the `-p` port link, `~/.ssh/{{ filename }}`) a
+`:class="{ 'is-hovered': hoveredField === 'user' }"` (etc.) plus `@mouseenter`/`@mouseleave` setting
+`hoveredField`, and give each manual-config field row the same mouseenter/leave + `:class` binding
+keyed to the same field id — so hovering either side highlights both. This is symmetric with how
+`hoveredPortId` already links table rows to command flags; it just adds a second, field-keyed ref
+for the connection-fields ↔ command-line pairing (port flags already have their own
+`hoveredPortId` linkage and don't need this second mechanism).
 
 Then three display-only, disabled checkboxes (not copyable — per the user's own "maybe not the
 checkboxes, lol"), each with a one-line explanation:
@@ -104,17 +116,30 @@ Explanation (once, not per-row — direction is constant for a given entity):
 
 Then a table (reuse `.ports-table` styling) driven by `manualTunnels`, columns: Type badge
 (Local/Remote), Bind address (`127.0.0.1` — fixed note: "loopback only unless you change it"),
-Bind port (`bindPort`), To host (`toHost`), To port (`toPort`), Name — plus a per-row copyable
-"tunnel string" cell showing the same `bindPort:toHost:toPort` (or `bindAddress:bindPort:toHost:toPort`
-if the client asks for one combined string) that a GUI client's single-line tunnel-string field would
-want, annotated inline (e.g. small labels under each colon-separated segment: "port · to-host · to-port")
-so it's clear which displayed field feeds which segment.
+Bind port (`bindPort`), To host (`toHost`), To port (`toPort`), Name — each value cell using the
+same `<code>…</code>` chip + copy-button treatment as the connection fields above, plus a per-row
+copyable "tunnel string" cell showing `bindPort:toHost:toPort` (the same value already rendered as
+the `-L`/`-R` flag in `.cmd-text`), annotated inline with small labels under each colon-separated
+segment ("port · to-host · to-port").
+
+**Hover-linking, reusing the existing mechanism.** Port rows already drive `.is-hovered` on their
+matching command-line flag via `hoveredPortId` (see `isHovered(portId)` / the `port.id`-keyed
+`mouseenter`/`mouseleave` handlers already in the template for both the ports table and the flags
+in `.cmd-text`). Each `manualTunnels` row carries the same `id` as its source port (or discovery
+port), so giving each new tunnel-table row and its "tunnel string" cell the identical
+`@mouseenter="hoveredPortId = row.id"` / `:class="{ 'is-hovered': isHovered(row.id) }"` wiring links
+it to the same flag span already highlighted by the existing ports table — no new ref needed here,
+just extending `hoveredPortId`'s reach to a third element per port.
 
 ### 6. Styles
 
-Add `.manual-body`, `.manual-field-row`, `.manual-checkbox-row`, `.manual-tunnel-note` etc. in the
-existing `<style lang="scss" scoped>` block, following the file's current hard-coded dark palette
-(`#0f1117`, `#2d3248`, `#94a3b8`, `#7dd3fc`, …) rather than introducing new tokens.
+Add `.manual-body`, `.manual-field-row`, `.manual-field-code` (a `dp-ports`/`cmd-flag`-alike code
+chip), `.manual-copy-btn` (mirrors `.btn-copy` from `PubkeyInput.vue`), `.manual-checkbox-row`,
+`.manual-tunnel-note` etc. in the existing `<style lang="scss" scoped>` block, following the file's
+current hard-coded dark palette (`#0f1117`, `#2d3248`, `#94a3b8`, `#7dd3fc`, …) rather than
+introducing new tokens. The `.is-hovered` rule already applied to `.cmd-flag` needs to also apply to
+the new code chips/table cells sharing that class, so the existing hover-highlight color is reused
+rather than redefined.
 
 ## Verification
 
