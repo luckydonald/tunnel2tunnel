@@ -9,11 +9,13 @@ WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ crates/
 COPY migrations/ migrations/
-# -j 1 bounds rustc/LLVM to one crate at a time — on a <200MB box, parallel codegen units are
+# -j 1 bounds rustc to one crate at a time — on a <200MB box, parallel codegen units are
 # what OOMs the build, not the binary itself. lld uses substantially less memory than GNU ld
 # for the final link. A swapfile on the host is still required (see deploy notes) — this just
 # keeps peak RSS as low as the toolchain allows so the swap doesn't have to absorb as much.
-ENV CARGO_BUILD_JOBS=1
+# Exposed as a build arg so it can be tuned to the actual host's RAM+swap without editing this file.
+ARG CARGO_BUILD_JOBS=1
+ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}
 ENV RUSTFLAGS="-C link-arg=-fuse-ld=lld"
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
@@ -30,8 +32,10 @@ WORKDIR /app/frontend
 COPY --from=rust-builder /t2t /tmp/.rust-build-complete
 # V8 sizes its default heap ceiling off detected physical RAM, which on a <200MB box is low
 # enough that the build hits a heap-OOM before ever touching the swap that's supposed to
-# cover the shortfall. Setting this explicitly overrides that auto-detection.
-ENV NODE_OPTIONS=--max-old-space-size=2048
+# cover the shortfall. Setting this explicitly overrides that auto-detection. Exposed as a
+# build arg so it can be tuned to the actual host's RAM+swap without editing this file.
+ARG NODE_MAX_OLD_SPACE_MB=2048
+ENV NODE_OPTIONS=--max-old-space-size=${NODE_MAX_OLD_SPACE_MB}
 # Release/build metadata baked into the bundle at build time (see frontend/vite.config.ts).
 ARG SOURCE_COMMIT
 ARG GIT_BRANCH

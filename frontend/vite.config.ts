@@ -17,12 +17,14 @@ const buildInfo = {
 }
 const buildTime = process.env.BUILD_TIME || new Date().toISOString()
 
+// gate on non-VITE_-prefixed build secrets so a build without them
+// (local dev, CI without credentials) still succeeds — just without upload
+const bugsinkUploadEnabled = Boolean(process.env.BUILD_BUGSINK_URL && process.env.BUILD_BUGSINK_AUTH_TOKEN)
+
 export default defineConfig({
   plugins: [
     vue(),
-    // gate on non-VITE_-prefixed build secrets so a build without them
-    // (local dev, CI without credentials) still succeeds — just without upload
-    process.env.BUILD_BUGSINK_URL && process.env.BUILD_BUGSINK_AUTH_TOKEN
+    bugsinkUploadEnabled
       ? sentryVitePlugin({
           url: process.env.BUILD_BUGSINK_URL,
           authToken: process.env.BUILD_BUGSINK_AUTH_TOKEN,
@@ -52,7 +54,8 @@ export default defineConfig({
     },
   },
   build: {
-    sourcemap: true,
+    // only pay the memory/CPU cost of sourcemap generation when they'll actually be uploaded
+    sourcemap: bugsinkUploadEnabled,
     rollupOptions: {
       output: {
         manualChunks: {

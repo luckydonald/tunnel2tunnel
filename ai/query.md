@@ -1053,3 +1053,33 @@ Generally:
 
 ❯ Write tests for the frontend's hover stuff in both directions, and one of those copy thingos, too.
 
+❯ /plan Make the (coolify docker-compose) build more memory efficient, it crashes the server. Both for rust and the vue build.
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. CLAUDE.md already documents heavy memory tuning for this exact build (CARGO_BUILD_JOBS=1, lld linker, opt-level="s", no LTO, strip, NODE_OPTIONS=2048MB) and says a swapfile is mandatory. If it's still crashing the server, do you want me to focus on squeezing the in-place Docker build further, or consider moving the build off the resource-constrained VPS entirely (e.g. build the image in CI/GitHub Actions and have Coolify just pull a prebuilt image)?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Approach** (1/1) <kbd>Single Select</kbd><br>
+>> CLAUDE.md already documents heavy memory tuning for this exact build (CARGO_BUILD_JOBS=1, lld linker, opt-level="s", no LTO, strip, NODE_OPTIONS=2048MB) and says a swapfile is mandatory. If it's still crashing the server, do you want me to focus on squeezing the in-place Docker build further, or consider moving the build off the resource-constrained VPS entirely (e.g. build the image in CI/GitHub Actions and have Coolify just pull a prebuilt image)?
+> - [x] 1\. Squeeze in-place build further
+>   - _Keep building on the VPS via Coolify's Docker build; find more RAM/swap reductions in the Dockerfile, Cargo profile, and Vite config._
+> - [ ] 2\. Move build off the VPS (Recommended)
+>   - _Build the image in CI (e.g. GitHub Actions) and push to a registry; Coolify deploys the prebuilt image instead of building on the constrained server. Most robust fix — avoids the ceiling entirely._
+> - [ ] 3\. Not sure — tell me more
+>   - _I want you to explain the tradeoffs in more detail before I decide._
+> - [ ] 4\. _Type something._
+>
+> </details>
+>
+
+❯ In vite, I can split compile and bundle creation to not happen at the same time, right?
+
+❯ what the pro/cons?
+
+❯ skip it for now, until we might do github pipelines.
+

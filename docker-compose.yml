@@ -20,6 +20,8 @@ services:
     build:
       context: .
       args:
+        CARGO_BUILD_JOBS: ${CARGO_BUILD_JOBS:-1}
+        NODE_MAX_OLD_SPACE_MB: ${NODE_MAX_OLD_SPACE_MB:-2048}
         SOURCE_COMMIT: ${SOURCE_COMMIT:-}
         GIT_BRANCH: ${GIT_BRANCH:-}
         BUILD_TIME: ${BUILD_TIME:-}
