@@ -174,9 +174,6 @@ function toggleDiscovery(portId: string, currentState: string | null): void {
     <div class="cmd-block">
       <div class="cmd-header">
         <span class="cmd-label">SSH command</span>
-        <span class="cmd-hint" v-if="entity.entity_type === 'client' && !servers.length">
-          Replace <code>&lt;server&gt;</code> with the server entity ID
-        </span>
         <label class="checkbox-label cmd-toggle">
           <input type="checkbox" v-model="nonInteractive" />
           Non-interactive mode
