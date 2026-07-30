@@ -1083,3 +1083,29 @@ Generally:
 
 ❯ skip it for now, until we might do github pipelines.
 
+❯ /plan Also I want to reduce build time through better layering, etc. My ideas: modern cache dir mounts, sperating library fetch (yarn/npm) or library build (rust) into separate steps, without the respective code mounted yet.
+
+❯ Task Notification:
+> - Task `btzr41rx3` <kbd>completed</kbd>
+> - Tool `toolu_01RDvirWFkKpKwtkQmxzm8rP`
+> - > Background command "time docker build --target rust-builder -t t2t-rust-builder-test . 2>&1 | tail -100" completed (exit code 0)
+> - [Query (`128` chars, `128 B`)](output/agents/024.btzr41rx3/prompt.md)
+> - [Answer (`3002` chars, `2.93 KB`)](output/agents/024.btzr41rx3/result.md)
+> - [Raw log (`4785` chars, `4.67 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/be965be2-d84f-459b-8ba2-8074058dabf8/tasks/btzr41rx3.output)
+
+❯ Task Notification:
+> - Task `btzljjv0s` <kbd>completed</kbd>
+> - Tool `toolu_011h2MYkmjPm9w8KmFyohtsg`
+> - > Background command "echo '// cache-test comment' >> crates/t2t/src/main.rs && time docker build --target rust-builder -t t2t-rust-builder-test3 . 2>&1 | tail -60" completed (exit code 0)
+> - [Query (`186` chars, `186 B`)](output/agents/025.btzljjv0s/prompt.md)
+> - [Answer (`2834` chars, `2.77 KB`)](output/agents/025.btzljjv0s/result.md)
+> - [Raw log (`2834` chars, `2.77 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/be965be2-d84f-459b-8ba2-8074058dabf8/tasks/btzljjv0s.output)
+
+❯ Task Notification:
+> - Task `blboc9rmw` <kbd>completed</kbd>
+> - Tool `toolu_01B9kedriqAt7HxJ48VAxagc`
+> - > Background command "time docker build -t t2t-full-test . 2>&1 | tail -40" completed (exit code 0)
+> - [Query (`97` chars, `97 B`)](output/agents/026.blboc9rmw/prompt.md)
+> - [Answer (`2107` chars, `2.07 KB`)](output/agents/026.blboc9rmw/result.md)
+> - [Raw log (`2107` chars, `2.07 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/be965be2-d84f-459b-8ba2-8074058dabf8/tasks/blboc9rmw.output)
+

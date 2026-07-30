@@ -1,14 +1,32 @@
 # syntax=docker/dockerfile:1
 
-# Stage 1: Build Rust binary
-FROM rust:1.88-slim AS rust-builder
+# Stage 1a: cargo-chef base — installed once, cached as long as the base image / pinned
+# version don't change. cargo-chef splits "compile external deps" from "compile our own
+# crates" into separate, independently-cacheable layers — the dependency layer is keyed
+# only on Cargo.toml/Cargo.lock (via recipe.json), so editing application source no longer
+# forces Docker to even consider re-resolving/recompiling the dependency graph. This holds
+# even if the BuildKit cache mounts below are ever pruned or the build runs on a fresh
+# runner — unlike relying on the cache mounts alone.
+FROM rust:1.88-slim AS chef
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev lld
 WORKDIR /app
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    cargo install cargo-chef --version 0.1.77 --locked
+
+# Stage 1b: planner — figures out the dependency graph. Reruns on every source change
+# (cheap, just parses manifests) but its recipe.json output only changes when
+# Cargo.toml/Cargo.lock actually change, which is what makes the cook step below cacheable
+# independently of application source.
+FROM chef AS planner
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ crates/
-COPY migrations/ migrations/
+RUN cargo chef prepare --recipe-path recipe.json
+
+# Stage 1c: Build Rust binary
+FROM chef AS rust-builder
+COPY --from=planner /app/recipe.json recipe.json
 # -j 1 bounds rustc to one crate at a time — on a <200MB box, parallel codegen units are
 # what OOMs the build, not the binary itself. lld uses substantially less memory than GNU ld
 # for the final link. A swapfile on the host is still required (see deploy notes) — this just
@@ -17,6 +35,16 @@ COPY migrations/ migrations/
 ARG CARGO_BUILD_JOBS=1
 ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}
 ENV RUSTFLAGS="-C link-arg=-fuse-ld=lld"
+# Cook: compiles only external dependencies, from recipe.json — decoupled from crates/ changes.
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/app/target \
+    cargo chef cook --release --recipe-path recipe.json -p t2t
+COPY Cargo.toml Cargo.lock ./
+COPY crates/ crates/
+# migrations/ is only needed here (not in planner/cook above) — sqlx::migrate!() embeds it
+# into the binary at compile time, it's never read from disk at runtime.
+COPY migrations/ migrations/
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/app/target \

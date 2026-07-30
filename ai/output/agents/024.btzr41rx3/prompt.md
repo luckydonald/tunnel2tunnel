@@ -1,0 +1,1 @@
+Background command "time docker build --target rust-builder -t t2t-rust-builder-test . 2>&1 | tail -100" completed (exit code 0)

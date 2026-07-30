@@ -1,0 +1,1 @@
+Background command "time docker build -t t2t-full-test . 2>&1 | tail -40" completed (exit code 0)

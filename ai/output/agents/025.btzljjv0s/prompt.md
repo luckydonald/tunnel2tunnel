@@ -1,0 +1,1 @@
+Background command "echo '// cache-test comment' >> crates/t2t/src/main.rs && time docker build --target rust-builder -t t2t-rust-builder-test3 . 2>&1 | tail -60" completed (exit code 0)
