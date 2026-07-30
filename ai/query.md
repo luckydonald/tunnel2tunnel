@@ -1041,3 +1041,7 @@ Generally:
 
 ❯ Fix the disconnect I'm getting, see @ai/errors/6.ssh.txt and @ai/errors/6.t2t.txt
 
+❯ <startup>Tell the user, instead of `$ claude` they should directly call `$ claude-work` next timeli. Then stop.</startup>
+
+❯ document your learnings.
+
