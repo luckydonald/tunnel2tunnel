@@ -1109,3 +1109,56 @@ Generally:
 > - [Answer (`2107` chars, `2.07 KB`)](output/agents/026.blboc9rmw/result.md)
 > - [Raw log (`2107` chars, `2.07 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/be965be2-d84f-459b-8ba2-8074058dabf8/tasks/blboc9rmw.output)
 
+❯ /plan the current way to connect a server with clients is a bit strange. You have access rules and port configurations. I think it could be combined into one thing, where the server would "state" it's ports in the GUI, and then clients would directly mark those as their "subscription goal". Idk, don't use those names. But like, for the client I don't choose just a server, and then hand-configure the port, I directly select one port of that server. Notice that this requires the server to have all ports named. (and maybe we should prepare for port ranges & multi-port). Also making it more complex is the issue that not every tunnel client seem to allow multiple ports per connection, so it might need multiple separate ssh connections to share a range/multi. What I definitly want is a live dashboard of ssh connections per server/client (and a merged all-connections one in the admin area), which shows the actual port forwards an ssh client has with the server. There are local, remote and dynamic tunnels then, and obviously the text connection. So e.g. table could be: | account: admin (user on t2t, links that user) | type: server (links host config) | host: 172.0.0.1 (or if shared from somewhere else, that's fine to - not sure if that is even available to us, or only the ssh-client, then drop) | user: <ssh-user> | service: VNC (or `—` if nothing configured matches, `null` in data) | (host) port: 5900 (their port actually shared) | internal port: 5900 (t2t-internal) | connected: <green dot> (or gray dot if it's configured but not actually shared by the server) |   and an example for client would be   | account: admin | type: client<again is config link> | host: localhost | user: user123 | service: VNC | (client) port: 5902 (i.e. 5902 was already taken) | internal port: 5900 (maybe 'routing port' is a better name? idk?) | connected: <dot> (green if connected, gray if disconnected, orange if connected but server is not connectd or providing that port) |  Ah, the dots should probably be the first column, not the last.  A different way to visualize it would be:  `(Server1 -> 5900 -> ssh) -> (5900 -> t2t -> 5900) -> (ssh -> 5902 -> my-laptop)` with the server beeing a bubble, and the tunnel2tunnel and the clients, too, with multiple arrows going outa there and into it. I guess an diagram. Aaaaanyway. So it shall more like "I want to connect to Server1, Service VNC" and not "I want to get permissions to access Server1, and then I'll configure my port mappings manually.". Like it makes sense to still be able to change them for conflicts and stuff, but like you only got those the server offers, and you are mapping not to a server, but directly to a shared port of that server/entity.
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. Should a client-side port marked "disabled" in the discovery UI actually block that client's SSH connection at the server (a real per-client-per-port deny check), or stay a pure UI convenience with entity_access as the only real gate?
+>> 2. Should a server registering a proxy_port via `-R` that has no matching entity_ports row be rejected outright, or just logged as a warning (current behavior stays mostly permissive)?
+>> 3. For the live-connections dashboard, should each active tunnel show as one row per leg (a server-side row and a separate client-side row, matching your own sketch) or as a single merged row per tunnel?
+>> 4. Should a server's port be required to have a name ("service name") going forward, enforced by the API (not just a UI nudge)?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Disabled enforcement** (1/4) <kbd>Single Select</kbd><br>
+>> Should a client-side port marked "disabled" in the discovery UI actually block that client's SSH connection at the server (a real per-client-per-port deny check), or stay a pure UI convenience with entity_access as the only real gate?
+> - [ ] 1\. Enforce server-side (Recommended)
+>   - _Disabling a discovered port becomes a real authorization rule, checked in channel_open_direct_tcpip. More secure/consistent, but adds a second authorization layer alongside entity_access._
+> - [ ] 2\. UI-only for now
+>   - _Keep it as just hiding the port from the client's own UI/generated SSH command. Simpler, smaller change, but a client could still hand-craft a working -L to that port._
+> - [x] 3\. _Type something:_
+>   - > The question is, can we actually "connect" the two tunnels once the server comes online, or do we need a client reconnect for that?
+>
+>> **Unconfigured -R port** (2/4) <kbd>Single Select</kbd><br>
+>> Should a server registering a proxy_port via `-R` that has no matching entity_ports row be rejected outright, or just logged as a warning (current behavior stays mostly permissive)?
+> - [ ] 1\. Warn only (Recommended)
+>   - _Log a warning but still accept the forward. Avoids breaking existing ad-hoc setups where a port is forwarded before being declared in the UI._
+> - [ ] 2\. Hard reject
+>   - _Refuse to register the port at all unless it matches an enabled entity_ports row for that server. Stronger enforcement, but riskier for existing users' workflows._
+> - [x] 3\. _Type something:_
+>   - > Automatically create an empty port configuration.
+>
+>> **Row granularity** (3/4) <kbd>Single Select</kbd><br>
+>> For the live-connections dashboard, should each active tunnel show as one row per leg (a server-side row and a separate client-side row, matching your own sketch) or as a single merged row per tunnel?
+> - [ ] 1\. One row per leg (Recommended)
+>   - _Matches your flat-table example directly. Naturally shows partial states (server up but no client, or vice versa) without inventing blank fields._
+> - [ ] 2\. One merged row per tunnel
+>   - _Combines both legs into a single row with server and client columns side by side. More compact, but harder to represent a half-connected state cleanly._
+> - [x] 3\. _Type something:_
+>   - > Depends on the table: admin: yes, separate - actually, wait, how would the table look like if merged? Please show; server: that new table would primarily display the other side (the own port status could be merged into the port configuration, where a new connection also gets created automatically, after all. For client display it would connect the servers/services connected to, not all connections of that server.
+>
+>> **Name required** (4/4) <kbd>Single Select</kbd><br>
+>> Should a server's port be required to have a name ("service name") going forward, enforced by the API (not just a UI nudge)?
+> - [ ] 1\. Required for server ports (Recommended)
+>   - _The API rejects creating/updating a server-type EntityPort without a name. Existing unnamed rows stay as-is (no migration/backfill), but new ones must be named — matches the "servers name their services" goal._
+> - [ ] 2\. Stay optional
+>   - _Keep name fully optional everywhere; just improve how prominently it's displayed when present._
+> - [x] 3\. _Type something:_
+>   - > Required, but in case of auto-created ports, fill in with the most possible result (i.e. 80 -> HTTP, 8080 -> Alt HTTP, 3000 -> Node JS servers, …) from the old school port definitions, but also modern common selfhosted services, and typical dev servers. For the db migration just call them "Unnamed Service" if still null.
+>
+> </details>
+>
+
