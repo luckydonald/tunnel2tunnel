@@ -52,16 +52,19 @@ ALTER TABLE entity_access ADD COLUMN port_config_id UUID REFERENCES port_configs
 This is deliberately layered under `port_subscriptions`, not a replacement for it:
 - `entity_access` (extended) answers **"is entity/friend B even allowed to reach this, and how much of it"** — whole entity, or just one specific port — reusing the existing `subject_type` machinery (`public_lite`/`all_mine`/`all_user_entities`/`entity`) so friendship-driven sharing ("share all my entities," "a few selected entities," "only specific ports") all go through the same rule table, just with `port_config_id` set or left null.
 - `port_subscriptions` answers **"did B actually opt in, and what local port do they want"** — the explicit, per-entity "route this to me" registration. Creating a subscription requires the caller to currently satisfy an `entity_access` check (whole-entity or port-scoped) for the target port_config's owner; this is enforced both at subscription-creation time (web route) and again live at SSH-connect time (see below), so revoking access also revokes function even if a stale subscription row is left behind.
+- **Same-account access is implicit and bypasses `entity_access` entirely**: whenever `client_user_id == owner_user_id`, both the subscription-creation check and the SSH-layer live re-check short-circuit to "allowed" without consulting `entity_access` at all — you always have access to your own services on your own other entities, with nothing to configure. `entity_access` rows only ever matter for cross-account sharing (friends/public).
 
 Migration `014_port_configs_subscriptions.sql` performs all three changes above (rename+cleanup port_configs, drop `entity_port_discovery_rules`, create `port_subscriptions`, extend `entity_access`) as one clean-break migration — no data-preservation path, matching the pre-production state of this feature.
 
-### `entity.type` stops gating capability
+### `entity.type` is removed from the database — badges are computed
 
-- Migration keeps the `CHECK(type IN ('server','client'))` column as-is (still a two-valued tag), but every place in the backend/frontend that currently *branches behavior* on it gets removed:
-  - `list_reachable_servers`'s `if client.entity_type != "client" { BadRequest }` guard is deleted — any entity can browse subscribable port_configs.
-  - Port-config creation is no longer implicitly "a server thing" — any entity can declare one.
-  - `tcpip_forward`/`channel_open_direct_tcpip` in `tunnel2tunnel-ssh` already don't check `entity_type` today — no change needed there.
-- Frontend: the separate "Servers" and "Clients" list pages/nav items merge into a single "Entities" list, with `type` shown as a small tag/filter chip (per your answer). `entityTypeLabel` in `labels.ts` is kept as a plain label for that tag.
+Rather than keeping `type` as an inert tag column, migration `015_drop_entity_type.sql` drops `entities.type` entirely (`ALTER TABLE entities DROP COLUMN type`), along with the now-meaningless `entity_type` param in `CreateEntityBody`/`UpdateEntityBody`. "Server"/"Client" become **computed booleans** in the entity response, derived live from what the entity actually owns:
+- `is_server: bool` — this entity owns at least one `port_configs` row.
+- `is_client: bool` — this entity owns at least one `port_subscriptions` row.
+
+An entity can show both badges, one, or neither (a freshly-created entity with nothing configured yet shows neither). `crates/tunnel2tunnel-web/src/routes/entities.rs`'s `EntityResponse` gains these two fields (computed via a `COUNT(...) > 0` subquery or a join, alongside the existing `online`/`last_disconnected_at` derivation pattern).
+
+Frontend: `frontend/src/pages/EntityDetailPage.vue`'s create-entity form drops the type selector entirely — an entity starts as neither role and becomes one/both organically as services/subscriptions are added. `entityTypeLabel` in `labels.ts` is repurposed as a label for the *computed* badge, not a stored field. The separate "Servers"/"Clients" nav items and pages become the same merged "Entities" list page, reached via `/servers` and `/clients` routes that just pre-apply a `role=server`/`role=client` filter (query param) over the same list component/endpoint — so the quick-access muscle memory from today's separate pages still works, it's just a filtered view now instead of a distinct stored dimension.
 
 ## Backend enforcement (SSH layer)
 
@@ -69,11 +72,11 @@ Migration `014_port_configs_subscriptions.sql` performs all three changes above 
 
 - **`tcpip_forward`** (owner entity registers `-R proxy_port:...`): unchanged mechanically (still inserts into `server_slots` keyed by `(entity_id, proxy_port)`), but now auto-creates a `port_configs` row when none exists for `(entity_id, port)` — `local_port = port`, `proxy_port = port`, `host = "localhost"`, `enabled = true`, `name = guess_service_name(port).unwrap_or("Unnamed Service")` (new `crates/tunnel2tunnel-core/src/port_names.rs`, a static lookup table covering classic well-known ports plus common self-hosted/dev services — VNC, Redis, Postgres, Grafana, Jellyfin, Home Assistant, Plex, Node dev servers, etc.). This means running `-R 5900:...` with no prior UI setup immediately produces a real, named, enabled service — nothing is ever left in an "unconfigured port" limbo state.
 - **`channel_open_direct_tcpip`** (a subscriber's `-L` fires a connection attempt): resolves the target entity as today (UUID or `entity_access.hostname` alias), then:
-  1. Look up the matching enabled `port_configs` row for `(target_entity_id, port_to_connect)` — reject if none (distinct log line from "server offline").
-  2. Look up an **enabled** `port_subscriptions` row for `(that port_config.id, client_entity.id)` — reject if none. This is the actual "did this entity opt in" check.
-  3. Re-verify `entity_access` (extended, port-scoped-aware) live for this exact `(owner_entity_id, port_config_id, client_entity_id, client_user_id)` — reject if the access has since been revoked, even though a subscription row still exists. This keeps the "always live-checked, no caching" property the codebase already relies on elsewhere.
-  4. Only then fall through to the existing `server_slots` lookup and channel bridging.
-- Because `channel_open_direct_tcpip` re-fires independently on every individual connection through an already-open `-L` tunnel (not once per SSH session), none of this requires a subscriber to reconnect when a server comes online or a grant changes — the next attempt just re-evaluates all three checks fresh.
+  1. Look up the matching enabled `port_configs` row for `(target_entity_id, port_to_connect)` — reject immediately if none (this is a real config/authorization miss, distinct from "server offline").
+  2. Look up an **enabled** `port_subscriptions` row for `(that port_config.id, client_entity.id)` — reject immediately if none. This is the actual "did this entity opt in" check.
+  3. Skip straight to step 4 if `client_user_id == owner_user_id` (same account); otherwise re-verify `entity_access` (extended, port-scoped-aware) live for this exact `(owner_entity_id, port_config_id, client_entity_id, client_user_id)` — reject immediately if the access has since been revoked, even though a subscription row still exists.
+  4. **Server-liveness is retried, not rejected outright**: look up `server_slots` for `(target_entity_id, proxy_port)`. If missing, poll on a short interval (e.g. every 250ms) up to a bounded timeout (e.g. 10-15s, worth making configurable) before giving up — a subscriber whose service is correctly configured and authorized but whose target server just hasn't registered yet (races on startup, a server mid-restart) gets bridged automatically the moment it appears, no reconnect needed. Only after the timeout elapses with still no `server_slots` entry does this step reject.
+- Steps 1-3 stay fail-fast because they're genuine authorization/config problems that won't resolve themselves by waiting. Step 4 is the only "wait and hope" case, matching the requirement that a subscriber can stay parked on a not-yet-live service and have it start working transparently. Because `channel_open_direct_tcpip` re-fires independently on every individual connection through an already-open `-L` tunnel (not once per SSH session), even a request that times out at step 4 doesn't require reconnecting — the next inbound connection to the subscriber's local port just tries again from scratch.
 
 `crates/tunnel2tunnel-core/src/models/`:
 - Rename `entity_port.rs`'s model to match the renamed table (or keep the file name, just update the struct/queries) — drop `server_entity_id` field, add `find_enabled_by_entity_and_proxy_port(pool, entity_id, proxy_port)`.
@@ -95,6 +98,97 @@ Migration `014_port_configs_subscriptions.sql` performs all three changes above 
 - "Servers"/"Clients" nav items and list pages merge into a single "Entities" list page, `type` rendered as a small tag/filter chip.
 - `frontend/src/api/entities.ts`: `EntityPort` → `PortConfig` type (drop `server_entity_id`), new `PortSubscription`/`SubscribableOwner` types replacing `DiscoveredPort`/`ReachableServer`; API functions renamed to match the new routes.
 
+## GUI mockups
+
+> ```
+> ── Entities ──────────────────────────────────────────────────────────────
+> Filter:  ( All )  ( Server )  ( Client )              🔍 [ search... ]
+> ────────────────────────────────────────────────────────────────────────
+>  Name              Badges              Online   Services   Subscriptions
+>  ────────────────  ──────────────────  ───────  ─────────  ─────────────
+>  home-nas          🖧 Server            🟢       3          0
+>  my-laptop         💻 Client            🟢       0          2
+>  build-box         🖧 Server 💻 Client   🟢       1          1
+>  old-vps           🖧 Server            ⚪       2          0
+>                                                          [+ New entity]
+> ```
+> `/servers` = this same list/component with the filter preset to "Server"; `/clients` → "Client". Badges (`is_server`/`is_client`) are computed by the backend, not stored.
+
+> ```
+> ── Entities / build-box ───────────────────────────────────────────────
+> build-box   🖧 Server  💻 Client   🟢 Online
+> A dev box that shares its local Postgres and subscribes to VNC.
+>                                                       [Delete entity]
+>
+> ── SSH command ─────────────────────────────────────────────────────────
+> ssh -i ~/.ssh/t2t_build-box \
+>   -R 5432:localhost:5432 \        # Postgres — offered by build-box
+>   -L 5901:home-nas:5900 \         # VNC — subscribed from home-nas
+>   3f9a1c2e-...@t2t.example.com -p 2222
+>
+> ── My services ──────────────────────────────────────── [+ Add service] ─
+>  ●   Service    Proxy port  Local port  Host        Subscribers      ⋮
+>  🟢  Postgres   5432        5432        localhost   1 connected     ✎ ×
+>  ⚪  Redis(off) 6379        6379        localhost   0                ✎ ×
+>      ▸ Postgres subscribers: my-laptop (alice), local port 5433, 12m
+>
+>  + Add service:
+>    Name*      [ VNC                 ]   (required — shown to subscribers)
+>    Proxy port [ 5900 ]  Local port [ 5900 ]  Host [ localhost        ]
+>    Enabled    [x]                              [ Cancel ]  [ Add ]
+>
+> ── My subscriptions ─────────────────────────────────────────────────────
+>  Browse services you can connect to, and pick your local port.
+>
+>  ▾ home-nas  🖧 Server
+>     🟢  VNC     proxy 5900  → my local port [ 5901 ]   [Unsubscribe]
+>     ⚪  Samba    proxy 445   →                          [ Subscribe ]
+>
+>  ▾ old-vps  🖧 Server, offline
+>     🟠  Postgres proxy 5432 → my local port [ 5555 ]   [Unsubscribe]
+>        server is offline — will connect automatically once it's back
+>
+> ── Access rules — who else can subscribe to my services ────────────────
+> Your own entities always have access to each other automatically.
+> Rules below are only needed to share with other accounts.
+>
+>  Grant                 Scope              Hostname alias    ⋮
+>  Anyone (public_lite)  Whole entity       nas.local         ×
+>  Friend: bob           Only "Postgres"    —                 ×
+>  All my own entities   Whole entity       —                 ×
+>                                                    [+ Add access rule]
+>
+>  + Add access rule:
+>    Grant to  [ One specific entity ▾ ]  ...entity picker...
+>    Scope     ( Whole entity )  ( Only this service: [ Postgres ▾ ] )
+>    Hostname alias (optional) [                            ]
+>                                          [ Cancel ]  [ Add rule ]
+> ```
+> Status-dot legend: 🟢 live now · ⚪ configured/available, not live · 🟠 subscribed, but the other side isn't live yet (includes the "waiting, will retry" case from the SSH-layer retry behavior above).
+
+> ```
+> ── Dashboard ─────────────────────────────────────────────────────────────
+> Welcome, alice.
+>
+> Your live connections
+>  ●   Entity      Role         Service    Port    Since
+>  🟢  home-nas    Server leg   VNC        5900    2h 3m
+>  🟢  my-laptop   Client leg   VNC        5901    2h 3m
+>  🟠  my-laptop   Client leg   Postgres   5555    waiting…
+>                                                        [See all →]
+> ```
+
+> ```
+> ── Admin / Live connections ─────────────────────────────────────────────
+> Filter:  [ user ▾ ]  [ role ▾ ]  [ service ▾ ]
+>
+>  ●   Account   Entity       Role (leg)   Service    Port   Peer IP  Since
+>  🟢  alice     home-nas     Server leg   VNC        5900   —        2h 3m
+>  🟢  alice     my-laptop    Client leg   VNC        5901   1.2.3.4  2h 3m
+>  🟠  alice     my-laptop    Client leg   Postgres   5555   1.2.3.4  waiting…
+>  ⚪  bob       build-box    Server leg   Redis      6379   —        —
+> ```
+
 ## Live connections dashboard
 
 Unchanged in spirit from the earlier draft, just built on the new tables:
@@ -106,15 +200,15 @@ Unchanged in spirit from the earlier draft, just built on the new tables:
 
 ## Sequencing
 
-1. **Schema + core models**: migration `014_port_configs_subscriptions.sql`; update `tunnel2tunnel-core` models (`port_config.rs`, new `port_subscription.rs`, extended `entity_access.rs`).
-2. **SSH-layer enforcement**: `tcpip_forward` auto-create + naming, `channel_open_direct_tcpip`'s three-step check (port_config match → subscription → live access re-check).
-3. **Web routes**: new/renamed CRUD + browse/subscribe endpoints, extended access-rule creation.
-4. **Frontend restructure**: merged Entities list, rebuilt `EntityDetailPage.vue` (My services / My subscriptions), reworked `SshCommandDisplay.vue`, access-rule scope picker.
-5. **Live connections dashboard**: backend tracking + routes, then the three frontend surfaces (per-entity augmentation ×2, admin page).
+1. **Schema + core models**: migration `014_port_configs_subscriptions.sql` (rename/clean up `entity_ports` → `port_configs`, drop `entity_port_discovery_rules`, create `port_subscriptions`, extend `entity_access` with `port_config_id`) and `015_drop_entity_type.sql` (drop `entities.type`); update `tunnel2tunnel-core` models (`port_config.rs`, new `port_subscription.rs`, extended `entity_access.rs`, computed `is_server`/`is_client` query support).
+2. **SSH-layer enforcement**: `tcpip_forward` auto-create + naming, `channel_open_direct_tcpip`'s four-step check (port_config match → subscription → same-account-bypass/live access re-check → bounded-retry server-liveness lookup).
+3. **Web routes**: new/renamed CRUD + browse/subscribe endpoints, extended access-rule creation, `EntityResponse`'s computed badge fields, `role=server|client` list filtering.
+4. **Frontend restructure**: merged Entities list (+ `/servers`/`/clients` as filtered views), rebuilt `EntityDetailPage.vue` (My services / My subscriptions / access-rule scope picker per the mockups above), reworked `SshCommandDisplay.vue`, entity-creation form drops the type selector.
+5. **Live connections dashboard**: backend tracking + routes, then the three frontend surfaces (per-entity augmentation ×2, Dashboard, admin page) per the mockups above.
 
 Steps 1-3 are a connected unit (schema and enforcement should land together so nothing references half-migrated tables). Step 4 depends on step 3's route shapes. Step 5 depends on steps 1-3 existing (status dots are meaningless without real enforcement) but is otherwise independent of step 4's UI details.
 
 ## Verification
 
-- Backend: exercise the three-step SSH check manually with local SSH clients — (a) a service owner doing `-R` on an unconfigured port confirms auto-create+naming; (b) a subscriber doing `-L` with no subscription row confirms rejection; (c) with a subscription but after the granting `entity_access` row is deleted confirms live re-check rejection; (d) the normal happy path. `cargo test` for the new model methods.
-- Frontend: `npm run build` for type-checking; manually walk through an entity that both owns a port_config and holds a subscription to another entity's port_config, confirming the generated SSH command contains both a `-R` and a `-L` flag, and that the merged Entities list / access-rule port-scope picker work end-to-end in a browser.
+- Backend: exercise the four-step SSH check manually with local SSH clients — (a) a service owner doing `-R` on an unconfigured port confirms auto-create+naming; (b) a subscriber doing `-L` with no subscription row confirms immediate rejection; (c) with a subscription but after the granting `entity_access` row is deleted (cross-account case) confirms live re-check rejection; (d) a same-account subscription works with zero `entity_access` rows configured; (e) starting the subscriber before the server confirms the bounded retry bridges the tunnel once the server registers, without restarting the SSH session; (f) the normal happy path. `cargo test` for the new model methods.
+- Frontend: `npm run build` for type-checking; manually walk through an entity that both owns a port_config and holds a subscription to another entity's port_config, confirming the generated SSH command contains both a `-R` and a `-L` flag, that both badges render correctly, that `/servers`/`/clients` filter as expected, and that the access-rule port-scope picker and My-services/My-subscriptions sections match the mockups above end-to-end in a browser.

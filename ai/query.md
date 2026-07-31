@@ -1249,3 +1249,5 @@ Generally:
 > </details>
 >
 
+❯ Server port shall be optionally connectable (so switch the mode not reject but allow a "client" connection to stay online and hope it will work eventually TM). The new GUI for adding a port (server) or subscribing to a service (client) is not described yet. Note that you always have access to your own services to configure a port usage there. The old server/client shall be removed from the database, instead only be computed badges in the fronend (and a entity can have both). This should be still be filterable for, and the old server/client lists shall be a route still, already applying that filter for you, so it's quicker & easier to find what you're looking for. Please create a full markdown mock of how the details page would look like in a `> `-backquoted section, and for the other important new pages as well.
+
