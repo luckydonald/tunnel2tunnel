@@ -1,29 +1,31 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { RouterLink } from 'vue-router'
-import type { Entity, EntityPort, ReachableServer } from '@/api/entities'
+import type { Entity, PortConfig, PortSubscription } from '@/api/entities'
+
+export interface OwnSubscriptionRow {
+  subscription: PortSubscription
+  service: PortConfig
+  ownerId: string
+  ownerName: string | null
+}
 
 const props = withDefaults(defineProps<{
   entity: Entity
-  ports: EntityPort[]
+  ports: PortConfig[]
+  /** This entity's own port_subscriptions, each paired with the service + owning entity it targets. */
+  subscriptions?: OwnSubscriptionRow[]
   filename?: string
   t2tHost?: string
   t2tSshPort?: number
-  reachableServers?: ReachableServer[]
 }>(), {
   filename: 't2t_key',
   t2tSshPort: 2222,
-  reachableServers: () => [],
+  subscriptions: () => [],
 })
-
-const emit = defineEmits<{
-  'discovery-state-change': [serverPortId: string, state: 'auto' | 'enabled' | 'disabled', localPort?: number]
-}>()
 
 const hoveredPortId = ref<string | null>(null)
 const nonInteractive = ref(false)
 const t2tHost = computed(() => props.t2tHost ?? window.location.hostname)
-const servers = computed(() => props.reachableServers ?? [])
 
 // Connection-field hover linking between the manual-config block and the ssh command line
 type ConnectionField = 'user' | 'host' | 'port' | 'key'
@@ -32,109 +34,41 @@ function isFieldHovered(field: ConnectionField): boolean {
   return hoveredField.value === field
 }
 
-// Client-side EntityPort IDs managed by "enabled" discovery rules
-const enabledDiscoveryPortIds = computed(() => {
-  const ids = new Set<string>()
-  for (const server of servers.value) {
-    for (const dp of server.ports) {
-      if (dp.discovery_state === 'enabled' && dp.client_port_id) {
-        ids.add(dp.client_port_id)
-      }
-    }
-  }
-  return ids
-})
-
-// Own ports that are not managed by a discovery rule (the "normal" ones)
-const enabledPorts = computed(() =>
-  props.ports.filter(p => p.enabled && !enabledDiscoveryPortIds.value.has(p.id))
-)
-
-// Structured -L/-R forward fields, shared by the ssh command line and the manual-config tables
+// Structured -L/-R forward fields, shared by the ssh command line and the manual-config table
 interface TunnelFields { type: 'Local' | 'Remote'; bindPort: number; toHost: string; toPort: number }
-
-function portFields(port: EntityPort): TunnelFields {
-  if (props.entity.entity_type === 'server') {
-    return { type: 'Remote', bindPort: port.proxy_port, toHost: port.host, toPort: port.local_port }
-  }
-  if (port.server_entity_id) {
-    const server = servers.value.find(s => s.id === port.server_entity_id)
-    return { type: 'Local', bindPort: port.local_port, toHost: server?.hostname ?? port.server_entity_id, toPort: port.proxy_port }
-  }
-  return { type: 'Local', bindPort: port.local_port, toHost: '<server>', toPort: port.proxy_port }
-}
+interface TunnelRow extends TunnelFields { id: string; name: string; flag: string }
 
 function flagString(fields: TunnelFields): string {
   const prefix = fields.type === 'Remote' ? '-R' : '-L'
   return `${prefix} ${fields.bindPort}:${fields.toHost}:${fields.toPort}`
 }
 
-function portFlag(port: EntityPort): string {
-  return flagString(portFields(port))
-}
+// Every owned, enabled service contributes a -R flag (this entity offers it).
+const ownedRows = computed((): TunnelRow[] =>
+  props.ports.filter(p => p.enabled).map(port => {
+    const fields: TunnelFields = { type: 'Remote', bindPort: port.proxy_port, toHost: port.host, toPort: port.local_port }
+    return { id: port.id, name: port.name, ...fields, flag: flagString(fields) }
+  }),
+)
 
-// Extra -L flags contributed by auto/enabled discovered ports
-interface DiscoveryFlag extends TunnelFields { flag: string; portId: string; name: string | null }
-const discoveryFlags = computed((): DiscoveryFlag[] => {
-  const flags: DiscoveryFlag[] = []
-  for (const server of servers.value) {
-    const display = server.hostname ?? server.id
-    for (const dp of server.ports) {
-      if (dp.discovery_state === null) {
-        const fields: TunnelFields = { type: 'Local', bindPort: dp.local_port, toHost: display, toPort: dp.proxy_port }
-        flags.push({ ...fields, flag: flagString(fields), portId: dp.id, name: dp.name })
-      } else if (dp.discovery_state === 'enabled' && dp.client_port_id) {
-        const clientPort = props.ports.find(p => p.id === dp.client_port_id)
-        const localPort = clientPort?.local_port ?? dp.local_port
-        const fields: TunnelFields = { type: 'Local', bindPort: localPort, toHost: display, toPort: dp.proxy_port }
-        flags.push({ ...fields, flag: flagString(fields), portId: dp.id, name: dp.name })
-      }
+// Every own, enabled subscription contributes a -L flag (this entity subscribes to it).
+const subscribedRows = computed((): TunnelRow[] =>
+  props.subscriptions.filter(s => s.subscription.enabled).map(s => {
+    const fields: TunnelFields = {
+      type: 'Local',
+      bindPort: s.subscription.subscriber_local_port,
+      toHost: s.ownerName ?? s.ownerId,
+      toPort: s.service.proxy_port,
     }
-  }
-  return flags
-})
+    return { id: s.subscription.id, name: s.service.name, ...fields, flag: flagString(fields) }
+  }),
+)
 
-// Combined list backing the manual/GUI-client tunnel-setup table
-interface ManualTunnel extends TunnelFields { id: string; name: string | null }
-const manualTunnels = computed((): ManualTunnel[] => {
-  const rows: ManualTunnel[] = enabledPorts.value.map(port => ({ id: port.id, name: port.name, ...portFields(port) }))
-  for (const df of discoveryFlags.value) {
-    rows.push({ id: df.portId, name: df.name, type: df.type, bindPort: df.bindPort, toHost: df.toHost, toPort: df.toPort })
-  }
-  return rows
-})
+// Combined rows for the ssh command line and the manual/GUI-client tunnel-setup table.
+const allRows = computed((): TunnelRow[] => [...ownedRows.value, ...subscribedRows.value])
 
-// All rows share the same forward direction for a given entity — used for the once-per-section explainer
-const tunnelDirection = computed<'Local' | 'Remote'>(() => (props.entity.entity_type === 'server' ? 'Remote' : 'Local'))
-
-function isHovered(portId: string): boolean {
-  return hoveredPortId.value === portId
-}
-
-// Inline "pin to enabled" form state
-const pinningPortId = ref<string | null>(null)
-const pinLocalPort = ref<number>(0)
-
-function startPin(portId: string, defaultLocalPort: number): void {
-  pinningPortId.value = portId
-  pinLocalPort.value = defaultLocalPort
-}
-
-function confirmPin(portId: string): void {
-  emit('discovery-state-change', portId, 'enabled', pinLocalPort.value)
-  pinningPortId.value = null
-}
-
-function cancelPin(): void {
-  pinningPortId.value = null
-}
-
-function toggleDiscovery(portId: string, currentState: string | null): void {
-  if (currentState === 'disabled') {
-    emit('discovery-state-change', portId, 'auto')
-  } else {
-    emit('discovery-state-change', portId, 'disabled')
-  }
+function isHovered(rowId: string): boolean {
+  return hoveredPortId.value === rowId
 }
 
 // Copy-to-clipboard for the manual-config code chips
@@ -149,68 +83,6 @@ async function copyValue(field: string, value: string): Promise<void> {
 <template>
   <div class="ssh-cmd-display">
 
-    <!-- Discovery section: reachable server ports (client entities only) -->
-    <div v-if="entity.entity_type === 'client' && servers.length" class="discovery-section">
-      <div class="discovery-header">Authorized server ports</div>
-      <div v-for="server in servers" :key="server.id" class="discovery-server">
-        <div class="server-name">
-          {{ server.name ?? server.id.slice(0, 13) + '…' }}
-          <span v-if="server.hostname" class="server-hostname">{{ server.hostname }}</span>
-          <code v-else class="server-uuid">{{ server.id }}</code>
-        </div>
-        <div v-if="server.ports.length" class="discovery-ports">
-          <div
-            v-for="dp in server.ports"
-            :key="dp.id"
-            class="discovery-port-row"
-            :class="{ 'is-disabled': dp.discovery_state === 'disabled', 'is-auto': dp.discovery_state === null, 'is-enabled': dp.discovery_state === 'enabled' }"
-          >
-            <input
-              type="checkbox"
-              :checked="dp.discovery_state !== 'disabled'"
-              class="discovery-check"
-              @change="toggleDiscovery(dp.id, dp.discovery_state)"
-            />
-            <code class="dp-ports">{{ dp.local_port }}→{{ dp.proxy_port }}</code>
-            <span class="dp-name">{{ dp.name ?? '' }}</span>
-            <span v-if="dp.discovery_state === 'enabled'" class="dp-badge enabled">pinned</span>
-            <span v-else-if="dp.discovery_state === 'disabled'" class="dp-badge disabled">off</span>
-            <span v-else class="dp-badge auto">auto</span>
-
-            <!-- Pin form (auto → enabled) -->
-            <template v-if="dp.discovery_state === null">
-              <template v-if="pinningPortId === dp.id">
-                <input
-                  v-model.number="pinLocalPort"
-                  type="number"
-                  class="pin-input"
-                  min="1"
-                  max="65535"
-                  placeholder="local port"
-                  @keyup.enter="confirmPin(dp.id)"
-                  @keyup.esc="cancelPin"
-                />
-                <button class="btn-pin-ok" @click="confirmPin(dp.id)">Pin</button>
-                <button class="btn-icon" @click="cancelPin">✕</button>
-              </template>
-              <button v-else class="btn-icon btn-pin" title="Pin as fixed port" @click="startPin(dp.id, dp.local_port)">
-                📌
-              </button>
-            </template>
-
-            <!-- Reset to auto -->
-            <button
-              v-if="dp.discovery_state !== null"
-              class="btn-icon btn-reset"
-              title="Reset to auto"
-              @click="emit('discovery-state-change', dp.id, 'auto')"
-            ><kbd>x</kbd></button>
-          </div>
-        </div>
-        <p v-else class="no-server-ports">No enabled ports.</p>
-      </div>
-    </div>
-
     <!-- SSH command block -->
     <div class="cmd-block">
       <div class="cmd-header">
@@ -222,22 +94,13 @@ async function copyValue(field: string, value: string): Promise<void> {
         <span class="cmd-hint">Disables text channel providing status updates.</span>
       </div>
       <pre class="cmd-text">ssh <template v-if="nonInteractive">-N \
-  </template>-i <span class="cmd-flag" :class="{ 'is-hovered': isFieldHovered('key') }" @mouseenter="hoveredField = 'key'" @mouseleave="hoveredField = null">~/.ssh/{{ filename }}</span><template v-for="port in enabledPorts" :key="port.id"> \
-  <RouterLink
-    v-if="entity.entity_type === 'client' && port.server_entity_id"
-    :to="'/entities/' + port.server_entity_id + '#ports'"
+  </template>-i <span class="cmd-flag" :class="{ 'is-hovered': isFieldHovered('key') }" @mouseenter="hoveredField = 'key'" @mouseleave="hoveredField = null">~/.ssh/{{ filename }}</span><template v-for="row in allRows" :key="row.id"> \
+  <span
     class="cmd-flag"
-    :class="{ 'is-hovered': isHovered(port.id) }"
-    @mouseenter="hoveredPortId = port.id"
+    :class="{ 'is-hovered': isHovered(row.id) }"
+    @mouseenter="hoveredPortId = row.id"
     @mouseleave="hoveredPortId = null"
-  >{{ portFlag(port) }}</RouterLink><span
-    v-else
-    class="cmd-flag"
-    :class="{ 'is-hovered': isHovered(port.id) }"
-    @mouseenter="hoveredPortId = port.id"
-    @mouseleave="hoveredPortId = null"
-  >{{ portFlag(port) }}</span></template><template v-for="df in discoveryFlags" :key="df.portId"> \
-  <span class="cmd-flag cmd-flag-discovery">{{ df.flag }}</span></template> \
+  >{{ row.flag }}</span></template> \
   <span class="cmd-flag" :class="{ 'is-hovered': isFieldHovered('user') }" @mouseenter="hoveredField = 'user'" @mouseleave="hoveredField = null">{{ entity.id }}</span>@<span class="cmd-flag" :class="{ 'is-hovered': isFieldHovered('host') }" @mouseenter="hoveredField = 'host'" @mouseleave="hoveredField = null">{{ t2tHost }}</span> \
   -p <RouterLink to="/settings" class="port-link" :class="{ 'is-hovered': isFieldHovered('port') }" @mouseenter="hoveredField = 'port'" @mouseleave="hoveredField = null">{{ t2tSshPort }}</RouterLink></pre>
     </div>
@@ -331,13 +194,12 @@ async function copyValue(field: string, value: string): Promise<void> {
         <div class="manual-group">
           <div class="manual-group-title">Tunnel setup</div>
           <p class="manual-type-explainer">
-            <strong>Local</strong> — the client opens a port on your machine and forwards connections through the SSH server to a destination it can reach.
-            <strong>Remote</strong> — the SSH server opens a port on itself and forwards connections back to a destination your machine can reach.
+            <strong>Remote</strong> — services this entity offers: the SSH server opens a port on itself and forwards connections back to this machine.
+            <strong>Local</strong> — services this entity subscribes to: this machine opens a port and forwards connections through the SSH server to the owning entity.
             <strong>Dynamic</strong> — turns the whole connection into a SOCKS proxy instead of one fixed forward; most GUI clients offer it as a third type, but t2t doesn't use it.
-            This entity uses <strong>{{ tunnelDirection }}</strong> forwarding for every tunnel below.
           </p>
 
-          <table v-if="manualTunnels.length" class="ports-table manual-tunnel-table">
+          <table v-if="allRows.length" class="ports-table manual-tunnel-table">
             <thead>
               <tr>
                 <th>Type</th>
@@ -351,7 +213,7 @@ async function copyValue(field: string, value: string): Promise<void> {
             </thead>
             <tbody>
               <tr
-                v-for="row in manualTunnels"
+                v-for="row in allRows"
                 :key="row.id"
                 :class="{ 'is-hovered': isHovered(row.id) }"
                 @mouseenter="hoveredPortId = row.id"
@@ -366,7 +228,7 @@ async function copyValue(field: string, value: string): Promise<void> {
                   <code class="manual-tunnel-string">{{ row.bindPort }}:{{ row.toHost }}:{{ row.toPort }}</code>
                   <div class="manual-tunnel-legend">port · to-host · to-port</div>
                 </td>
-                <td>{{ row.name ?? '—' }}</td>
+                <td>{{ row.name }}</td>
               </tr>
             </tbody>
           </table>
@@ -376,37 +238,6 @@ async function copyValue(field: string, value: string): Promise<void> {
       </div>
     </details>
 
-    <table v-if="ports.length" class="ports-table">
-      <thead>
-        <tr>
-          <th></th>
-          <th v-if="entity.entity_type === 'server'">Proxy port</th>
-          <th v-else>Local port</th>
-          <th v-if="entity.entity_type === 'server'">Local port</th>
-          <th v-else>Server proxy port</th>
-          <th>Name</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr
-          v-for="port in ports"
-          :key="port.id"
-          :class="{ 'is-hovered': isHovered(port.id), 'is-disabled': !port.enabled }"
-          @mouseenter="hoveredPortId = port.id"
-          @mouseleave="hoveredPortId = null"
-        >
-          <td class="td-enabled">{{ port.enabled ? '●' : '○' }}</td>
-          <td>
-            <code>{{ entity.entity_type === 'server' ? port.proxy_port : port.local_port }}</code>
-          </td>
-          <td>
-            <code>{{ entity.entity_type === 'server' ? port.local_port : port.proxy_port }}</code>
-          </td>
-          <td>{{ port.name ?? '—' }}</td>
-        </tr>
-      </tbody>
-    </table>
-    <p v-else class="no-ports">No ports configured.</p>
   </div>
 </template>
 
@@ -415,142 +246,6 @@ async function copyValue(field: string, value: string): Promise<void> {
   display: flex;
   flex-direction: column;
   gap: 1rem;
-}
-
-// ── Discovery section ─────────────────────────────────────────────────────────
-
-.discovery-section {
-  border: 1px solid #2d3248;
-  border-radius: 6px;
-  overflow: hidden;
-}
-
-.discovery-header {
-  padding: 0.5rem 0.875rem;
-  background: #1a1d27;
-  border-bottom: 1px solid #2d3248;
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: #64748b;
-  font-weight: 600;
-}
-
-.discovery-server {
-  padding: 0.5rem 0.875rem;
-  border-bottom: 1px solid #1e2235;
-  &:last-child { border-bottom: none; }
-}
-
-.server-name {
-  font-size: 0.875rem;
-  color: #94a3b8;
-  font-weight: 500;
-  margin-bottom: 0.375rem;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.server-hostname {
-  font-size: 0.8125rem;
-  color: #64748b;
-}
-
-.server-uuid {
-  font-size: 0.75rem;
-  background: #1a1d27;
-  padding: 0.1em 0.35em;
-  border-radius: 3px;
-  color: #64748b;
-}
-
-.no-server-ports {
-  margin: 0;
-  font-size: 0.8125rem;
-  color: #475569;
-}
-
-.discovery-ports {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.discovery-port-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 0.8125rem;
-  padding: 0.1875rem 0;
-
-  &.is-disabled { opacity: 0.5; }
-}
-
-.discovery-check { cursor: pointer; }
-
-.dp-ports {
-  font-size: 0.8125rem;
-  background: #1a1d27;
-  padding: 0.1em 0.4em;
-  border-radius: 3px;
-  color: #7dd3fc;
-}
-
-.dp-name {
-  color: #94a3b8;
-  flex: 1;
-}
-
-.dp-badge {
-  font-size: 0.6875rem;
-  padding: 0.1em 0.45em;
-  border-radius: 4px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-
-  &.auto     { background: rgba(79,110,247,.15); color: #818cf8; }
-  &.enabled  { background: rgba(52,211,153,.15); color: #6ee7b7; }
-  &.disabled { background: rgba(100,116,139,.1); color: #64748b; }
-}
-
-.btn-icon {
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: 0.125rem 0.3rem;
-  border-radius: 3px;
-  color: #64748b;
-  font-size: 0.8125rem;
-  line-height: 1;
-
-  &:hover { color: #94a3b8; background: rgba(255,255,255,.06); }
-}
-
-.btn-pin:hover { color: #fbbf24; }
-.btn-reset:hover { color: #f87171; background: rgba(239,68,68,.1); }
-
-.btn-pin-ok {
-  padding: 0.2rem 0.5rem;
-  background: #4f6ef7;
-  border: none;
-  border-radius: 4px;
-  color: #fff;
-  font-size: 0.8125rem;
-  cursor: pointer;
-  &:hover { background: #3d5ce5; }
-}
-
-.pin-input {
-  width: 80px;
-  padding: 0.2rem 0.375rem;
-  background: #0f1117;
-  border: 1px solid #4f6ef7;
-  border-radius: 4px;
-  color: #e2e8f0;
-  font-size: 0.8125rem;
-  &:focus { outline: none; }
 }
 
 // ── SSH command block ─────────────────────────────────────────────────────────
@@ -642,10 +337,6 @@ async function copyValue(field: string, value: string): Promise<void> {
     border-bottom: 1px dotted #4f6ef7;
     &:hover { border-bottom-style: solid; }
   }
-}
-
-.cmd-flag-discovery {
-  color: #86efac;
 }
 
 // ── Manual/GUI-client configuration ────────────────────────────────────────────

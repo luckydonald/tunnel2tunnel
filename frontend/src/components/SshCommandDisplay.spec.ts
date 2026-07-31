@@ -2,11 +2,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createRouter, createWebHistory } from 'vue-router'
 import SshCommandDisplay from './SshCommandDisplay.vue'
-import type { Entity, EntityPort } from '@/api/entities'
+import type { Entity, PortConfig } from '@/api/entities'
 
 const entity: Entity = {
   id: 'entity-uuid-1234',
-  entity_type: 'client',
   name: 'test-client',
   description: null,
   ip_whitelist: null,
@@ -16,9 +15,11 @@ const entity: Entity = {
   deleted_at: null,
   online: false,
   last_disconnected_at: null,
+  is_server: false,
+  is_client: true,
 }
 
-const ports: EntityPort[] = []
+const ports: PortConfig[] = []
 
 async function mountDisplay() {
   const router = createRouter({
@@ -164,5 +165,44 @@ describe('SshCommandDisplay copy buttons', () => {
 
     expect(userCopyButton.text()).toBe('Copied!')
     expect(hostCopyButton.text()).toBe('Copy')
+  })
+})
+
+describe('SshCommandDisplay per-item tunnel direction', () => {
+  it('generates a -R flag for an owned service and a -L flag for a subscription, both in one command', async () => {
+    const router = createRouter({
+      history: createWebHistory(),
+      routes: [
+        { path: '/', component: { template: '<div />' } },
+        { path: '/settings', component: { template: '<div />' } },
+      ],
+    })
+    const ownedPorts: import('@/api/entities').PortConfig[] = [{
+      id: 'port-1', entity_id: entity.id, enabled: true, local_port: 5432, proxy_port: 5432,
+      name: 'Postgres', description: null, sort_order: 0, host: 'localhost',
+      created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+    }]
+    const subscriptions = [{
+      subscription: {
+        id: 'sub-1', port_config_id: 'other-port', subscriber_entity_id: entity.id, subscriber_local_port: 5901,
+        enabled: true, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+      },
+      service: {
+        id: 'other-port', entity_id: 'home-nas-id', enabled: true, local_port: 5900, proxy_port: 5900,
+        name: 'VNC', description: null, sort_order: 0, host: 'localhost',
+        created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+      },
+      ownerId: 'home-nas-id',
+      ownerName: 'home-nas',
+    }]
+    const wrapper = mount(SshCommandDisplay, {
+      props: { entity, ports: ownedPorts, subscriptions, filename: 'test_key', t2tHost: 'example.com', t2tSshPort: 2222 },
+      global: { plugins: [router] },
+    })
+    await router.isReady()
+
+    const cmdText = wrapper.get('.cmd-text').text()
+    expect(cmdText).toContain('-R 5432:localhost:5432')
+    expect(cmdText).toContain('-L 5901:home-nas:5900')
   })
 })
