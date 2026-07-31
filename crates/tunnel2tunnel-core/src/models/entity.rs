@@ -9,8 +9,6 @@ use uuid::Uuid;
 pub struct Entity {
     pub id: Uuid,
     pub user_id: Uuid,
-    #[sqlx(rename = "type")]
-    pub entity_type: String,
     pub name: Option<String>,
     pub description: Option<String>,
     pub ip_whitelist: Option<String>,
@@ -22,19 +20,13 @@ pub struct Entity {
 }
 
 impl Entity {
-    pub async fn list_for_user(
-        pool: &PgPool,
-        user_id: Uuid,
-        entity_type: Option<&str>,
-    ) -> Result<Vec<Self>, CoreError> {
+    pub async fn list_for_user(pool: &PgPool, user_id: Uuid) -> Result<Vec<Self>, CoreError> {
         sqlx::query_as::<_, Entity>(
             "SELECT * FROM entities \
              WHERE user_id = $1 AND deleted_at IS NULL \
-               AND (type = $2 OR $2 IS NULL) \
              ORDER BY created_at DESC",
         )
         .bind(user_id)
-        .bind(entity_type)
         .fetch_all(pool)
         .await
         .map_err(CoreError::Sqlx)
@@ -66,7 +58,6 @@ impl Entity {
     pub async fn create(
         pool: &PgPool,
         user_id: Uuid,
-        entity_type: &str,
         name: Option<&str>,
         description: Option<&str>,
         ip_whitelist: Option<&str>,
@@ -75,13 +66,12 @@ impl Entity {
         let id = Uuid::now_v7();
         sqlx::query_as::<_, Entity>(
             "INSERT INTO entities \
-               (id, user_id, type, name, description, ip_whitelist, valid_until) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7) \
+               (id, user_id, name, description, ip_whitelist, valid_until) \
+             VALUES ($1, $2, $3, $4, $5, $6) \
              RETURNING *",
         )
         .bind(id)
         .bind(user_id)
-        .bind(entity_type)
         .bind(name)
         .bind(description)
         .bind(ip_whitelist)

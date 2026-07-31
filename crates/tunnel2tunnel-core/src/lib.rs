@@ -3,6 +3,7 @@ pub mod db;
 pub mod error;
 pub mod ip_whitelist;
 pub mod models;
+pub mod port_names;
 pub mod pubkey;
 pub mod timestamps;
 

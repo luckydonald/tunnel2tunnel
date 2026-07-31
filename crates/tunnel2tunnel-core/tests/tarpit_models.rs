@@ -664,7 +664,6 @@ async fn entity_statuses_batches_multiple_entities() {
     let online_entity = Entity::create(
         &pool,
         owner.id,
-        "server",
         Some("batch-online"),
         None,
         None,
@@ -675,7 +674,6 @@ async fn entity_statuses_batches_multiple_entities() {
     let offline_entity = Entity::create(
         &pool,
         owner.id,
-        "server",
         Some("batch-offline"),
         None,
         None,
@@ -686,7 +684,6 @@ async fn entity_statuses_batches_multiple_entities() {
     let never_connected = Entity::create(
         &pool,
         owner.id,
-        "server",
         Some("batch-never"),
         None,
         None,
@@ -769,7 +766,6 @@ async fn entity_status_reflects_open_and_closed_sessions() {
     let entity = Entity::create(
         &pool,
         owner.id,
-        "server",
         Some("tarpit-test-entity"),
         None,
         None,
@@ -828,7 +824,6 @@ async fn close_all_open_on_boot_closes_only_open_rows() {
     let entity = Entity::create(
         &pool,
         owner.id,
-        "server",
         Some("boot-cleanup-entity"),
         None,
         None,

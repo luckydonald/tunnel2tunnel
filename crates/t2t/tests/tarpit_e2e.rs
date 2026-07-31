@@ -223,7 +223,6 @@ async fn legit_login_sequence_is_never_tarpitted() {
     let entity = Entity::create(
         &pool,
         owner.id,
-        "client",
         Some("tarpit-e2e-legit-client"),
         None,
         None,
