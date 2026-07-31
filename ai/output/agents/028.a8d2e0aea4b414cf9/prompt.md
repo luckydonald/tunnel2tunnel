@@ -1,0 +1,59 @@
+Repo: /home/user/git/luckydonald/tunnel2tunnel, `frontend/` directory (Vue 3 + `<script setup lang="ts">` + TypeScript strict + SCSS, Vite, Pinia, Vue Router). Read CLAUDE.md at repo root first (frontend conventions section) and `ai/skills/code-style/references/vue.md`.
+
+The backend half of this feature just landed on `mane` (commits `ab2997c`, `9077ef2`, `eabeb1d` — you can `git show --stat` them for context, but don't need to re-read the Rust). This task is the **frontend portion**: restructure the port/access/entity UI to match. Full design rationale is in the approved plan at `/home/user/.confuig/claude/accounts/private/plans/robust-bubbling-ember.md` — **read this file in full first**, especially the "Frontend restructure" and "GUI mockups" sections, which are the exact target layout (ASCII mockups included) for what you're building. Follow them precisely, including the specific micro-behaviors described (port-number auto-sync, name auto-guess, filter defaults) — these came from explicit user requests, not just aesthetic choices.
+
+## New backend API shapes to build against (already implemented, verified working)
+
+```
+GET    /api/entities/{id}/ports              → PortConfigResponse[]   (was entity_ports; server_entity_id is gone)
+POST   /api/entities/{id}/ports              body: CreatePortBody     → PortConfigResponse
+PUT    /api/entities/{id}/ports/{port_id}    body: UpdatePortBody     → PortConfigResponse
+DELETE /api/entities/{id}/ports/{port_id}
+
+GET    /api/entities/{id}/subscribable-services   → SubscribableOwnerResponse[]   (replaces reachable-servers)
+POST   /api/entities/{id}/subscriptions           body: { port_config_id, subscriber_local_port, enabled?: bool } → PortSubscriptionResponse
+PUT    /api/entities/{id}/subscriptions/{subscription_id}   body: { subscriber_local_port?: number, enabled?: bool } → PortSubscriptionResponse
+DELETE /api/entities/{id}/subscriptions/{subscription_id}
+
+GET /api/entities?role=server|client   (optional filter over the computed booleans; omit for "all")
+```
+
+Types:
+- `PortConfigResponse` (was `EntityPortResponse`): `{ id, entity_id, enabled, local_port, proxy_port, name: string (no longer nullable), description: string|null, sort_order, host, created_at, updated_at }` — **no `server_entity_id` field anymore**.
+- `CreatePortBody`/`UpdatePortBody`: same shape minus `server_entity_id`; `name` is required (non-empty string).
+- `PortSubscriptionResponse`: `{ id, port_config_id, subscriber_entity_id, subscriber_local_port, enabled, created_at, updated_at }`.
+- `SubscribableOwnerResponse`: `{ ...EntityResponse fields (id, name, description, is_server, is_client, online, last_disconnected_at, ...), services: Array<{ ...PortConfigResponse fields, subscription: PortSubscriptionResponse | null }> }` — `subscription: null` means "available but not yet subscribed."
+- `EntityResponse`: **`entity_type` field is GONE.** Adds `is_server: boolean`, `is_client: boolean` (computed by the backend — an entity can be neither, either, or both).
+- `CreateEntityBody`/`UpdateEntityBody`: **`entity_type` is GONE** — entity creation no longer takes a type at all.
+
+Old routes/types that no longer exist on the backend and must be fully removed from the frontend: `GET .../reachable-servers`, `PUT .../port-discovery/{server_port_id}`, `ReachableServer`, `DiscoveredPort`, `DiscoveryState`, any `server_entity_id` field usage, any `entity_type`/`entityTypeLabel`-as-stored-field usage.
+
+## Current frontend structure you'll be modifying (from prior exploration — verify against the live files, this may have shifted slightly)
+
+- `frontend/src/api/entities.ts`: has `Entity`, `SshKey`, `EntityPort`, `EntityDetail`, `DiscoveryState`, `DiscoveredPort`, `ReachableServer`, `CreateEntityParams`, `UpdateEntityParams`, `CreatePortParams`, `UpdatePortParams`, and the `entitiesApi` object with `list`, `create`, `getEntity`, `update`, `deleteEntity`, `addKey`, `deleteKey`, `createPort`, `updatePort`, `deletePort`, `getReachableServers`, `setPortDiscoveryState`. Rewrite this file's types/functions to match the new API shapes above — rename `EntityPort`→`PortConfig`, drop `DiscoveryState`/`DiscoveredPort`/`ReachableServer` in favor of `PortSubscription`/`SubscribableService`/`SubscribableOwner`, drop `getReachableServers`/`setPortDiscoveryState` in favor of `getSubscribableServices`, `createSubscription`, `updateSubscription`, `deleteSubscription`. Drop `entity_type` from `CreateEntityParams`/`UpdateEntityParams`.
+- `frontend/src/pages/EntityDetailPage.vue`: currently branches heavily on `entity.entity_type === 'server'|'client'` (Ports section fields, add-port form, access-rule entity picker, breadcrumb). Rebuild per the plan's mockup — every entity gets the same two sections regardless of role: **"My services"** (owned port_configs — CRUD table + add-service form) and **"My subscriptions"** (browse `subscribable-services` with the Configured/Unconfigured/All + Origin filters from the mockup). Keep the existing Connection Log section as-is (per the plan, explicitly unchanged/preserved). Update the Access Rules section to add the scope picker (Whole entity vs Specific port, per the mockup).
+- `frontend/src/components/SshCommandDisplay.vue`: currently derives tunnel direction from `entity.entity_type === 'server' ? 'Remote' : 'Local'`. Rebuild so direction is derived **per item**: every entry from the entity's own `ports` (port_configs it owns) contributes a `-R` flag; every entry from its own subscriptions contributes a `-L` flag; both can appear together in one generated command. Remove the old "discovery-section" interactive markup (superseded by the new My-subscriptions section on the detail page) but you can keep this component focused on command-text generation only if that simplifies things — your call on whether `ServiceConnector.vue` (see below) fully absorbs the old discovery UI or whether some of it stays here; just make sure there's no dead/duplicate discovery UI left over and no remaining `entity_type` branch.
+- New `frontend/src/components/ServiceConnector.vue`: the "My subscriptions" browse/subscribe UI (per the mockup) — props likely `subscribableOwners: SubscribableOwnerResponse[]`, emits subscribe/unsubscribe/update-local-port events up to `EntityDetailPage.vue`.
+- `frontend/src/labels.ts`: has `entityTypeLabel: Record<'server'|'client', string>` used as a stored-field label today — repurpose it purely as display labels for the *computed* `is_server`/`is_client` badges (e.g. a small helper rendering both/either/neither badge), not tied to any stored field.
+- `frontend/src/api/friends.ts`: `AccessRule` type — add optional `port_config_id: string | null` to match the extended `entity_access`; `friendsApi.createAccess` body needs the same field.
+- Entities list page(s): find wherever "Servers" and "Clients" are currently separate list pages/routes (check `frontend/src/pages/` and the router config, likely `frontend/src/router/index.ts` or similar) — merge into a single "Entities" list page per the mockup (Roles column showing both badges, filter chips All/Server/Client), with `/servers` and `/clients` routes becoming the same list component pre-filtered via `role=server`/`role=client` (as a route prop/query param, applied via the new `?role=` API param). Update `AppShell.vue`'s nav if it links to the old separate pages.
+- Entity creation form: remove the type selector entirely (search for wherever `CreateEntityParams`/`entity_type` is set in a create-entity form/modal).
+
+## Specific micro-behaviors from the plan (don't skip these, they were explicit user requests)
+
+- **Add-service form** (in "My services"): field order is `Port` (proxy_port) → `Local port` → `Name` → `Host` → `Enabled`. `Local port` mirrors whatever's typed into `Port` live, for as long as the user hasn't independently edited `Local port` themselves (then it decouples permanently for that form session). `Name` similarly auto-fills from a client-side port→name guess table synced to `Port`'s value, until the user types into `Name` directly — when no guess exists for a given port, leave `Name` **empty** (not a placeholder string like "Unnamed Service"; that fallback only ever appears as an actual stored/backfilled value, never as a live UI default). You'll need a small client-side mirror of the backend's `guess_service_name` table (`crates/tunnel2tunnel-core/src/port_names.rs` — read it for the exact port→name mapping and reuse the same list, e.g. as a new `frontend/src/portNames.ts` exporting a `guessServiceName(port: number): string | null`). Required fields (`Port`, `Name`) are conveyed via helper/caption text, **not** an inline `*` marker.
+- **My subscriptions filters**: primary filter `Show:` with options `Configured` (default — only already-subscribed services, nothing unsubscribed visible), `Unconfigured`, `All`. Selecting `Unconfigured` or `All` reveals a second filter, `Origin:` with options `Mine` / `Friends` / `All` (default `All`) — used to narrow which owning entities' services are shown (your own entities vs. friends' vs. everyone reachable). `Configured` mode doesn't show the Origin filter at all (per the mockup). Implement filtering client-side over the `subscribable-services` response (no new backend param needed) unless you find that impractical, in which case flag it in your report rather than silently changing the design.
+- **Roles badges**: 🖧 for "Server" role (`is_server`), 💻 for "Client" role (`is_client`), shown together when both are true. Reuse these two badges everywhere a role needs labeling (Entities list, entity detail header, and — if you get to it — anywhere else referencing role), not separate "server leg"/"client leg" wording.
+- **Status dots**: 🟢/⚪/🟠 for live/configured-not-live/waiting states are part of Phase 5 (live connections dashboard) — **not built yet** (no backend support exists for them today, that's a separate follow-up task). Do NOT try to wire these up or fake them — build the services/subscriptions tables without a status-dot column for now; that column gets added in a later pass once the backend live-tracking exists. If the plan's mockups show a status-dot column, treat it as a placeholder for that future column and omit it (or leave a clearly-commented spot) rather than inventing fake data for it.
+
+## Verification
+
+- `npm run build` in `frontend/` for type-checking (must pass clean, no `any`).
+- Look for and update/add tests per the repo's frontend testing conventions (check `frontend/src/**/*.spec.ts` or similar for existing patterns, e.g. `SshCommandDisplay`'s tests mentioned in recent commit history) — CLAUDE.md's Vue style guide says to write tests for frontend code.
+- You do not have a running dev server/backend in this environment necessarily — if you can start one (check CLAUDE.md's "Running locally" section for the podman/postgres + `cargo run -p t2t` + `npm run dev` sequence) do a manual sanity pass in a headless-safe way (e.g. just confirm the built app loads); if that's impractical in your environment, rely on `npm run build`'s type-checking as the primary gate and say so explicitly in your report.
+
+## Committing
+
+`commit-with-lplp-style` skill is active (`ai/skills/commit-with-lplp-style/SKILL.md`) — write commit messages to `ai/git/pending-commit.md` first, format `[frontend] topic: ai: Run: <summary>.`, stage only files you changed by explicit path (never `git add -A`/`.`). Make a few natural-checkpoint commits (e.g. api/types rewrite, EntityDetailPage + ServiceConnector rebuild, Entities-list merge + routing, SshCommandDisplay rework) rather than one giant commit.
+
+Report back: what you built, any deviations from the plan/mockups and why, and the final `npm run build` status.

@@ -26,14 +26,14 @@ const routes: RouteRecordRaw[] = [
     path: '/servers',
     name: 'servers',
     component: EntitiesPage,
-    props: { entityType: 'server' },
+    props: { role: 'server' },
     meta: { requiresAuth: true },
   },
   {
     path: '/clients',
     name: 'clients',
     component: EntitiesPage,
-    props: { entityType: 'client' },
+    props: { role: 'client' },
     meta: { requiresAuth: true },
   },
   {

@@ -1262,3 +1262,12 @@ Generally:
 > - [Raw log (`1064039` chars, `1.03 MB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/27a0d1ad-3acf-4320-b092-c1d6d2970363/tasks/a350c1af871d20739.output)
 > - `95` tools, `196522` tokens, `13.0084 s`
 
+❯ Task Notification:
+> - Task `a8d2e0aea4b414cf9` <kbd>completed</kbd>
+> - Tool `toolu_01W6yd8ushn8nMnEXjhF6KP6`
+> - > Agent "Implement frontend: services + subscriptions UI" finished
+> - [Query (`11736` chars, `11.6 KB`)](output/agents/028.a8d2e0aea4b414cf9/prompt.md)
+> - [Answer (`3382` chars, `3.33 KB`)](output/agents/028.a8d2e0aea4b414cf9/result.md)
+> - [Raw log (`881413` chars, `868 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/27a0d1ad-3acf-4320-b092-c1d6d2970363/tasks/a8d2e0aea4b414cf9.output)
+> - `65` tools, `159664` tokens, `8.6219 s`
+

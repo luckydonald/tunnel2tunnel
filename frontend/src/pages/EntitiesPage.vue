@@ -4,22 +4,39 @@ import { useRouter } from 'vue-router'
 import AppShell from '@/components/AppShell.vue'
 import EntityName from '@/components/EntityName.vue'
 import { useEntitiesStore } from '@/stores/entities'
+import { roleBadges } from '@/labels'
 import { useToast } from '@/composables/useToast'
 
 const { show: toast } = useToast()
 
 const props = defineProps<{
-  entityType?: 'server' | 'client'
+  role?: 'server' | 'client'
 }>()
 
 const router = useRouter()
 const store = useEntitiesStore()
 
+// Filter chips — pre-set from the route's `role` prop (e.g. /servers, /clients) but still
+// switchable in-page, so /servers isn't a dead end if you want to see everything.
+type RoleFilter = 'all' | 'server' | 'client'
+const roleFilter = ref<RoleFilter>(props.role ?? 'all')
+watch(() => props.role, r => { roleFilter.value = r ?? 'all' })
+
 const title = computed(() =>
-  props.entityType === 'server' ? 'Servers'
-  : props.entityType === 'client' ? 'Clients'
-  : 'All Entities',
+  roleFilter.value === 'server' ? 'Servers'
+  : roleFilter.value === 'client' ? 'Clients'
+  : 'Entities',
 )
+
+const search = ref('')
+
+const visibleEntities = computed(() => {
+  const q = search.value.trim().toLowerCase()
+  if (!q) return store.entities
+  return store.entities.filter(e =>
+    (e.name?.toLowerCase().includes(q) ?? false) || e.id.toLowerCase().includes(q),
+  )
+})
 
 // Create form
 const showCreate = ref(false)
@@ -33,7 +50,6 @@ async function handleCreate(): Promise<void> {
   creating.value = true
   try {
     const entity = await store.createEntity({
-      entity_type: props.entityType ?? 'server',
       name: newName.value || null,
       description: newDescription.value || null,
     })
@@ -57,44 +73,56 @@ async function handleDelete(id: string): Promise<void> {
   }
 }
 
-onMounted(() => store.fetchEntities(props.entityType))
-watch(() => props.entityType, (t) => store.fetchEntities(t))
+function fetchForFilter(f: RoleFilter): void {
+  store.fetchEntities(f === 'all' ? undefined : f)
+}
+
+onMounted(() => fetchForFilter(roleFilter.value))
+watch(roleFilter, fetchForFilter)
 </script>
 
 <template>
   <AppShell>
     <div class="page-header">
       <h1>{{ title }}</h1>
-      <button class="btn-primary" @click="showCreate = true">New</button>
+      <button class="btn-primary" @click="showCreate = true">+ New entity</button>
+    </div>
+
+    <div class="toolbar">
+      <div class="filter-chips">
+        <span class="filter-label">Filter:</span>
+        <button class="filter-btn" :class="{ active: roleFilter === 'all' }" @click="roleFilter = 'all'">All</button>
+        <button class="filter-btn" :class="{ active: roleFilter === 'server' }" @click="roleFilter = 'server'">Server</button>
+        <button class="filter-btn" :class="{ active: roleFilter === 'client' }" @click="roleFilter = 'client'">Client</button>
+      </div>
+      <input v-model="search" type="text" class="search-input" placeholder="🔍 search…" />
     </div>
 
     <div v-if="store.loading" class="loading">Loading…</div>
     <div v-else-if="store.error" class="error-msg">{{ store.error }}</div>
     <template v-else>
-      <table v-if="store.entities.length" class="data-table">
+      <table v-if="visibleEntities.length" class="data-table">
         <thead>
           <tr>
             <th>Name / ID</th>
-            <th>Status</th>
-            <th v-if="!entityType">Type</th>
+            <th>Roles</th>
+            <th>Online</th>
             <th>Description</th>
             <th></th>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="e in store.entities" :key="e.id">
+          <tr v-for="e in visibleEntities" :key="e.id">
             <td>
               <RouterLink :to="{ name: 'entity-detail', params: { id: e.id } }">
                 <EntityName :entity="e" />
               </RouterLink>
             </td>
+            <td class="td-badge">{{ roleBadges(e) || '—' }}</td>
             <td>
               <span :class="['badge-online', e.online ? 'online' : 'offline']">
                 {{ e.online ? 'Online' : 'Offline' }}
               </span>
-            </td>
-            <td v-if="!entityType" class="td-badge">
-              <span :class="['badge', e.entity_type]">{{ e.entity_type }}</span>
             </td>
             <td class="td-desc">{{ e.description ?? '—' }}</td>
             <td class="td-actions">
@@ -109,20 +137,19 @@ watch(() => props.entityType, (t) => store.fetchEntities(t))
     <!-- Create modal -->
     <div v-if="showCreate" class="modal-overlay" @click.self="showCreate = false">
       <div class="modal">
-        <h2>New {{ entityType ?? 'entity' }}</h2>
+        <h2>New entity</h2>
         <form @submit.prevent="handleCreate">
-          <div class="field" v-if="!entityType">
-            <label>Type</label>
-            <!-- type is fixed if route is /servers or /clients -->
-          </div>
           <div class="field">
             <label>Name <span class="optional">(optional)</span></label>
-            <input v-model="newName" type="text" placeholder="My server" />
+            <input v-model="newName" type="text" placeholder="My entity" />
           </div>
           <div class="field">
             <label>Description <span class="optional">(optional)</span></label>
             <input v-model="newDescription" type="text" />
           </div>
+          <p class="field-hint">
+            An entity starts with no roles — it becomes a Server once you add a service, and/or a Client once you subscribe to one.
+          </p>
           <p v-if="createError" class="error-msg">{{ createError }}</p>
           <div class="modal-actions">
             <button type="button" class="btn-secondary" @click="showCreate = false">Cancel</button>
@@ -144,6 +171,47 @@ watch(() => props.entityType, (t) => store.fetchEntities(t))
   margin-bottom: 1.5rem;
 
   h1 { margin: 0; }
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.filter-chips {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.filter-label { font-size: 0.875rem; color: #94a3b8; }
+
+.filter-btn {
+  padding: 0.25rem 0.75rem;
+  background: none;
+  border: 1px solid #2d3248;
+  border-radius: 999px;
+  color: #94a3b8;
+  font-size: 0.8125rem;
+  cursor: pointer;
+
+  &:hover { color: #e2e8f0; border-color: #4f6ef7; }
+  &.active { background: rgba(79, 110, 247, 0.15); border-color: #4f6ef7; color: #93c5fd; }
+}
+
+.search-input {
+  padding: 0.375rem 0.75rem;
+  background: #0f1117;
+  border: 1px solid #2d3248;
+  border-radius: 4px;
+  color: #e2e8f0;
+  font-size: 0.875rem;
+  min-width: 200px;
+  &:focus { outline: none; border-color: #4f6ef7; }
 }
 
 .data-table {
@@ -171,19 +239,7 @@ watch(() => props.entityType, (t) => store.fetchEntities(t))
 }
 
 .td-desc { color: #64748b; font-size: 0.875rem; }
-
-.badge {
-  display: inline-block;
-  padding: 0.15em 0.5em;
-  border-radius: 4px;
-  font-size: 0.75rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-
-  &.server { background: rgba(79, 110, 247, 0.2); color: #93c5fd; }
-  &.client { background: rgba(52, 211, 153, 0.2); color: #6ee7b7; }
-}
+.td-badge { font-size: 0.875rem; color: #94a3b8; white-space: nowrap; }
 
 .badge-online {
   display: inline-block; padding: 0.15em 0.5em; border-radius: 4px;
@@ -227,6 +283,8 @@ watch(() => props.entityType, (t) => store.fetchEntities(t))
     &:focus { outline: none; border-color: #4f6ef7; }
   }
 }
+
+.field-hint { font-size: 0.8125rem; color: #64748b; margin: -0.5rem 0 1rem; }
 
 .modal-actions { display: flex; gap: .75rem; justify-content: flex-end; margin-top: 1.5rem; }
 
