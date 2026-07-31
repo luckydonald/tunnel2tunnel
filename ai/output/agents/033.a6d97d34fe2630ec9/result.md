@@ -1,0 +1,3 @@
+No action needed — that monitor was watching the same test run that already completed and was reported on. The task is finished: backend Phase 5 live-connections work is committed as `526b49b` on `mane`, builds and tests are green (aside from the pre-existing, unrelated `tarpit_models.rs` failures noted earlier).
+
+result: Phase 5 backend (in-memory active-tunnel tracking + `GET /api/entities/{id}/live-connections` and `GET /api/admin/live-connections`) is implemented, builds clean, and is committed as `526b49b` on `mane`; `cargo test --workspace` passes except 3 pre-existing, unrelated `ConnectionLog::search` query-builder failures in `tarpit_models.rs` that predate this change.

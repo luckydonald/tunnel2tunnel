@@ -38,7 +38,7 @@ use tunnel2tunnel_core::{
     },
     pubkey::parse_authorized_keys_line,
 };
-use tunnel2tunnel_ssh::{start as start_ssh, SshConfig};
+use tunnel2tunnel_ssh::{new_active_tunnels, new_server_slots, start as start_ssh, SshConfig};
 
 const FIXTURE_BODY: &str = "hello from the tunneled service";
 /// The remote-forward routing key used between the two `ssh` legs. This is
@@ -263,10 +263,18 @@ async fn two_ssh_connections_tunnel_through_rendezvous() {
     // Local "real" service the tunnel is meant to reach.
     let fixture_port = spawn_fixture_service().await;
 
-    // The t2t SSH rendezvous server itself, on an ephemeral port.
+    // The t2t SSH rendezvous server itself, on an ephemeral port. The
+    // `ActiveTunnels` map is shared with the test itself (mirroring how
+    // `crates/t2t/src/main.rs` shares it with the web `AppState`) so this
+    // test can directly assert on the live-connections tracking added
+    // alongside `channel_open_direct_tcpip`, without standing up the full
+    // HTTP API + session/login flow just to exercise the new route.
     let ssh_port = free_port();
     let ssh_pool = pool.clone();
     let ssh_host_key_path = host_key_path.to_str().unwrap().to_string();
+    let server_slots = new_server_slots();
+    let active_tunnels = new_active_tunnels();
+    let test_active_tunnels = active_tunnels.clone();
     tokio::spawn(async move {
         start_ssh(
             SshConfig {
@@ -276,6 +284,8 @@ async fn two_ssh_connections_tunnel_through_rendezvous() {
                 host_key_password: None,
             },
             ssh_pool,
+            server_slots,
+            active_tunnels,
         )
         .await
         .expect("t2t SSH server failed");
@@ -377,6 +387,48 @@ async fn two_ssh_connections_tunnel_through_rendezvous() {
         .await
         .expect("second request through the tunnel failed");
     assert!(response2.contains(FIXTURE_BODY));
+
+    // Phase 5: the bridge established above must be visible in the shared
+    // `ActiveTunnels` map — this is exactly what
+    // `GET /api/entities/{id}/live-connections` and
+    // `GET /api/admin/live-connections` read from.
+    {
+        let tunnels = test_active_tunnels.lock().await;
+        let entry = tunnels
+            .values()
+            .find(|info| {
+                info.client_entity_id == client_entity.id
+                    && info.target_entity_id == server_entity.id
+                    && info.port_config_id == port_config.id
+            })
+            .expect("expected an active_tunnels entry for the live bridge");
+        assert_eq!(entry.proxy_port, PROXY_PORT as u32);
+        assert_eq!(entry.client_user_id, owner.id);
+    }
+
+    // Tearing down the client leg's ssh process must remove that entry
+    // again (both the explicit `channel_close` path and the `Drop`
+    // fallback exist for this — killing the process here exercises
+    // whichever one russh actually takes on an abrupt disconnect).
+    drop(_client_guard);
+    {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let still_present = test_active_tunnels
+                .lock()
+                .await
+                .values()
+                .any(|info| info.client_entity_id == client_entity.id);
+            if !still_present {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "active_tunnels entry was never cleaned up after the client disconnected"
+            );
+            sleep(Duration::from_millis(150)).await;
+        }
+    }
 
     let _ = std::fs::remove_dir_all(&scratch);
 }

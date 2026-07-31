@@ -2,6 +2,7 @@ use crate::error::CoreError;
 use crate::timestamps::Timestamps;
 use serde::Serialize;
 use sqlx::PgPool;
+use time::OffsetDateTime;
 use uuid::Uuid;
 
 /// The single declaration of "entity X offers this port as a service."
@@ -173,4 +174,75 @@ impl PortConfig {
         .map_err(CoreError::Sqlx)?;
         Ok(ids.into_iter().collect())
     }
+
+    /// Every `port_configs` row across all entities, joined with the owning
+    /// entity/user — used for the admin live-connections dashboard's
+    /// "server-role" rows.
+    pub async fn list_all_with_owner(pool: &PgPool) -> Result<Vec<PortConfigWithOwner>, CoreError> {
+        let rows = sqlx::query_as::<_, PortConfigOwnerRow>(
+            "SELECT pc.id, pc.entity_id, pc.enabled, pc.local_port, pc.proxy_port, pc.name, \
+                    pc.description, pc.sort_order, pc.host, pc.created_at, pc.updated_at, \
+                    e.name AS owner_entity_name, e.user_id AS owner_user_id, \
+                    u.username AS owner_username \
+             FROM port_configs pc \
+             JOIN entities e ON e.id = pc.entity_id AND e.deleted_at IS NULL \
+             JOIN users u ON u.id = e.user_id \
+             ORDER BY pc.entity_id, pc.sort_order, pc.created_at",
+        )
+        .fetch_all(pool)
+        .await
+        .map_err(CoreError::Sqlx)?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| PortConfigWithOwner {
+                port_config: PortConfig {
+                    id: r.id,
+                    entity_id: r.entity_id,
+                    enabled: r.enabled,
+                    local_port: r.local_port,
+                    proxy_port: r.proxy_port,
+                    name: r.name,
+                    description: r.description,
+                    sort_order: r.sort_order,
+                    host: r.host,
+                    ts: Timestamps {
+                        created_at: r.created_at,
+                        updated_at: r.updated_at,
+                    },
+                },
+                owner_entity_name: r.owner_entity_name,
+                owner_user_id: r.owner_user_id,
+                owner_username: r.owner_username,
+            })
+            .collect())
+    }
+}
+
+/// A `port_configs` row joined with its owning entity/user — see
+/// `PortConfig::list_all_with_owner`.
+#[derive(Debug, Clone)]
+pub struct PortConfigWithOwner {
+    pub port_config: PortConfig,
+    pub owner_entity_name: Option<String>,
+    pub owner_user_id: Uuid,
+    pub owner_username: String,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct PortConfigOwnerRow {
+    id: Uuid,
+    entity_id: Uuid,
+    enabled: bool,
+    local_port: i32,
+    proxy_port: i32,
+    name: String,
+    description: Option<String>,
+    sort_order: i32,
+    host: String,
+    created_at: OffsetDateTime,
+    updated_at: OffsetDateTime,
+    owner_entity_name: Option<String>,
+    owner_user_id: Uuid,
+    owner_username: String,
 }

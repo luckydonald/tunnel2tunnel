@@ -344,4 +344,134 @@ impl PortSubscription {
             .map(|(entity, services)| SubscribableOwner { entity, services })
             .collect())
     }
+
+    /// Every `port_subscriptions` row this entity holds (as subscriber),
+    /// joined with the subscribed `port_config` and its owning entity's
+    /// name — used for the per-entity "my subscriptions" live-connections
+    /// view. See `list_all_with_context` for the admin (all-entities)
+    /// equivalent.
+    pub async fn list_for_subscriber_with_context(
+        pool: &PgPool,
+        subscriber_entity_id: Uuid,
+    ) -> Result<Vec<PortSubscriptionWithContext>, CoreError> {
+        Self::list_with_context(pool, Some(subscriber_entity_id)).await
+    }
+
+    /// Every `port_subscriptions` row across all entities, joined with its
+    /// `port_config`, the owning entity's name, and the subscriber's
+    /// entity/user — used for the admin live-connections dashboard's
+    /// "client-role" rows.
+    pub async fn list_all_with_context(
+        pool: &PgPool,
+    ) -> Result<Vec<PortSubscriptionWithContext>, CoreError> {
+        Self::list_with_context(pool, None).await
+    }
+
+    async fn list_with_context(
+        pool: &PgPool,
+        subscriber_entity_id: Option<Uuid>,
+    ) -> Result<Vec<PortSubscriptionWithContext>, CoreError> {
+        let rows = sqlx::query_as::<_, SubscriptionContextRow>(
+            "SELECT \
+                ps.id AS ps_id, ps.port_config_id AS ps_port_config_id, \
+                ps.subscriber_entity_id AS ps_subscriber_entity_id, \
+                ps.subscriber_local_port AS ps_subscriber_local_port, \
+                ps.enabled AS ps_enabled, ps.created_at AS ps_created_at, \
+                ps.updated_at AS ps_updated_at, \
+                pc.id AS pc_id, pc.entity_id AS pc_entity_id, pc.enabled AS pc_enabled, \
+                pc.local_port AS pc_local_port, pc.proxy_port AS pc_proxy_port, \
+                pc.name AS pc_name, pc.description AS pc_description, \
+                pc.sort_order AS pc_sort_order, pc.host AS pc_host, \
+                pc.created_at AS pc_created_at, pc.updated_at AS pc_updated_at, \
+                owner_e.name AS owner_entity_name, \
+                sub_e.name AS subscriber_entity_name, sub_e.user_id AS subscriber_user_id, \
+                sub_u.username AS subscriber_username \
+             FROM port_subscriptions ps \
+             JOIN port_configs pc ON pc.id = ps.port_config_id \
+             JOIN entities owner_e ON owner_e.id = pc.entity_id \
+             JOIN entities sub_e ON sub_e.id = ps.subscriber_entity_id \
+             JOIN users sub_u ON sub_u.id = sub_e.user_id \
+             WHERE ($1::uuid IS NULL OR ps.subscriber_entity_id = $1) \
+             ORDER BY sub_e.id, pc.sort_order, pc.created_at",
+        )
+        .bind(subscriber_entity_id)
+        .fetch_all(pool)
+        .await
+        .map_err(CoreError::Sqlx)?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| PortSubscriptionWithContext {
+                subscription: PortSubscription {
+                    id: r.ps_id,
+                    port_config_id: r.ps_port_config_id,
+                    subscriber_entity_id: r.ps_subscriber_entity_id,
+                    subscriber_local_port: r.ps_subscriber_local_port,
+                    enabled: r.ps_enabled,
+                    ts: Timestamps {
+                        created_at: r.ps_created_at,
+                        updated_at: r.ps_updated_at,
+                    },
+                },
+                port_config: PortConfig {
+                    id: r.pc_id,
+                    entity_id: r.pc_entity_id,
+                    enabled: r.pc_enabled,
+                    local_port: r.pc_local_port,
+                    proxy_port: r.pc_proxy_port,
+                    name: r.pc_name,
+                    description: r.pc_description,
+                    sort_order: r.pc_sort_order,
+                    host: r.pc_host,
+                    ts: Timestamps {
+                        created_at: r.pc_created_at,
+                        updated_at: r.pc_updated_at,
+                    },
+                },
+                owner_entity_name: r.owner_entity_name,
+                subscriber_entity_name: r.subscriber_entity_name,
+                subscriber_user_id: r.subscriber_user_id,
+                subscriber_username: r.subscriber_username,
+            })
+            .collect())
+    }
+}
+
+/// A `port_subscriptions` row joined with its `port_config`, the owning
+/// entity's name, and the subscriber's entity/user — see
+/// `PortSubscription::list_for_subscriber_with_context`/`list_all_with_context`.
+#[derive(Debug, Clone)]
+pub struct PortSubscriptionWithContext {
+    pub subscription: PortSubscription,
+    pub port_config: PortConfig,
+    pub owner_entity_name: Option<String>,
+    pub subscriber_entity_name: Option<String>,
+    pub subscriber_user_id: Uuid,
+    pub subscriber_username: String,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct SubscriptionContextRow {
+    ps_id: Uuid,
+    ps_port_config_id: Uuid,
+    ps_subscriber_entity_id: Uuid,
+    ps_subscriber_local_port: i32,
+    ps_enabled: bool,
+    ps_created_at: OffsetDateTime,
+    ps_updated_at: OffsetDateTime,
+    pc_id: Uuid,
+    pc_entity_id: Uuid,
+    pc_enabled: bool,
+    pc_local_port: i32,
+    pc_proxy_port: i32,
+    pc_name: String,
+    pc_description: Option<String>,
+    pc_sort_order: i32,
+    pc_host: String,
+    pc_created_at: OffsetDateTime,
+    pc_updated_at: OffsetDateTime,
+    owner_entity_name: Option<String>,
+    subscriber_entity_name: Option<String>,
+    subscriber_user_id: Uuid,
+    subscriber_username: String,
 }

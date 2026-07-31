@@ -1,0 +1,1 @@
+I've started a monitor that will notify me the moment the `cargo test --workspace` run finishes, so I don't need to poll. I'll report back with the full status, commit details, and route/JSON shapes as soon as it completes.

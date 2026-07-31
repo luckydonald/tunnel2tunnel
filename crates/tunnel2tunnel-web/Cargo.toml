@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 tunnel2tunnel-core          = { path = "../tunnel2tunnel-core" }
+tunnel2tunnel-ssh           = { path = "../tunnel2tunnel-ssh" }
 axum                        = { workspace = true }
 tower-sessions              = { workspace = true }
 tower-sessions-sqlx-store   = { workspace = true }

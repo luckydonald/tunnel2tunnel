@@ -40,7 +40,40 @@ pub struct SshConfig {
 
 // ── Routing state shared across all SSH sessions ─────────────────────────────
 
-type ServerSlots = Arc<Mutex<HashMap<(Uuid, u32), (Handle, String)>>>;
+pub type ServerSlots = Arc<Mutex<HashMap<(Uuid, u32), (Handle, String)>>>;
+
+/// Info about one currently-bridged client-side tunnel (a live
+/// `channel_open_direct_tcpip` bridge), aggregated across all SSH
+/// connections — keyed by a fresh bridge id (`Uuid::now_v7()`), not by
+/// `ChannelId`, which is only unique within a single connection. Consumed by
+/// `tunnel2tunnel-web`'s `routes/live_connections.rs` for the live-connections
+/// dashboard/admin views.
+#[derive(Clone, Debug)]
+pub struct ActiveTunnelInfo {
+    pub client_entity_id: Uuid,
+    pub client_user_id: Uuid,
+    pub target_entity_id: Uuid,
+    /// Which `port_configs` row (owned by the target entity) this bridge is
+    /// using.
+    pub port_config_id: Uuid,
+    pub proxy_port: u32,
+    pub peer_ip: String,
+    pub since: time::OffsetDateTime,
+}
+
+pub type ActiveTunnels = Arc<Mutex<HashMap<Uuid, ActiveTunnelInfo>>>;
+
+/// Constructs a fresh, empty `ServerSlots` map. Exposed so `crates/t2t`'s
+/// `main.rs` can build one instance and share it between the SSH server and
+/// the web `AppState` (both need to read/write the same map).
+pub fn new_server_slots() -> ServerSlots {
+    Arc::new(Mutex::new(HashMap::new()))
+}
+
+/// Constructs a fresh, empty `ActiveTunnels` map — see `new_server_slots`.
+pub fn new_active_tunnels() -> ActiveTunnels {
+    Arc::new(Mutex::new(HashMap::new()))
+}
 
 // ── Session registry for messaging (welcome, ping, broadcast, chat) ──────────
 
@@ -83,7 +116,12 @@ pub fn host_key_fingerprint(path: &str, password: Option<&str>) -> Result<String
     ))
 }
 
-pub async fn start(config: SshConfig, pool: PgPool) -> Result<()> {
+pub async fn start(
+    config: SshConfig,
+    pool: PgPool,
+    server_slots: ServerSlots,
+    active_tunnels: ActiveTunnels,
+) -> Result<()> {
     let key =
         load_or_generate_host_key(&config.host_key_path, config.host_key_password.as_deref())?;
 
@@ -92,7 +130,6 @@ pub async fn start(config: SshConfig, pool: PgPool) -> Result<()> {
         ..Config::default()
     });
 
-    let server_slots: ServerSlots = Arc::new(Mutex::new(HashMap::new()));
     let session_registry: SessionRegistry = Arc::new(Mutex::new(HashMap::new()));
     let fail2ban = config.fail2ban_log_path.map(Arc::new);
     let tarpit_state: TarpitState = tarpit::new_state();
@@ -103,6 +140,7 @@ pub async fn start(config: SshConfig, pool: PgPool) -> Result<()> {
     let mut server = T2tServer {
         pool: pool.clone(),
         server_slots,
+        active_tunnels,
         session_registry,
         fail2ban,
         tarpit: tarpit_state,
@@ -184,6 +222,7 @@ pub async fn start(config: SshConfig, pool: PgPool) -> Result<()> {
 struct T2tServer {
     pool: PgPool,
     server_slots: ServerSlots,
+    active_tunnels: ActiveTunnels,
     session_registry: SessionRegistry,
     fail2ban: Option<Arc<String>>,
     tarpit: TarpitState,
@@ -202,6 +241,7 @@ impl Server for T2tServer {
         T2tHandler {
             pool: self.pool.clone(),
             server_slots: self.server_slots.clone(),
+            active_tunnels: self.active_tunnels.clone(),
             session_registry: self.session_registry.clone(),
             fail2ban: self.fail2ban.clone(),
             tarpit: self.tarpit.clone(),
@@ -210,6 +250,7 @@ impl Server for T2tServer {
             peer_ip,
             entity: None,
             bridges: HashMap::new(),
+            bridge_ids: HashMap::new(),
             connection_log_ids: Vec::new(),
             tarpit_outcome: None,
             fake_shell: false,
@@ -230,6 +271,7 @@ struct AuthedEntity {
 struct T2tHandler {
     pool: PgPool,
     server_slots: ServerSlots,
+    active_tunnels: ActiveTunnels,
     session_registry: SessionRegistry,
     fail2ban: Option<Arc<String>>,
     tarpit: TarpitState,
@@ -238,6 +280,10 @@ struct T2tHandler {
     peer_ip: String,
     entity: Option<AuthedEntity>,
     bridges: HashMap<ChannelId, (Handle, ChannelId)>,
+    /// Maps this connection's client-side bridge channels to the
+    /// `active_tunnels` key registered for them, so the entry can be removed
+    /// again on `channel_close`/`Drop`.
+    bridge_ids: HashMap<ChannelId, Uuid>,
     /// ids of every `connection_logs` row created for this TCP connection
     /// (successful login and/or any number of failed/trap attempts before
     /// it) — all of them get `ended_at` stamped together in `Drop`.
@@ -1202,6 +1248,24 @@ impl Handler for T2tHandler {
         self.bridges
             .insert(client_ch_id, (server_handle.clone(), server_ch_id));
 
+        // Record this bridge in the aggregated active-tunnels map for the
+        // live-connections dashboard, and remember which bridge id belongs
+        // to this channel so it can be torn down again on close/disconnect.
+        let bridge_id = Uuid::now_v7();
+        self.active_tunnels.lock().await.insert(
+            bridge_id,
+            ActiveTunnelInfo {
+                client_entity_id: client_entity.id,
+                client_user_id,
+                target_entity_id,
+                port_config_id: port_config.id,
+                proxy_port: port_to_connect,
+                peer_ip: self.peer_ip.clone(),
+                since: time::OffsetDateTime::now_utc(),
+            },
+        );
+        self.bridge_ids.insert(client_ch_id, bridge_id);
+
         // Spawn task: copy server channel → client session
         let client_handle = session.handle();
         tokio::spawn(forward_channel(server_ch, client_handle, client_ch_id));
@@ -1277,6 +1341,9 @@ impl Handler for T2tHandler {
         if let Some((handle, ch)) = self.bridges.remove(&channel) {
             let _ = handle.close(ch).await;
         }
+        if let Some(bridge_id) = self.bridge_ids.remove(&channel) {
+            self.active_tunnels.lock().await.remove(&bridge_id);
+        }
         Ok(())
     }
 }
@@ -1321,6 +1388,21 @@ impl Drop for T2tHandler {
             let slots = self.server_slots.clone();
             tokio::spawn(async move {
                 slots.lock().await.retain(|(eid, _), _| *eid != entity_id);
+            });
+        }
+
+        // Clean up any active-tunnel entries this connection's bridges left
+        // registered (a client-side `-L` connection torn down abruptly,
+        // without a clean `channel_close`, would otherwise leak a "live"
+        // entry forever).
+        if !self.bridge_ids.is_empty() {
+            let active_tunnels = self.active_tunnels.clone();
+            let bridge_ids: Vec<Uuid> = self.bridge_ids.values().copied().collect();
+            tokio::spawn(async move {
+                let mut map = active_tunnels.lock().await;
+                for id in bridge_ids {
+                    map.remove(&id);
+                }
             });
         }
 

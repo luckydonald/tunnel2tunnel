@@ -4148,6 +4148,7 @@ dependencies = [
  "tower-sessions-sqlx-store",
  "tracing",
  "tunnel2tunnel-core",
+ "tunnel2tunnel-ssh",
  "uuid",
 ]
 

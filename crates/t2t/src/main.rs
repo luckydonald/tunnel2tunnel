@@ -3,7 +3,9 @@ mod sentry;
 use anyhow::{Context, Result};
 use tracing_subscriber::EnvFilter;
 use tunnel2tunnel_core::{db, models::connection_log::ConnectionLog};
-use tunnel2tunnel_ssh::{host_key_fingerprint, start as start_ssh, SshConfig};
+use tunnel2tunnel_ssh::{
+    host_key_fingerprint, new_active_tunnels, new_server_slots, start as start_ssh, SshConfig,
+};
 use tunnel2tunnel_web::{bootstrap_admin, start as start_http, WebConfig};
 
 // Sentry must be initialized before the tokio runtime starts so its panic
@@ -78,6 +80,14 @@ async fn run() -> Result<()> {
     let http_pool = pool.clone();
     let ssh_pool = pool;
 
+    // Shared in-memory state between the SSH server and the web API — the
+    // live-connections dashboard reads the exact same maps the SSH layer
+    // writes to, so both sides must hold the same `Arc`s.
+    let server_slots = new_server_slots();
+    let active_tunnels = new_active_tunnels();
+    let http_server_slots = server_slots.clone();
+    let http_active_tunnels = active_tunnels.clone();
+
     let http = tokio::spawn(async move {
         start_http(
             WebConfig {
@@ -87,6 +97,8 @@ async fn run() -> Result<()> {
                 ssh_host_key_fingerprint,
             },
             http_pool,
+            http_server_slots,
+            http_active_tunnels,
         )
         .await
         .expect("HTTP server failed")
@@ -101,6 +113,8 @@ async fn run() -> Result<()> {
                 host_key_password,
             },
             ssh_pool,
+            server_slots,
+            active_tunnels,
         )
         .await
         .expect("SSH server failed")

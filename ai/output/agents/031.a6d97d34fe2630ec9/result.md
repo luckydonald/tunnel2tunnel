@@ -1,0 +1,1 @@
+I'll wait for this monitor notification before proceeding to commit and reporting final status.

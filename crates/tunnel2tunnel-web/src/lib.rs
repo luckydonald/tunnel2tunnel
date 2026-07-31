@@ -14,6 +14,7 @@ use tower::ServiceBuilder;
 use tower_http::services::{ServeDir, ServeFile};
 use tower_sessions::{cookie::time::Duration, Expiry, SessionManagerLayer};
 use tower_sessions_sqlx_store::PostgresStore;
+use tunnel2tunnel_ssh::{ActiveTunnels, ServerSlots};
 
 pub use bootstrap::bootstrap_admin;
 pub use error::WebError;
@@ -23,6 +24,11 @@ pub struct AppState {
     pub db: PgPool,
     pub ssh_port: u16,
     pub ssh_host_key_fingerprint: String,
+    /// Shared with the SSH server — same `Arc`s, so reads here reflect
+    /// real-time tunnel state. See `crates/t2t/src/main.rs` where both are
+    /// constructed once and handed to the SSH server and this `AppState`.
+    pub server_slots: ServerSlots,
+    pub active_tunnels: ActiveTunnels,
 }
 
 pub struct WebConfig {
@@ -34,11 +40,18 @@ pub struct WebConfig {
     pub ssh_host_key_fingerprint: String,
 }
 
-pub async fn start(config: WebConfig, pool: PgPool) -> anyhow::Result<()> {
+pub async fn start(
+    config: WebConfig,
+    pool: PgPool,
+    server_slots: ServerSlots,
+    active_tunnels: ActiveTunnels,
+) -> anyhow::Result<()> {
     let state = AppState {
         db: pool.clone(),
         ssh_port: config.ssh_port,
         ssh_host_key_fingerprint: config.ssh_host_key_fingerprint,
+        server_slots,
+        active_tunnels,
     };
 
     let session_store = PostgresStore::new(pool.clone());
@@ -126,6 +139,15 @@ pub async fn start(config: WebConfig, pool: PgPool) -> anyhow::Result<()> {
         .route(
             "/api/entities/{id}/logs",
             get(routes::entities::list_connection_logs),
+        )
+        // live connections dashboard (per-entity + admin)
+        .route(
+            "/api/entities/{id}/live-connections",
+            get(routes::live_connections::list_entity_live_connections),
+        )
+        .route(
+            "/api/admin/live-connections",
+            get(routes::live_connections::list_admin_live_connections),
         )
         // admin
         .route(

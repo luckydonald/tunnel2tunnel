@@ -219,7 +219,7 @@ pub struct EntityDetailResponse {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-async fn require_owner(
+pub(crate) async fn require_owner(
     db: &sqlx::PgPool,
     entity_id: Uuid,
     user_id: Uuid,
