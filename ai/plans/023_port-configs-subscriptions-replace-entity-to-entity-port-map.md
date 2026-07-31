@@ -90,12 +90,12 @@ Frontend: `frontend/src/pages/EntityDetailPage.vue`'s create-entity form drops t
 ## Frontend restructure
 
 - `EntityDetailPage.vue` becomes uniform for every entity (no more type-branched sections):
-  1. **"My services"** — the `port_configs` this entity owns; same CRUD table as today's Ports section, minus the old `server_entity_id` picker (gone) and the type-conditional Host-field-vs-picker branch (Host is now always shown, since offering a service always means declaring where it forwards to). `name` is required in the UI (mirroring the DB's new `NOT NULL`).
-  2. **"My subscriptions"** — replaces the old `SshCommandDisplay`-embedded discovery section: browse `subscribable-services` (grouped by owning entity), each port_config showing a subscribe/unsubscribe toggle and, once subscribed, an editable "my local port" field (the conflict-override case, now just editing the subscription row directly — no separate advanced/manual form needed since this *is* the only mechanism).
+  1. **"My services"** — the `port_configs` this entity owns; same CRUD table as today's Ports section, minus the old `server_entity_id` picker (gone) and the type-conditional Host-field-vs-picker branch (Host is now always shown, since offering a service always means declaring where it forwards to). Both `Port` (proxy_port) and `Name` are required (mirroring the DB's new `NOT NULL` on `name`, and `proxy_port`'s existing non-null column) — required-ness is conveyed via helper text/caption, not an inline `*` marker. The add-service form leads with `Port`; `Local port` auto-mirrors whatever's typed into `Port` for as long as the user hasn't separately edited `Local port` (then it decouples and stays independently editable); `Name` auto-fills from `guess_service_name(port)` the same way — synced to `Port` until the user types into `Name` directly, and left **empty** (not a placeholder string) when no guess exists, so the "Unnamed Service" fallback only ever shows up as a genuine stored value (e.g. via the migration backfill), never as a live-typed default.
+  2. **"My subscriptions"** — replaces the old `SshCommandDisplay`-embedded discovery section: browse `subscribable-services` (grouped by owning entity), each port_config showing a subscribe/unsubscribe toggle and, once subscribed, an editable "my local port" field (the conflict-override case, now just editing the subscription row directly — no separate advanced/manual form needed since this *is* the only mechanism). A primary filter defaults to **"Configured"** (only services already subscribed — nothing unsubscribed clutters the default view); switching to **"Unconfigured"** or **"All"** reveals a second filter, **Origin** (`Mine` / `Friends` / `All`, defaulting to `All`), to narrow the larger unfiltered browse set by whose services they are.
   This becomes the shared `frontend/src/components/ServiceConnector.vue` component from earlier drafts, just rebuilt on `subscribable-services`/`subscriptions` instead of `reachable-servers`/`port-discovery`.
 - `SshCommandDisplay.vue`: direction is now derived **per item**, not per entity — every owned `port_configs` row contributes a `-R` flag, every own `port_subscriptions` row contributes a `-L` flag, both can appear in the same generated command for the same entity. This removes the old `entity.entity_type === 'server' ? Remote : Local` branch entirely.
 - Access-rule UI (`EntityDetailPage.vue`'s Access Rules section): add a scope control when creating a rule — "Whole entity" (today's default, `port_config_id = null`) vs "Specific port" (a picker over this entity's own `port_configs`, shown only if it has any).
-- "Servers"/"Clients" nav items and list pages merge into a single "Entities" list page, `type` rendered as a small tag/filter chip.
+- "Servers"/"Clients" nav items and list pages merge into a single "Entities" list page, with the computed `is_server`/`is_client` badges rendered as small tag/filter chips (see `entity.type` section above).
 - `frontend/src/api/entities.ts`: `EntityPort` → `PortConfig` type (drop `server_entity_id`), new `PortSubscription`/`SubscribableOwner` types replacing `DiscoveredPort`/`ReachableServer`; API functions renamed to match the new routes.
 
 ## GUI mockups
@@ -104,7 +104,7 @@ Frontend: `frontend/src/pages/EntityDetailPage.vue`'s create-entity form drops t
 > ── Entities ──────────────────────────────────────────────────────────────
 > Filter:  ( All )  ( Server )  ( Client )              🔍 [ search... ]
 > ────────────────────────────────────────────────────────────────────────
->  Name              Badges              Online   Services   Subscriptions
+>  Name              Roles               Online   Services   Subscriptions
 >  ────────────────  ──────────────────  ───────  ─────────  ─────────────
 >  home-nas          🖧 Server            🟢       3          0
 >  my-laptop         💻 Client            🟢       0          2
@@ -112,7 +112,7 @@ Frontend: `frontend/src/pages/EntityDetailPage.vue`'s create-entity form drops t
 >  old-vps           🖧 Server            ⚪       2          0
 >                                                          [+ New entity]
 > ```
-> `/servers` = this same list/component with the filter preset to "Server"; `/clients` → "Client". Badges (`is_server`/`is_client`) are computed by the backend, not stored.
+> `/servers` = this same list/component with the filter preset to "Server"; `/clients` → "Client". The "Roles" column (`is_server`/`is_client`) is computed by the backend, not stored. The same two badges (🖧 Server / 💻 Client) are reused everywhere an entity's role needs labeling — including in place of "server leg"/"client leg" wording in the live-connections tables below.
 
 > ```
 > ── Entities / build-box ───────────────────────────────────────────────
@@ -133,20 +133,36 @@ Frontend: `frontend/src/pages/EntityDetailPage.vue`'s create-entity form drops t
 >      ▸ Postgres subscribers: my-laptop (alice), local port 5433, 12m
 >
 >  + Add service:
->    Name*      [ VNC                 ]   (required — shown to subscribers)
->    Proxy port [ 5900 ]  Local port [ 5900 ]  Host [ localhost        ]
->    Enabled    [x]                              [ Cancel ]  [ Add ]
+>    Port        [ 5900 ]                (required)
+>    Local port  [ 5900 ]                (mirrors Port until you edit it)
+>    Name        [ VNC                ]  (required; auto-suggested from Port until you edit it)
+>    Host        [ localhost           ]
+>    Enabled     [x]                              [ Cancel ]  [ Add ]
 >
 > ── My subscriptions ─────────────────────────────────────────────────────
->  Browse services you can connect to, and pick your local port.
+>  Show: ( Configured )  Unconfigured  All
 >
 >  ▾ home-nas  🖧 Server
 >     🟢  VNC     proxy 5900  → my local port [ 5901 ]   [Unsubscribe]
->     ⚪  Samba    proxy 445   →                          [ Subscribe ]
 >
 >  ▾ old-vps  🖧 Server, offline
 >     🟠  Postgres proxy 5432 → my local port [ 5555 ]   [Unsubscribe]
 >        server is offline — will connect automatically once it's back
+>
+>  ── (switching Show to "Unconfigured" or "All" reveals a second filter) ──
+>  Show: Configured  ( Unconfigured )  All        Origin: Mine  Friends  ( All )
+>
+>  ▾ home-nas  🖧 Server
+>     ⚪  Samba    proxy 445   →                          [ Subscribe ]
+>
+>  ▾ build-box  🖧 Server (mine)
+>     ⚪  Grafana  proxy 3000  →                          [ Subscribe ]
+>
+> ── Connection log ────────────────────────────────────────────────────────
+>  (unchanged from today — per-entity SSH login/auth attempt history: peer IP,
+>  key fingerprint, success/fail reason, started/ended. Kept as-is, separate
+>  from the live-connections/status-dot views above, which are about active
+>  tunnels rather than login attempts.)
 >
 > ── Access rules — who else can subscribe to my services ────────────────
 > Your own entities always have access to each other automatically.
@@ -171,10 +187,10 @@ Frontend: `frontend/src/pages/EntityDetailPage.vue`'s create-entity form drops t
 > Welcome, alice.
 >
 > Your live connections
->  ●   Entity      Role         Service    Port    Since
->  🟢  home-nas    Server leg   VNC        5900    2h 3m
->  🟢  my-laptop   Client leg   VNC        5901    2h 3m
->  🟠  my-laptop   Client leg   Postgres   5555    waiting…
+>  ●   Entity      Role        Service    Port    Since
+>  🟢  home-nas    🖧 Server    VNC        5900    2h 3m
+>  🟢  my-laptop   💻 Client    VNC        5901    2h 3m
+>  🟠  my-laptop   💻 Client    Postgres   5555    waiting…
 >                                                        [See all →]
 > ```
 
@@ -182,12 +198,13 @@ Frontend: `frontend/src/pages/EntityDetailPage.vue`'s create-entity form drops t
 > ── Admin / Live connections ─────────────────────────────────────────────
 > Filter:  [ user ▾ ]  [ role ▾ ]  [ service ▾ ]
 >
->  ●   Account   Entity       Role (leg)   Service    Port   Peer IP  Since
->  🟢  alice     home-nas     Server leg   VNC        5900   —        2h 3m
->  🟢  alice     my-laptop    Client leg   VNC        5901   1.2.3.4  2h 3m
->  🟠  alice     my-laptop    Client leg   Postgres   5555   1.2.3.4  waiting…
->  ⚪  bob       build-box    Server leg   Redis      6379   —        —
+>  ●   Account   Entity       Role        Service    Port   Peer IP  Since
+>  🟢  alice     home-nas     🖧 Server    VNC        5900   —        2h 3m
+>  🟢  alice     my-laptop    💻 Client    VNC        5901   1.2.3.4  2h 3m
+>  🟠  alice     my-laptop    💻 Client    Postgres   5555   1.2.3.4  waiting…
+>  ⚪  bob       build-box    🖧 Server    Redis      6379   —        —
 > ```
+> Each live-connections row represents one leg of a tunnel (one entity's side of it); the "Role" column just reuses the same 🖧 Server / 💻 Client badge from the Entities list rather than separate "server leg"/"client leg" wording — since an entity can hold both badges, this column simply shows which role this particular row is acting in.
 
 ## Live connections dashboard
 
