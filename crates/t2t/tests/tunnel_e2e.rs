@@ -32,7 +32,10 @@ use uuid::Uuid;
 
 use tunnel2tunnel_core::{
     db,
-    models::{entity::Entity, entity_access::EntityAccess, ssh_key::SshKey, user::User},
+    models::{
+        entity::Entity, entity_access::EntityAccess, port_config::PortConfig,
+        port_subscription::PortSubscription, ssh_key::SshKey, user::User,
+    },
     pubkey::parse_authorized_keys_line,
 };
 use tunnel2tunnel_ssh::{start as start_ssh, SshConfig};
@@ -196,7 +199,6 @@ async fn two_ssh_connections_tunnel_through_rendezvous() {
     let server_entity = Entity::create(
         &pool,
         owner.id,
-        "server",
         Some("e2e-test-server"),
         None,
         None,
@@ -207,7 +209,6 @@ async fn two_ssh_connections_tunnel_through_rendezvous() {
     let client_entity = Entity::create(
         &pool,
         owner.id,
-        "client",
         Some("e2e-test-client"),
         None,
         None,
@@ -252,6 +253,7 @@ async fn two_ssh_connections_tunnel_through_rendezvous() {
         server_entity.id,
         "entity",
         Some(client_entity.id),
+        None,
         None,
         None,
     )
@@ -307,11 +309,41 @@ async fn two_ssh_connections_tunnel_through_rendezvous() {
     log_child_stderr("ssh -R", &mut server_ssh);
     let _server_guard = ChildGuard(server_ssh);
 
+    // `tcpip_forward` auto-creates a port_configs row the first time the
+    // server registers this proxy_port — poll for it to appear, then
+    // register the client's subscription. The subscription is what
+    // `channel_open_direct_tcpip`'s step 2 requires now — a bare
+    // `entity_access` grant is no longer sufficient on its own.
+    let port_config = {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Some(pc) = PortConfig::find_enabled_by_entity_and_proxy_port(
+                &pool,
+                server_entity.id,
+                PROXY_PORT as i32,
+            )
+            .await
+            .expect("query port_config")
+            {
+                break pc;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "port_config was never auto-created for the -R forward"
+            );
+            sleep(Duration::from_millis(100)).await;
+        }
+    };
+
+    let local_port = free_port();
+    PortSubscription::create(&pool, port_config.id, client_entity.id, local_port as i32, true)
+        .await
+        .expect("create client subscription to server's port_config");
+
     // Connection 2: the "client" entity consumes it via
     // `-L local_port:<server_entity_uuid>:proxy_port`. Using the entity's
     // UUID (not "localhost") as the forwarded address is exactly the case
     // that exposed the address-mismatch bug this test guards against.
-    let local_port = free_port();
     let mut client_ssh = Command::new("ssh")
         .args([
             "-N",

@@ -20,8 +20,10 @@ use uuid::Uuid;
 use tunnel2tunnel_core::{
     ip_whitelist,
     models::{
-        connection_log::ConnectionLog, entity::Entity, entity_access::EntityAccess, ssh_key::SshKey,
+        connection_log::ConnectionLog, entity::Entity, entity_access::EntityAccess,
+        port_config::PortConfig, port_subscription::PortSubscription, ssh_key::SshKey,
     },
+    port_names::guess_service_name,
 };
 
 mod tarpit;
@@ -733,7 +735,6 @@ impl Handler for T2tHandler {
         };
         let entity = authed.entity.clone();
         let entity_name = entity.name.as_deref().unwrap_or("(unnamed)").to_string();
-        let entity_type = entity.entity_type.clone();
         let conn_id = self.conn_id;
 
         let handle = session.handle();
@@ -755,8 +756,8 @@ impl Handler for T2tHandler {
 
         // Broadcast arrival to all other sessions
         let connect_msg = format!(
-            "\r\n\x1b[32m📡 {} ({}) connected.\x1b[0m\r\n\r\n",
-            entity_name, entity_type
+            "\r\n\x1b[32m📡 {} connected.\x1b[0m\r\n\r\n",
+            entity_name
         );
         broadcast(&self.session_registry, &connect_msg, Some(conn_id)).await;
 
@@ -783,7 +784,6 @@ impl Handler for T2tHandler {
             .as_deref()
             .unwrap_or("(unnamed)")
             .to_string();
-        let entity_type = authed.entity.entity_type.clone();
         let conn_id = self.conn_id;
         let ch_id = channel.id();
 
@@ -800,9 +800,9 @@ impl Handler for T2tHandler {
         let welcome = format!(
             "\r\n\x1b[35m✨ Welcome to tunnel2tunnel, {}! ✨\x1b[0m\r\n\
              \x1b[34mTwilight Sparkle has verified your access rules — everything checks out.\r\n\
-             The portal stands ready. Your {} connection is now active. 📚\r\n\
+             The portal stands ready. Your connection is now active. 📚\r\n\
              Type a message and press Enter to chat with other connected entities.\x1b[0m\r\n\r\n",
-            entity_name, entity_type
+            entity_name
         );
         let _ = handle.data(ch_id, welcome.into_bytes()).await;
 
@@ -923,6 +923,43 @@ impl Handler for T2tHandler {
             .unwrap_or("(unnamed)")
             .to_string();
         tracing::info!(%entity_id, proxy_port = port, "server registered port");
+
+        // Auto-create a port_configs row if none exists yet for this
+        // (entity, proxy_port) — running `-R port:...` with no prior UI
+        // setup should immediately produce a real, named, enabled service
+        // rather than leaving it in an "unconfigured port" limbo state.
+        match PortConfig::find_enabled_by_entity_and_proxy_port(&self.pool, entity_id, *port as i32)
+            .await
+        {
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                let name = guess_service_name(*port as i32).unwrap_or("Unnamed Service");
+                match PortConfig::create(
+                    &self.pool,
+                    entity_id,
+                    true,
+                    *port as i32,
+                    *port as i32,
+                    name,
+                    None,
+                    0,
+                    "localhost",
+                )
+                .await
+                {
+                    Ok(pc) => {
+                        tracing::info!(%entity_id, proxy_port = port, port_config_id = %pc.id, %name, "auto-created port_config for unconfigured -R forward")
+                    }
+                    Err(e) => {
+                        tracing::warn!(err = %e, %entity_id, proxy_port = port, "failed to auto-create port_config")
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(err = %e, %entity_id, proxy_port = port, "failed to look up port_config for -R forward")
+            }
+        }
+
         self.server_slots
             .lock()
             .await
@@ -1023,43 +1060,129 @@ impl Handler for T2tHandler {
             }
         };
 
-        // Check entity_access
-        let allowed = EntityAccess::check_access(
+        // Step 1: the target must have an enabled port_config for this
+        // proxy_port — a real config/authorization miss, distinct from
+        // "server offline", so this fails fast.
+        let port_config = match PortConfig::find_enabled_by_entity_and_proxy_port(
             &self.pool,
             target_entity_id,
-            client_entity.id,
-            client_user_id,
-            target_entity.user_id,
+            port_to_connect as i32,
         )
         .await
-        .unwrap_or(false);
+        {
+            Ok(Some(pc)) => pc,
+            Ok(None) => {
+                tracing::warn!(
+                    client_entity = %client_entity.id,
+                    target_entity = %target_entity_id,
+                    target_entity_name = target_entity.name.as_deref().unwrap_or("(unnamed)"),
+                    proxy_port = port_to_connect,
+                    "direct-tcpip: rejected — target has no enabled port_config for this port"
+                );
+                return Ok(false);
+            }
+            Err(e) => {
+                tracing::error!(err = %e, target_entity = %target_entity_id, proxy_port = port_to_connect, "direct-tcpip: db error loading port_config");
+                return Ok(false);
+            }
+        };
 
-        if !allowed {
+        // Step 2: the client must have actually opted in via a
+        // port_subscriptions row, and it must currently be enabled.
+        let subscription = match PortSubscription::find_by_subscriber_and_port_config(
+            &self.pool,
+            client_entity.id,
+            port_config.id,
+        )
+        .await
+        {
+            Ok(Some(sub)) => sub,
+            Ok(None) => {
+                tracing::warn!(
+                    client_entity = %client_entity.id,
+                    target_entity = %target_entity_id,
+                    port_config_id = %port_config.id,
+                    proxy_port = port_to_connect,
+                    "direct-tcpip: rejected — client has no subscription to this port_config"
+                );
+                return Ok(false);
+            }
+            Err(e) => {
+                tracing::error!(err = %e, client_entity = %client_entity.id, port_config_id = %port_config.id, "direct-tcpip: db error loading subscription");
+                return Ok(false);
+            }
+        };
+        if !subscription.enabled {
             tracing::warn!(
                 client_entity = %client_entity.id,
                 target_entity = %target_entity_id,
-                target_entity_name = target_entity.name.as_deref().unwrap_or("(unnamed)"),
-                host = host_to_connect,
-                port = port_to_connect,
-                "direct-tcpip: rejected — access denied"
+                port_config_id = %port_config.id,
+                "direct-tcpip: rejected — subscription exists but is disabled"
             );
             return Ok(false);
         }
 
-        // Find server handle for this entity + port
-        let server_slot = self
-            .server_slots
-            .lock()
+        // Step 3: same-account access is implicit; otherwise re-verify
+        // entity_access live, so revoking access also revokes function even
+        // if a stale subscription row is left behind.
+        if client_user_id != target_entity.user_id {
+            let allowed = EntityAccess::check_access(
+                &self.pool,
+                target_entity_id,
+                Some(port_config.id),
+                client_entity.id,
+                client_user_id,
+                target_entity.user_id,
+            )
             .await
-            .get(&(target_entity_id, port_to_connect))
-            .cloned();
+            .unwrap_or(false);
+
+            if !allowed {
+                tracing::warn!(
+                    client_entity = %client_entity.id,
+                    target_entity = %target_entity_id,
+                    target_entity_name = target_entity.name.as_deref().unwrap_or("(unnamed)"),
+                    port_config_id = %port_config.id,
+                    host = host_to_connect,
+                    port = port_to_connect,
+                    "direct-tcpip: rejected — access denied (entity_access revoked?)"
+                );
+                return Ok(false);
+            }
+        }
+
+        // Step 4: server-liveness is retried, not rejected outright — a
+        // subscriber whose service is correctly configured and authorized
+        // but whose target server just hasn't registered yet (races on
+        // startup, a server mid-restart) gets bridged the moment it
+        // appears, no reconnect needed.
+        let server_slot = {
+            const POLL_INTERVAL: Duration = Duration::from_millis(250);
+            const MAX_WAIT: Duration = Duration::from_secs(12);
+            let deadline = tokio::time::Instant::now() + MAX_WAIT;
+            loop {
+                let found = self
+                    .server_slots
+                    .lock()
+                    .await
+                    .get(&(target_entity_id, port_to_connect))
+                    .cloned();
+                if found.is_some() {
+                    break found;
+                }
+                if tokio::time::Instant::now() >= deadline {
+                    break None;
+                }
+                tokio::time::sleep(POLL_INTERVAL).await;
+            }
+        };
 
         let Some((server_handle, registered_address)) = server_slot else {
             tracing::info!(
                 target_entity = %target_entity_id,
                 target_entity_name = target_entity.name.as_deref().unwrap_or("(unnamed)"),
                 proxy_port = port_to_connect,
-                "direct-tcpip: rejected — target server has no registered port (server not connected?)"
+                "direct-tcpip: rejected — target server never came online within the retry window"
             );
             return Ok(false);
         };
@@ -1180,14 +1303,13 @@ impl Drop for T2tHandler {
                 .as_deref()
                 .unwrap_or("(unnamed)")
                 .to_string();
-            let entity_type = authed.entity.entity_type.clone();
             let conn_id = self.conn_id;
             let registry = self.session_registry.clone();
             tokio::spawn(async move {
                 registry.lock().await.remove(&conn_id);
                 let msg = format!(
-                    "\r\n\x1b[31m🔌 {} ({}) disconnected.\x1b[0m\r\n\r\n",
-                    entity_name, entity_type
+                    "\r\n\x1b[31m🔌 {} disconnected.\x1b[0m\r\n\r\n",
+                    entity_name
                 );
                 broadcast(&registry, &msg, None).await;
             });
