@@ -4,11 +4,13 @@ import { useRoute, useRouter } from 'vue-router'
 import AppShell from '@/components/AppShell.vue'
 import EntityName from '@/components/EntityName.vue'
 import PubkeyInput, { type ParsedKey } from '@/components/PubkeyInput.vue'
-import SshCommandDisplay from '@/components/SshCommandDisplay.vue'
-import { entitiesApi, type Entity, type EntityDetail, type EntityPort, type ReachableServer } from '@/api/entities'
+import SshCommandDisplay, { type OwnSubscriptionRow } from '@/components/SshCommandDisplay.vue'
+import ServiceConnector from '@/components/ServiceConnector.vue'
+import { entitiesApi, type Entity, type EntityDetail, type PortConfig, type SubscribableOwner } from '@/api/entities'
 import { friendsApi, type AccessRule, type Friendship } from '@/api/friends'
 import { adminApi, type ConnLog } from '@/api/admin'
-import { subjectTypeLabel, subjectTypeOptions, failReasonLabel, tarpitMethodLabel } from '@/labels'
+import { subjectTypeLabel, subjectTypeOptions, failReasonLabel, tarpitMethodLabel, roleBadges } from '@/labels'
+import { guessServiceName } from '@/portNames'
 import { useAuthStore } from '@/stores/auth'
 import { useToast } from '@/composables/useToast'
 
@@ -22,7 +24,7 @@ const entity = ref<EntityDetail | null>(null)
 const loading = ref(true)
 const pageError = ref<string | null>(null)
 
-const reachableServers = ref<ReachableServer[]>([])
+const subscribableOwners = ref<SubscribableOwner[]>([])
 
 // SSH key form
 const showAddKey = ref(false)
@@ -36,33 +38,49 @@ const FILENAME_LS_KEY = `t2t_key_filename_${entityId}`
 const keyFilename = ref(localStorage.getItem(FILENAME_LS_KEY) ?? '')
 watch(keyFilename, v => localStorage.setItem(FILENAME_LS_KEY, v))
 
-// Port form
-const showAddPort = ref(false)
-const newPort = ref({ enabled: true, local_port: 8080, proxy_port: 8080, name: '', sort_order: 0, host: 'localhost', server_entity_id: null as string | null })
-const addingPort = ref(false)
-
-function defaultFilename(name: string | null, type: string): string {
-  const base = name ?? type
+function defaultFilename(name: string | null): string {
+  const base = name ?? entityId
   return 't2t_' + base.toLowerCase().replace(/[^a-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '')
 }
 
-async function loadReachableServers(): Promise<void> {
-  try {
-    reachableServers.value = await entitiesApi.getReachableServers(entityId)
-  } catch {
-    // non-critical; discovery section stays empty
-  }
+// ── My services (owned port_configs) ───────────────────────────────────────────
+
+const showAddPort = ref(false)
+const addingPort = ref(false)
+
+// Auto-sync flags: Local port mirrors Port, Name mirrors guessServiceName(Port), each until
+// the user edits that field directly for this form session.
+const localPortTouched = ref(false)
+const nameTouched = ref(false)
+
+function blankNewPort() {
+  return { enabled: true, local_port: 8080, proxy_port: 8080, name: '', description: null as string | null, sort_order: 0, host: 'localhost' }
+}
+const newPort = ref(blankNewPort())
+
+function handleProxyPortInput(value: number): void {
+  newPort.value.proxy_port = value
+  if (!localPortTouched.value) newPort.value.local_port = value
+  if (!nameTouched.value) newPort.value.name = guessServiceName(value) ?? ''
+}
+
+function handleLocalPortInput(value: number): void {
+  newPort.value.local_port = value
+  localPortTouched.value = true
+}
+
+function handleNameInput(value: string): void {
+  newPort.value.name = value
+  nameTouched.value = true
 }
 
 async function load(): Promise<void> {
   try {
     entity.value = await entitiesApi.getEntity(entityId)
     if (!keyFilename.value) {
-      keyFilename.value = defaultFilename(entity.value.name, entity.value.entity_type)
+      keyFilename.value = defaultFilename(entity.value.name)
     }
-    if (entity.value.entity_type === 'client') {
-      await loadReachableServers()
-    }
+    await loadSubscribableServices()
     loadAccess()
     loadIncomingAccess()
   } catch (e) {
@@ -72,16 +90,11 @@ async function load(): Promise<void> {
   }
 }
 
-async function handleDiscoveryStateChange(
-  serverPortId: string,
-  state: 'auto' | 'enabled' | 'disabled',
-  localPort?: number,
-): Promise<void> {
+async function loadSubscribableServices(): Promise<void> {
   try {
-    await entitiesApi.setPortDiscoveryState(entityId, serverPortId, state, localPort)
-    await Promise.all([load(), loadReachableServers()])
-  } catch (e) {
-    toast(e instanceof Error ? e.message : 'Failed to update discovery state')
+    subscribableOwners.value = await entitiesApi.getSubscribableServices(entityId)
+  } catch {
+    // non-critical; My subscriptions section stays empty
   }
 }
 
@@ -120,16 +133,17 @@ async function handleDeleteKey(keyId: string): Promise<void> {
 }
 
 async function handleAddPort(): Promise<void> {
-  if (!entity.value) return
+  if (!entity.value || !newPort.value.name) return
   addingPort.value = true
   try {
-    const port = await entitiesApi.createPort(entityId, {
-      ...newPort.value,
-      name: newPort.value.name || null,
-    })
+    const port = await entitiesApi.createPort(entityId, { ...newPort.value })
     entity.value.ports.push(port)
     showAddPort.value = false
-    newPort.value = { enabled: true, local_port: 8080, proxy_port: 8080, name: '', sort_order: 0, host: 'localhost', server_entity_id: null }
+    newPort.value = blankNewPort()
+    localPortTouched.value = false
+    nameTouched.value = false
+    // Roles may have just changed (first service added) — refresh the entity header.
+    entity.value.is_server = true
   } catch (e) {
     toast(e instanceof Error ? e.message : 'Failed to add port')
   } finally {
@@ -137,7 +151,7 @@ async function handleAddPort(): Promise<void> {
   }
 }
 
-async function handleUpdatePort(port: EntityPort): Promise<void> {
+async function handleUpdatePort(port: PortConfig): Promise<void> {
   try {
     const updated = await entitiesApi.updatePort(entityId, port.id, {
       enabled: port.enabled,
@@ -147,7 +161,6 @@ async function handleUpdatePort(port: EntityPort): Promise<void> {
       description: port.description,
       sort_order: port.sort_order,
       host: port.host,
-      server_entity_id: port.server_entity_id,
     })
     if (entity.value) {
       const idx = entity.value.ports.findIndex(p => p.id === port.id)
@@ -159,17 +172,71 @@ async function handleUpdatePort(port: EntityPort): Promise<void> {
 }
 
 async function handleDeletePort(portId: string): Promise<void> {
-  if (!confirm('Delete this port?')) return
+  if (!confirm('Delete this service?')) return
   try {
     await entitiesApi.deletePort(entityId, portId)
     if (entity.value) entity.value.ports = entity.value.ports.filter(p => p.id !== portId)
   } catch (e) {
-    toast(e instanceof Error ? e.message : 'Failed to delete port')
+    toast(e instanceof Error ? e.message : 'Failed to delete service')
   }
 }
 
-// Access rules
+// ── My subscriptions ────────────────────────────────────────────────────────────
+
 const auth = useAuthStore()
+const ownEntityIds = ref<string[]>([])
+
+async function loadOwnEntityIds(): Promise<void> {
+  try {
+    const mine = await entitiesApi.list()
+    ownEntityIds.value = mine.map(e => e.id)
+  } catch {
+    // non-critical; Origin "Mine" filter just won't narrow anything
+  }
+}
+
+async function handleSubscribe(portConfigId: string, localPort: number): Promise<void> {
+  try {
+    await entitiesApi.createSubscription(entityId, { port_config_id: portConfigId, subscriber_local_port: localPort })
+    await loadSubscribableServices()
+    if (entity.value) entity.value.is_client = true
+  } catch (e) {
+    toast(e instanceof Error ? e.message : 'Failed to subscribe')
+  }
+}
+
+async function handleUnsubscribe(subscriptionId: string): Promise<void> {
+  try {
+    await entitiesApi.deleteSubscription(entityId, subscriptionId)
+    await loadSubscribableServices()
+  } catch (e) {
+    toast(e instanceof Error ? e.message : 'Failed to unsubscribe')
+  }
+}
+
+async function handleUpdateLocalPort(subscriptionId: string, localPort: number): Promise<void> {
+  try {
+    await entitiesApi.updateSubscription(entityId, subscriptionId, { subscriber_local_port: localPort })
+    await loadSubscribableServices()
+  } catch (e) {
+    toast(e instanceof Error ? e.message : 'Failed to update local port')
+  }
+}
+
+// Flattened view of this entity's own subscriptions (for the SSH command's -L flags)
+const ownSubscriptionRows = computed((): OwnSubscriptionRow[] => {
+  const rows: OwnSubscriptionRow[] = []
+  for (const owner of subscribableOwners.value) {
+    for (const service of owner.services) {
+      if (service.subscription) {
+        rows.push({ subscription: service.subscription, service, ownerId: owner.id, ownerName: owner.name })
+      }
+    }
+  }
+  return rows
+})
+
+// Access rules
 const accessRules = ref<AccessRule[]>([])
 const accessLoaded = ref(false)
 const showAddAccess = ref(false)
@@ -179,12 +246,16 @@ type NewAccess = {
   subject_entity_id: string | null
   subject_user_id: string | null
   hostname: string
+  scope: 'whole' | 'port'
+  port_config_id: string | null
 }
 const blankAccess = (): NewAccess => ({
   subject_type: 'public_lite',
   subject_entity_id: null,
   subject_user_id: null,
   hostname: '',
+  scope: 'whole',
+  port_config_id: null,
 })
 const newAccess = ref<NewAccess>(blankAccess())
 const addingAccess = ref(false)
@@ -228,7 +299,13 @@ function friendUserId(f: Friendship): string {
 const entityNameMap = computed(() => {
   const m = new Map<string, string>()
   for (const e of accessFormEntities.value)
-    m.set(e.id, e.name ? `${e.name} (${e.entity_type})` : `${e.id.slice(0, 8)}… (${e.entity_type})`)
+    m.set(e.id, e.name ? e.name : `${e.id.slice(0, 8)}…`)
+  return m
+})
+
+const portConfigNameMap = computed(() => {
+  const m = new Map<string, string>()
+  if (entity.value) for (const p of entity.value.ports) m.set(p.id, p.name)
   return m
 })
 
@@ -255,6 +332,7 @@ async function handleAddAccess(): Promise<void> {
       subject_entity_id: newAccess.value.subject_entity_id ?? null,
       subject_user_id: newAccess.value.subject_user_id ?? null,
       hostname: newAccess.value.hostname || null,
+      port_config_id: newAccess.value.scope === 'port' ? newAccess.value.port_config_id : null,
     })
     accessRules.value.push(rule)
     showAddAccess.value = false
@@ -309,7 +387,7 @@ async function loadConnLogs(): Promise<void> {
 }
 
 async function handleDeleteEntity(): Promise<void> {
-  if (!confirm('Delete this entity? All SSH keys and ports will also be removed.')) return
+  if (!confirm('Delete this entity? All SSH keys and services will also be removed.')) return
   try {
     await entitiesApi.deleteEntity(entityId)
     await router.push({ name: 'entities' })
@@ -317,6 +395,8 @@ async function handleDeleteEntity(): Promise<void> {
     toast(e instanceof Error ? e.message : 'Failed to delete entity')
   }
 }
+
+onMounted(loadOwnEntityIds)
 </script>
 
 <template>
@@ -329,14 +409,13 @@ async function handleDeleteEntity(): Promise<void> {
       <div class="page-header">
         <div>
           <div class="breadcrumb">
-            <RouterLink :to="{ name: entity.entity_type === 'server' ? 'servers' : 'clients' }">
-              {{ entity.entity_type === 'server' ? 'Servers' : 'Clients' }}
-            </RouterLink>
+            <RouterLink :to="{ name: 'entities' }">Entities</RouterLink>
             <span class="sep">/</span>
             <EntityName :entity="entity" />
           </div>
           <h1>
             <EntityName :entity="entity" />
+            <span class="roles-badge">{{ roleBadges(entity) }}</span>
             <span :class="['badge-online', entity.online ? 'online' : 'offline']">
               {{ entity.online ? 'Online' : 'Offline' }}
             </span>
@@ -349,32 +428,31 @@ async function handleDeleteEntity(): Promise<void> {
         <button class="btn-del" @click="handleDeleteEntity">Delete entity</button>
       </div>
 
-      <!-- SSH command + ports overview -->
+      <!-- SSH command -->
       <section class="section">
         <h2>SSH Command</h2>
         <SshCommandDisplay
           :entity="entity"
           :ports="entity.ports"
+          :subscriptions="ownSubscriptionRows"
           :filename="keyFilename"
-          :reachable-servers="reachableServers"
-          @discovery-state-change="handleDiscoveryStateChange"
         />
       </section>
 
-      <!-- Ports management -->
-      <section id="ports" class="section">
+      <!-- My services -->
+      <section id="services" class="section">
         <div class="section-header">
-          <h2>Ports</h2>
-          <button class="btn-secondary" @click="showAddPort = true">Add port</button>
+          <h2>My services</h2>
+          <button class="btn-secondary" @click="showAddPort = true">+ Add service</button>
         </div>
 
         <table v-if="entity.ports.length" class="data-table">
           <thead>
             <tr>
               <th>Enabled</th>
-              <th>Local port</th>
               <th>Proxy port</th>
-              <th v-if="entity.entity_type === 'server'">Host</th>
+              <th>Local port</th>
+              <th>Host</th>
               <th>Name</th>
               <th>Order</th>
               <th></th>
@@ -391,17 +469,17 @@ async function handleDeleteEntity(): Promise<void> {
               </td>
               <td>
                 <input
+                  type="number" class="port-num" :value="port.proxy_port" min="1" max="65535" list="common-ports"
+                  @blur="port.proxy_port = +($event.target as HTMLInputElement).value; handleUpdatePort(port)"
+                />
+              </td>
+              <td>
+                <input
                   type="number" class="port-num" :value="port.local_port" min="1" max="65535" list="common-ports"
                   @blur="port.local_port = +($event.target as HTMLInputElement).value; handleUpdatePort(port)"
                 />
               </td>
               <td>
-                <input
-                  type="number" class="port-num" :value="port.proxy_port" min="1" max="65535" list="common-ports"
-                  @blur="port.proxy_port = +($event.target as HTMLInputElement).value; handleUpdatePort(port)"
-                />
-              </td>
-              <td v-if="entity.entity_type === 'server'">
                 <input
                   type="text" class="port-host" :value="port.host"
                   @blur="port.host = ($event.target as HTMLInputElement).value || 'localhost'; handleUpdatePort(port)"
@@ -409,8 +487,8 @@ async function handleDeleteEntity(): Promise<void> {
               </td>
               <td>
                 <input
-                  type="text" class="port-name" :value="port.name ?? ''"
-                  @blur="port.name = ($event.target as HTMLInputElement).value || null; handleUpdatePort(port)"
+                  type="text" class="port-name" :value="port.name"
+                  @blur="port.name = ($event.target as HTMLInputElement).value || port.name; handleUpdatePort(port)"
                 />
               </td>
               <td>
@@ -423,7 +501,7 @@ async function handleDeleteEntity(): Promise<void> {
             </tr>
           </tbody>
         </table>
-        <p v-else class="empty">No ports configured.</p>
+        <p v-else class="empty">No services configured.</p>
 
         <!-- Common ports suggestions for port inputs -->
         <datalist id="common-ports">
@@ -444,32 +522,53 @@ async function handleDeleteEntity(): Promise<void> {
           <option value="27017" label="MongoDB" />
         </datalist>
 
-        <!-- Add port form (inline) -->
+        <!-- Add service form (inline) -->
         <div v-if="showAddPort" class="add-port-form">
-          <input v-model.number="newPort.local_port" type="number" class="port-num" placeholder="Local" min="1" max="65535" list="common-ports" />
-          <input v-model.number="newPort.proxy_port" type="number" class="port-num" placeholder="Proxy" min="1" max="65535" list="common-ports" />
-          <template v-if="entity.entity_type === 'server'">
-            <input v-model="newPort.host" type="text" class="port-host" placeholder="Host (default: localhost)" />
-          </template>
-          <input v-model="newPort.name" type="text" class="port-name" placeholder="Name (optional)" />
+          <div class="field-group">
+            <input
+              :value="newPort.proxy_port"
+              type="number" class="port-num" placeholder="Port" min="1" max="65535" list="common-ports"
+              @input="handleProxyPortInput(+($event.target as HTMLInputElement).value)"
+            />
+            <span class="field-caption">Port (required)</span>
+          </div>
+          <div class="field-group">
+            <input
+              :value="newPort.local_port"
+              type="number" class="port-num" placeholder="Local port" min="1" max="65535" list="common-ports"
+              @input="handleLocalPortInput(+($event.target as HTMLInputElement).value)"
+            />
+            <span class="field-caption">Local port (mirrors Port until edited)</span>
+          </div>
+          <div class="field-group">
+            <input
+              :value="newPort.name"
+              type="text" class="port-name" placeholder="Name"
+              @input="handleNameInput(($event.target as HTMLInputElement).value)"
+            />
+            <span class="field-caption">Name (required; auto-suggested from Port until edited)</span>
+          </div>
+          <input v-model="newPort.host" type="text" class="port-host" placeholder="Host" />
           <label class="checkbox-label">
             <input v-model="newPort.enabled" type="checkbox" /> Enabled
           </label>
-          <!-- Server target picker (client entities only) -->
-          <template v-if="entity.entity_type === 'client'">
-            <select v-model="newPort.server_entity_id" class="select-sm">
-              <option :value="null">— server (optional) —</option>
-              <option v-for="s in reachableServers" :key="s.id" :value="s.id">
-                {{ s.name ?? s.id.slice(0, 13) + '…' }}
-                <template v-if="s.hostname"> ({{ s.hostname }})</template>
-              </option>
-            </select>
-          </template>
-          <button class="btn-primary" :disabled="addingPort" @click="handleAddPort">
+          <button class="btn-primary" :disabled="addingPort || !newPort.name" @click="handleAddPort">
             {{ addingPort ? 'Adding…' : 'Add' }}
           </button>
           <button class="btn-secondary" @click="showAddPort = false">Cancel</button>
         </div>
+      </section>
+
+      <!-- My subscriptions -->
+      <section id="subscriptions" class="section">
+        <h2>My subscriptions</h2>
+        <ServiceConnector
+          :subscribable-owners="subscribableOwners"
+          :own-entity-ids="ownEntityIds"
+          @subscribe="handleSubscribe"
+          @unsubscribe="handleUnsubscribe"
+          @update-local-port="handleUpdateLocalPort"
+        />
       </section>
 
       <!-- SSH keys -->
@@ -527,6 +626,7 @@ async function handleDeleteEntity(): Promise<void> {
             {{ showAddAccess ? 'Cancel' : 'Add rule' }}
           </button>
         </div>
+        <p class="section-note">Who else can subscribe to my services. Your own entities always have access to each other automatically.</p>
 
         <!-- lazy-load on first open -->
         <template v-if="accessLoaded">
@@ -544,7 +644,7 @@ async function handleDeleteEntity(): Promise<void> {
               <select v-model="newAccess.subject_entity_id" class="select-sm">
                 <option :value="null" disabled>— pick entity —</option>
                 <option v-for="e in accessFormEntities" :key="e.id" :value="e.id">
-                  {{ e.name ?? e.id.slice(0, 8) + '…' }} ({{ e.entity_type }})
+                  {{ e.name ?? e.id.slice(0, 8) + '…' }} ({{ roleBadges(e) }})
                 </option>
               </select>
               <span v-if="!accessFormEntities.length" class="field-hint">No entities found.</span>
@@ -566,6 +666,19 @@ async function handleDeleteEntity(): Promise<void> {
               <span v-if="!accessFormFriends.length" class="field-hint">No accepted friends.</span>
             </template>
 
+            <!-- scope picker -->
+            <label class="field-label">Scope</label>
+            <select v-model="newAccess.scope" class="select-sm">
+              <option value="whole">Whole entity</option>
+              <option value="port" :disabled="!entity.ports.length">Specific port</option>
+            </select>
+            <template v-if="newAccess.scope === 'port'">
+              <select v-model="newAccess.port_config_id" class="select-sm">
+                <option :value="null" disabled>— pick service —</option>
+                <option v-for="p in entity.ports" :key="p.id" :value="p.id">{{ p.name }}</option>
+              </select>
+            </template>
+
             <input
               v-model="newAccess.hostname"
               type="text"
@@ -576,7 +689,8 @@ async function handleDeleteEntity(): Promise<void> {
               class="btn-primary"
               :disabled="addingAccess
                 || (newAccess.subject_type === 'entity' && !newAccess.subject_entity_id)
-                || (newAccess.subject_type === 'all_user_entities' && !newAccess.subject_user_id)"
+                || (newAccess.subject_type === 'all_user_entities' && !newAccess.subject_user_id)
+                || (newAccess.scope === 'port' && !newAccess.port_config_id)"
               @click="handleAddAccess"
             >
               {{ addingAccess ? 'Adding…' : 'Add' }}
@@ -589,6 +703,7 @@ async function handleDeleteEntity(): Promise<void> {
                 <th>Subject type</th>
                 <th>Subject entity</th>
                 <th>Subject user</th>
+                <th>Scope</th>
                 <th>Hostname alias</th>
                 <th></th>
               </tr>
@@ -615,6 +730,7 @@ async function handleDeleteEntity(): Promise<void> {
                   </template>
                   <span v-else>—</span>
                 </td>
+                <td>{{ rule.port_config_id ? `Only "${portConfigNameMap.get(rule.port_config_id) ?? rule.port_config_id.slice(0, 8) + '…'}"` : 'Whole entity' }}</td>
                 <td>{{ rule.hostname ?? '—' }}</td>
                 <td><button class="btn-del-sm" @click="handleDeleteAccess(rule.id)">×</button></td>
               </tr>
@@ -712,6 +828,8 @@ async function handleDeleteEntity(): Promise<void> {
 
 .subtitle { margin: 0.25rem 0 0; color: #94a3b8; font-size: 0.9375rem; }
 
+.roles-badge { margin-left: 0.625rem; font-size: 0.8125rem; color: #94a3b8; vertical-align: middle; }
+
 .section {
   margin-bottom: 2.5rem;
   h2 { font-size: 1rem; color: #94a3b8; margin-bottom: 1rem; text-transform: uppercase; letter-spacing: 0.06em; }
@@ -747,8 +865,16 @@ async function handleDeleteEntity(): Promise<void> {
 }
 
 .add-port-form {
-  display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
+  display: flex; align-items: flex-end; gap: 0.5rem; flex-wrap: wrap;
   padding: 0.75rem; background: #1a1d27; border-radius: 6px; margin-top: 0.75rem;
+}
+
+.field-group {
+  display: flex; flex-direction: column; gap: 0.25rem;
+}
+
+.field-caption {
+  font-size: 0.6875rem; color: #64748b; white-space: nowrap;
 }
 
 .checkbox-label { display: flex; align-items: center; gap: 0.375rem; color: #94a3b8; font-size: 0.875rem; }
