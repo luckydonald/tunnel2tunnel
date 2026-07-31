@@ -1253,3 +1253,12 @@ Generally:
 
 ❯ don't call it server/client leg, just reuse the badges. The Badges column should also just be called "Roles", so it's consistent. For adding a port, start with port number, have the second port number sync with it while unchanged/default, and also guess the name if still unchanged/default (however, unnamed -> empty field). Don't actually print the `*` at the required fields, but notice that port is required too. The My subscription should have filters, default: "Configured" (everything I expect to see, & relevant for that service, so no unsubscribed stuff. Also: "Unconfigured" / "All", which both add a second filter to choose from, which origin: "Mine" / "Friends" / "All" (default).
 
+❯ Task Notification:
+> - Task `a350c1af871d20739` <kbd>completed</kbd>
+> - Tool `toolu_01N4WNa4xRf4L56j4UuM2rSG`
+> - > Agent "Implement backend: port-configs + subscriptions" finished
+> - [Query (`15109` chars, `14.8 KB`)](output/agents/027.a350c1af871d20739/prompt.md)
+> - [Answer (`3607` chars, `3.54 KB`)](output/agents/027.a350c1af871d20739/result.md)
+> - [Raw log (`1064039` chars, `1.03 MB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/27a0d1ad-3acf-4320-b092-c1d6d2970363/tasks/a350c1af871d20739.output)
+> - `95` tools, `196522` tokens, `13.0084 s`
+

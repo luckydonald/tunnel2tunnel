@@ -7,8 +7,12 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use tunnel2tunnel_core::models::{
-    connection_log::ConnectionLog, entity::Entity, entity_port::EntityPort,
-    entity_port_discovery_rule::EntityPortDiscoveryRule, ssh_key::SshKey,
+    connection_log::ConnectionLog,
+    entity::Entity,
+    entity_access::EntityAccess,
+    port_config::PortConfig,
+    port_subscription::{PortSubscription, SubscribableOwner, SubscribableService},
+    ssh_key::SshKey,
 };
 use uuid::Uuid;
 
@@ -16,12 +20,13 @@ use uuid::Uuid;
 
 #[derive(Deserialize)]
 pub struct EntityListQuery {
-    pub entity_type: Option<String>,
+    /// Optional `server`/`client` filter over the computed `is_server`/
+    /// `is_client` booleans — `type` is no longer a stored column.
+    pub role: Option<String>,
 }
 
 #[derive(Deserialize)]
 pub struct CreateEntityBody {
-    pub entity_type: String,
     pub name: Option<String>,
     pub description: Option<String>,
     pub ip_whitelist: Option<String>,
@@ -53,11 +58,10 @@ pub struct CreatePortBody {
     pub enabled: Option<bool>,
     pub local_port: i32,
     pub proxy_port: i32,
-    pub name: Option<String>,
+    pub name: String,
     pub description: Option<String>,
     pub sort_order: Option<i32>,
     pub host: Option<String>,
-    pub server_entity_id: Option<Uuid>,
 }
 
 #[derive(Deserialize)]
@@ -65,11 +69,10 @@ pub struct UpdatePortBody {
     pub enabled: bool,
     pub local_port: i32,
     pub proxy_port: i32,
-    pub name: Option<String>,
+    pub name: String,
     pub description: Option<String>,
     pub sort_order: i32,
     pub host: Option<String>,
-    pub server_entity_id: Option<Uuid>,
 }
 
 // ── Response types ────────────────────────────────────────────────────────────
@@ -77,7 +80,6 @@ pub struct UpdatePortBody {
 #[derive(Serialize)]
 pub struct EntityResponse {
     pub id: Uuid,
-    pub entity_type: String,
     pub name: Option<String>,
     pub description: Option<String>,
     pub ip_whitelist: Option<String>,
@@ -94,13 +96,16 @@ pub struct EntityResponse {
     pub online: bool,
     #[serde(with = "time::serde::rfc3339::option")]
     pub last_disconnected_at: Option<OffsetDateTime>,
+    /// Computed: this entity owns at least one `port_configs` row.
+    pub is_server: bool,
+    /// Computed: this entity owns at least one `port_subscriptions` row.
+    pub is_client: bool,
 }
 
 impl From<Entity> for EntityResponse {
     fn from(e: Entity) -> Self {
         EntityResponse {
             id: e.id,
-            entity_type: e.entity_type,
             name: e.name,
             description: e.description,
             ip_whitelist: e.ip_whitelist,
@@ -110,6 +115,8 @@ impl From<Entity> for EntityResponse {
             deleted_at: e.ts.soft_delete.deleted_at,
             online: false,
             last_disconnected_at: None,
+            is_server: false,
+            is_client: false,
         }
     }
 }
@@ -120,6 +127,12 @@ impl EntityResponse {
             self.online = online;
             self.last_disconnected_at = last_disconnected_at;
         }
+        self
+    }
+
+    fn with_roles(mut self, is_server: bool, is_client: bool) -> Self {
+        self.is_server = is_server;
+        self.is_client = is_client;
         self
     }
 }
@@ -162,26 +175,25 @@ impl From<SshKey> for SshKeyResponse {
 }
 
 #[derive(Serialize)]
-pub struct EntityPortResponse {
+pub struct PortConfigResponse {
     pub id: Uuid,
     pub entity_id: Uuid,
     pub enabled: bool,
     pub local_port: i32,
     pub proxy_port: i32,
-    pub name: Option<String>,
+    pub name: String,
     pub description: Option<String>,
     pub sort_order: i32,
     pub host: String,
-    pub server_entity_id: Option<Uuid>,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
     pub updated_at: OffsetDateTime,
 }
 
-impl From<EntityPort> for EntityPortResponse {
-    fn from(p: EntityPort) -> Self {
-        EntityPortResponse {
+impl From<PortConfig> for PortConfigResponse {
+    fn from(p: PortConfig) -> Self {
+        PortConfigResponse {
             id: p.id,
             entity_id: p.entity_id,
             enabled: p.enabled,
@@ -191,7 +203,6 @@ impl From<EntityPort> for EntityPortResponse {
             description: p.description,
             sort_order: p.sort_order,
             host: p.host,
-            server_entity_id: p.server_entity_id,
             created_at: p.ts.created_at,
             updated_at: p.ts.updated_at,
         }
@@ -203,7 +214,7 @@ pub struct EntityDetailResponse {
     #[serde(flatten)]
     pub entity: EntityResponse,
     pub ssh_keys: Vec<SshKeyResponse>,
-    pub ports: Vec<EntityPortResponse>,
+    pub ports: Vec<PortConfigResponse>,
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -218,6 +229,16 @@ async fn require_owner(
         .ok_or(WebError::NotFound)
 }
 
+async fn entity_roles(db: &sqlx::PgPool, entity_id: Uuid) -> Result<(bool, bool), WebError> {
+    let is_server = PortConfig::entity_has_any(db, entity_id)
+        .await
+        .map_err(WebError::Core)?;
+    let is_client = PortSubscription::entity_has_any(db, entity_id)
+        .await
+        .map_err(WebError::Core)?;
+    Ok((is_server, is_client))
+}
+
 // ── Handlers — entities ───────────────────────────────────────────────────────
 
 pub async fn list_entities(
@@ -225,19 +246,39 @@ pub async fn list_entities(
     State(state): State<AppState>,
     Query(q): Query<EntityListQuery>,
 ) -> Result<Json<Vec<EntityResponse>>, WebError> {
-    let list = Entity::list_for_user(&state.db, user.id, q.entity_type.as_deref()).await?;
+    let list = Entity::list_for_user(&state.db, user.id).await?;
     let ids: Vec<Uuid> = list.iter().map(|e| e.id).collect();
     let statuses = ConnectionLog::entity_statuses(&state.db, &ids)
         .await
         .map_err(WebError::Core)?;
-    Ok(Json(
-        list.into_iter()
-            .map(|e| {
-                let status = statuses.get(&e.id).copied();
-                EntityResponse::from(e).with_status(status)
-            })
-            .collect(),
-    ))
+    let servers = PortConfig::entities_have_any(&state.db, &ids)
+        .await
+        .map_err(WebError::Core)?;
+    let clients = PortSubscription::entities_have_any(&state.db, &ids)
+        .await
+        .map_err(WebError::Core)?;
+
+    let mut result: Vec<EntityResponse> = list
+        .into_iter()
+        .map(|e| {
+            let status = statuses.get(&e.id).copied();
+            let is_server = servers.contains(&e.id);
+            let is_client = clients.contains(&e.id);
+            EntityResponse::from(e)
+                .with_status(status)
+                .with_roles(is_server, is_client)
+        })
+        .collect();
+
+    if let Some(role) = q.role.as_deref() {
+        result.retain(|e| match role {
+            "server" => e.is_server,
+            "client" => e.is_client,
+            _ => true,
+        });
+    }
+
+    Ok(Json(result))
 }
 
 pub async fn create_entity(
@@ -245,15 +286,9 @@ pub async fn create_entity(
     State(state): State<AppState>,
     Json(b): Json<CreateEntityBody>,
 ) -> Result<(StatusCode, Json<EntityResponse>), WebError> {
-    if b.entity_type != "server" && b.entity_type != "client" {
-        return Err(WebError::BadRequest(
-            "entity_type must be 'server' or 'client'".into(),
-        ));
-    }
     let e = Entity::create(
         &state.db,
         user.id,
-        &b.entity_type,
         b.name.as_deref(),
         b.description.as_deref(),
         b.ip_whitelist.as_deref(),
@@ -270,14 +305,17 @@ pub async fn get_entity(
 ) -> Result<Json<EntityDetailResponse>, WebError> {
     let entity = require_owner(&state.db, id, user.id).await?;
     let ssh_keys = SshKey::list_for_entity(&state.db, id).await?;
-    let ports = EntityPort::list_for_entity(&state.db, id).await?;
+    let ports = PortConfig::list_for_entity(&state.db, id).await?;
     let status = ConnectionLog::entity_status(&state.db, id)
         .await
         .map_err(WebError::Core)?;
+    let (is_server, is_client) = entity_roles(&state.db, id).await?;
     Ok(Json(EntityDetailResponse {
-        entity: EntityResponse::from(entity).with_status(Some(status)),
+        entity: EntityResponse::from(entity)
+            .with_status(Some(status))
+            .with_roles(is_server, is_client),
         ssh_keys: ssh_keys.into_iter().map(SshKeyResponse::from).collect(),
-        ports: ports.into_iter().map(EntityPortResponse::from).collect(),
+        ports: ports.into_iter().map(PortConfigResponse::from).collect(),
     }))
 }
 
@@ -298,7 +336,8 @@ pub async fn update_entity(
     )
     .await?
     .ok_or(WebError::NotFound)?;
-    Ok(Json(EntityResponse::from(e)))
+    let (is_server, is_client) = entity_roles(&state.db, id).await?;
+    Ok(Json(EntityResponse::from(e).with_roles(is_server, is_client)))
 }
 
 pub async fn delete_entity(
@@ -348,17 +387,17 @@ pub async fn delete_key(
     }
 }
 
-// ── Handlers — ports ──────────────────────────────────────────────────────────
+// ── Handlers — port_configs ("my services") ───────────────────────────────────
 
 pub async fn list_ports(
     AuthUser(user): AuthUser,
     State(state): State<AppState>,
     Path(entity_id): Path<Uuid>,
-) -> Result<Json<Vec<EntityPortResponse>>, WebError> {
+) -> Result<Json<Vec<PortConfigResponse>>, WebError> {
     require_owner(&state.db, entity_id, user.id).await?;
-    let ports = EntityPort::list_for_entity(&state.db, entity_id).await?;
+    let ports = PortConfig::list_for_entity(&state.db, entity_id).await?;
     Ok(Json(
-        ports.into_iter().map(EntityPortResponse::from).collect(),
+        ports.into_iter().map(PortConfigResponse::from).collect(),
     ))
 }
 
@@ -367,22 +406,24 @@ pub async fn create_port(
     State(state): State<AppState>,
     Path(entity_id): Path<Uuid>,
     Json(b): Json<CreatePortBody>,
-) -> Result<(StatusCode, Json<EntityPortResponse>), WebError> {
+) -> Result<(StatusCode, Json<PortConfigResponse>), WebError> {
     require_owner(&state.db, entity_id, user.id).await?;
-    let port = EntityPort::create(
+    if b.name.trim().is_empty() {
+        return Err(WebError::BadRequest("name must not be empty".into()));
+    }
+    let port = PortConfig::create(
         &state.db,
         entity_id,
         b.enabled.unwrap_or(true),
         b.local_port,
         b.proxy_port,
-        b.name.as_deref(),
+        &b.name,
         b.description.as_deref(),
         b.sort_order.unwrap_or(0),
         b.host.as_deref().unwrap_or("localhost"),
-        b.server_entity_id,
     )
     .await?;
-    Ok((StatusCode::CREATED, Json(EntityPortResponse::from(port))))
+    Ok((StatusCode::CREATED, Json(PortConfigResponse::from(port))))
 }
 
 pub async fn update_port(
@@ -390,24 +431,26 @@ pub async fn update_port(
     State(state): State<AppState>,
     Path((entity_id, port_id)): Path<(Uuid, Uuid)>,
     Json(b): Json<UpdatePortBody>,
-) -> Result<Json<EntityPortResponse>, WebError> {
+) -> Result<Json<PortConfigResponse>, WebError> {
     require_owner(&state.db, entity_id, user.id).await?;
-    let port = EntityPort::update(
+    if b.name.trim().is_empty() {
+        return Err(WebError::BadRequest("name must not be empty".into()));
+    }
+    let port = PortConfig::update(
         &state.db,
         port_id,
         entity_id,
         b.enabled,
         b.local_port,
         b.proxy_port,
-        b.name.as_deref(),
+        &b.name,
         b.description.as_deref(),
         b.sort_order,
         b.host.as_deref().unwrap_or("localhost"),
-        b.server_entity_id,
     )
     .await?
     .ok_or(WebError::NotFound)?;
-    Ok(Json(EntityPortResponse::from(port)))
+    Ok(Json(PortConfigResponse::from(port)))
 }
 
 pub async fn delete_port(
@@ -416,148 +459,168 @@ pub async fn delete_port(
     Path((entity_id, port_id)): Path<(Uuid, Uuid)>,
 ) -> Result<StatusCode, WebError> {
     require_owner(&state.db, entity_id, user.id).await?;
-    if EntityPort::delete(&state.db, port_id, entity_id).await? {
+    if PortConfig::delete(&state.db, port_id, entity_id).await? {
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(WebError::NotFound)
     }
 }
 
-// ── Port discovery ────────────────────────────────────────────────────────────
+// ── Handlers — port_subscriptions ("my subscriptions") ────────────────────────
 
 #[derive(Serialize)]
-pub struct DiscoveredPortResponse {
-    #[serde(flatten)]
-    pub port: EntityPortResponse,
-    pub discovery_state: Option<String>,
-    pub client_port_id: Option<Uuid>,
+pub struct PortSubscriptionResponse {
+    pub id: Uuid,
+    pub port_config_id: Uuid,
+    pub subscriber_entity_id: Uuid,
+    pub subscriber_local_port: i32,
+    pub enabled: bool,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    pub updated_at: OffsetDateTime,
+}
+
+impl From<PortSubscription> for PortSubscriptionResponse {
+    fn from(s: PortSubscription) -> Self {
+        PortSubscriptionResponse {
+            id: s.id,
+            port_config_id: s.port_config_id,
+            subscriber_entity_id: s.subscriber_entity_id,
+            subscriber_local_port: s.subscriber_local_port,
+            enabled: s.enabled,
+            created_at: s.ts.created_at,
+            updated_at: s.ts.updated_at,
+        }
+    }
 }
 
 #[derive(Serialize)]
-pub struct ReachableServerResponse {
+pub struct SubscribableServiceResponse {
+    #[serde(flatten)]
+    pub port_config: PortConfigResponse,
+    pub subscription: Option<PortSubscriptionResponse>,
+}
+
+impl From<SubscribableService> for SubscribableServiceResponse {
+    fn from(s: SubscribableService) -> Self {
+        SubscribableServiceResponse {
+            port_config: PortConfigResponse::from(s.port_config),
+            subscription: s.subscription.map(PortSubscriptionResponse::from),
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct SubscribableOwnerResponse {
     #[serde(flatten)]
     pub entity: EntityResponse,
-    pub hostname: Option<String>,
-    pub ports: Vec<DiscoveredPortResponse>,
+    pub services: Vec<SubscribableServiceResponse>,
 }
 
-#[derive(Deserialize)]
-pub struct SetDiscoveryStateBody {
-    pub state: String,
-    pub local_port: Option<i32>,
+impl From<SubscribableOwner> for SubscribableOwnerResponse {
+    fn from(o: SubscribableOwner) -> Self {
+        SubscribableOwnerResponse {
+            entity: EntityResponse::from(o.entity),
+            services: o.services.into_iter().map(Into::into).collect(),
+        }
+    }
 }
 
-pub async fn list_reachable_servers(
+pub async fn list_subscribable_services(
     AuthUser(user): AuthUser,
     State(state): State<AppState>,
     Path(entity_id): Path<Uuid>,
-) -> Result<Json<Vec<ReachableServerResponse>>, WebError> {
-    let client = require_owner(&state.db, entity_id, user.id).await?;
-    if client.entity_type != "client" {
-        return Err(WebError::BadRequest("entity must be a client".into()));
-    }
-    let servers =
-        EntityPortDiscoveryRule::list_reachable_for_client(&state.db, entity_id, user.id).await?;
-    let response = servers
-        .into_iter()
-        .map(|s| ReachableServerResponse {
-            entity: EntityResponse::from(s.entity),
-            hostname: s.hostname,
-            ports: s
-                .ports
-                .into_iter()
-                .map(|dp| DiscoveredPortResponse {
-                    port: EntityPortResponse::from(dp.port),
-                    discovery_state: dp.discovery_state,
-                    client_port_id: dp.client_port_id,
-                })
-                .collect(),
-        })
-        .collect();
-    Ok(Json(response))
+) -> Result<Json<Vec<SubscribableOwnerResponse>>, WebError> {
+    require_owner(&state.db, entity_id, user.id).await?;
+    let owners =
+        PortSubscription::list_subscribable_for_entity(&state.db, entity_id, user.id).await?;
+    Ok(Json(owners.into_iter().map(Into::into).collect()))
 }
 
-pub async fn set_port_discovery_state(
+#[derive(Deserialize)]
+pub struct CreateSubscriptionBody {
+    pub port_config_id: Uuid,
+    pub subscriber_local_port: i32,
+    pub enabled: Option<bool>,
+}
+
+pub async fn create_subscription(
     AuthUser(user): AuthUser,
     State(state): State<AppState>,
-    Path((client_id, server_port_id)): Path<(Uuid, Uuid)>,
-    Json(b): Json<SetDiscoveryStateBody>,
+    Path(entity_id): Path<Uuid>,
+    Json(b): Json<CreateSubscriptionBody>,
+) -> Result<(StatusCode, Json<PortSubscriptionResponse>), WebError> {
+    require_owner(&state.db, entity_id, user.id).await?;
+
+    let port_config = PortConfig::find_by_id(&state.db, b.port_config_id)
+        .await?
+        .ok_or(WebError::NotFound)?;
+    let owner_entity = Entity::find_by_id_only(&state.db, port_config.entity_id)
+        .await?
+        .ok_or(WebError::NotFound)?;
+
+    let allowed = EntityAccess::check_access(
+        &state.db,
+        owner_entity.id,
+        Some(port_config.id),
+        entity_id,
+        user.id,
+        owner_entity.user_id,
+    )
+    .await
+    .map_err(WebError::Core)?;
+    if !allowed {
+        return Err(WebError::Forbidden);
+    }
+
+    let sub = PortSubscription::create(
+        &state.db,
+        port_config.id,
+        entity_id,
+        b.subscriber_local_port,
+        b.enabled.unwrap_or(true),
+    )
+    .await?;
+    Ok((StatusCode::CREATED, Json(PortSubscriptionResponse::from(sub))))
+}
+
+#[derive(Deserialize)]
+pub struct UpdateSubscriptionBody {
+    pub subscriber_local_port: Option<i32>,
+    pub enabled: Option<bool>,
+}
+
+pub async fn update_subscription(
+    AuthUser(user): AuthUser,
+    State(state): State<AppState>,
+    Path((entity_id, subscription_id)): Path<(Uuid, Uuid)>,
+    Json(b): Json<UpdateSubscriptionBody>,
+) -> Result<Json<PortSubscriptionResponse>, WebError> {
+    require_owner(&state.db, entity_id, user.id).await?;
+    let sub = PortSubscription::update(
+        &state.db,
+        subscription_id,
+        entity_id,
+        b.subscriber_local_port,
+        b.enabled,
+    )
+    .await?
+    .ok_or(WebError::NotFound)?;
+    Ok(Json(PortSubscriptionResponse::from(sub)))
+}
+
+pub async fn delete_subscription(
+    AuthUser(user): AuthUser,
+    State(state): State<AppState>,
+    Path((entity_id, subscription_id)): Path<(Uuid, Uuid)>,
 ) -> Result<StatusCode, WebError> {
-    let client = require_owner(&state.db, client_id, user.id).await?;
-    if client.entity_type != "client" {
-        return Err(WebError::BadRequest("entity must be a client".into()));
+    require_owner(&state.db, entity_id, user.id).await?;
+    if PortSubscription::delete(&state.db, subscription_id, entity_id).await? {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(WebError::NotFound)
     }
-    match b.state.as_str() {
-        "auto" => {
-            if let Some(rule) =
-                EntityPortDiscoveryRule::delete(&state.db, client_id, server_port_id).await?
-            {
-                if rule.state == "enabled" {
-                    if let Some(cid) = rule.client_port_id {
-                        EntityPort::delete(&state.db, cid, client_id).await?;
-                    }
-                }
-            }
-        }
-        "enabled" => {
-            let local_port = b
-                .local_port
-                .ok_or_else(|| WebError::BadRequest("local_port required for 'enabled'".into()))?;
-            let server_port = EntityPort::find_by_id(&state.db, server_port_id)
-                .await?
-                .ok_or(WebError::NotFound)?;
-            // Remove previous client port if re-enabling
-            if let Some(existing) =
-                EntityPortDiscoveryRule::find(&state.db, client_id, server_port_id).await?
-            {
-                if existing.state == "enabled" {
-                    if let Some(cid) = existing.client_port_id {
-                        EntityPort::delete(&state.db, cid, client_id).await?;
-                    }
-                }
-            }
-            let client_port = EntityPort::create(
-                &state.db,
-                client_id,
-                true,
-                local_port,
-                server_port.proxy_port,
-                server_port.name.as_deref(),
-                server_port.description.as_deref(),
-                server_port.sort_order,
-                "localhost",
-                Some(server_port.entity_id),
-            )
-            .await?;
-            EntityPortDiscoveryRule::upsert(
-                &state.db,
-                client_id,
-                server_port_id,
-                "enabled",
-                Some(client_port.id),
-            )
-            .await?;
-        }
-        "disabled" => {
-            if let Some(existing) =
-                EntityPortDiscoveryRule::find(&state.db, client_id, server_port_id).await?
-            {
-                if existing.state == "enabled" {
-                    if let Some(cid) = existing.client_port_id {
-                        EntityPort::delete(&state.db, cid, client_id).await?;
-                    }
-                }
-            }
-            EntityPortDiscoveryRule::upsert(&state.db, client_id, server_port_id, "disabled", None)
-                .await?;
-        }
-        _ => {
-            return Err(WebError::BadRequest(
-                "state must be 'auto', 'enabled', or 'disabled'".into(),
-            ))
-        }
-    }
-    Ok(StatusCode::NO_CONTENT)
 }
 
 // ── Connection log ────────────────────────────────────────────────────────────

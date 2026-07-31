@@ -6,7 +6,9 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use tunnel2tunnel_core::models::{entity::Entity, entity_access::EntityAccess};
+use tunnel2tunnel_core::models::{
+    entity::Entity, entity_access::EntityAccess, port_config::PortConfig,
+};
 
 use crate::{error::WebError, extractors::AuthUser, AppState};
 
@@ -18,6 +20,7 @@ pub struct AccessResponse {
     pub subject_entity_id: Option<Uuid>,
     pub subject_user_id: Option<Uuid>,
     pub hostname: Option<String>,
+    pub port_config_id: Option<Uuid>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -32,6 +35,7 @@ impl From<EntityAccess> for AccessResponse {
             subject_entity_id: a.subject_entity_id,
             subject_user_id: a.subject_user_id,
             hostname: a.hostname,
+            port_config_id: a.port_config_id,
             created_at: a.ts.created_at.format(&Rfc3339).unwrap_or_default(),
             updated_at: a.ts.updated_at.format(&Rfc3339).unwrap_or_default(),
         }
@@ -79,6 +83,10 @@ pub struct CreateAccessBody {
     pub subject_entity_id: Option<Uuid>,
     pub subject_user_id: Option<Uuid>,
     pub hostname: Option<String>,
+    /// `None` = grant covers the whole entity (default, today's behavior);
+    /// `Some(id)` = scope the grant to exactly that one of this entity's
+    /// own `port_configs` rows.
+    pub port_config_id: Option<Uuid>,
 }
 
 pub async fn create_access(
@@ -94,6 +102,18 @@ pub async fn create_access(
         return Err(WebError::BadRequest("invalid subject_type".into()));
     }
 
+    if let Some(pcid) = body.port_config_id {
+        let pc = PortConfig::find_by_id(&state.db, pcid)
+            .await
+            .map_err(WebError::Core)?
+            .ok_or_else(|| WebError::BadRequest("port_config_id not found".into()))?;
+        if pc.entity_id != entity_id {
+            return Err(WebError::BadRequest(
+                "port_config_id must belong to this entity".into(),
+            ));
+        }
+    }
+
     let rule = EntityAccess::create(
         &state.db,
         entity_id,
@@ -101,6 +121,7 @@ pub async fn create_access(
         body.subject_entity_id,
         body.subject_user_id,
         body.hostname.as_deref(),
+        body.port_config_id,
     )
     .await
     .map_err(WebError::Core)?;

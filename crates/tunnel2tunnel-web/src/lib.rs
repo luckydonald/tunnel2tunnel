@@ -109,14 +109,18 @@ pub async fn start(config: WebConfig, pool: PgPool) -> anyhow::Result<()> {
             "/api/friends/{id}/grants/{entity_id}",
             delete(routes::friends::remove_grant),
         )
-        // port discovery (client entities)
+        // subscribable services + subscriptions (browsing/subscribing to others' port_configs)
         .route(
-            "/api/entities/{entity_id}/reachable-servers",
-            get(routes::entities::list_reachable_servers),
+            "/api/entities/{entity_id}/subscribable-services",
+            get(routes::entities::list_subscribable_services),
         )
         .route(
-            "/api/entities/{client_id}/port-discovery/{server_port_id}",
-            put(routes::entities::set_port_discovery_state),
+            "/api/entities/{entity_id}/subscriptions",
+            post(routes::entities::create_subscription),
+        )
+        .route(
+            "/api/entities/{entity_id}/subscriptions/{subscription_id}",
+            put(routes::entities::update_subscription).delete(routes::entities::delete_subscription),
         )
         // entity connection logs
         .route(
