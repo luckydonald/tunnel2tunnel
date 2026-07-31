@@ -1318,3 +1318,14 @@ Generally:
 > - [Raw log (`878785` chars, `867 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/27a0d1ad-3acf-4320-b092-c1d6d2970363/tasks/a6d97d34fe2630ec9.output)
 > - `74` tools, `178186` tokens, `27.3308 s`
 
+❯ Task Notification:
+> - Task `a5e3aa67ce0a25463` <kbd>completed</kbd>
+> - Tool `toolu_018r8NkEpS2ktWyzAFWDn6ji`
+> - > Agent "Implement live-connections frontend surfaces" finished
+> - [Query (`8337` chars, `8.25 KB`)](output/agents/034.a5e3aa67ce0a25463/prompt.md)
+> - [Answer (`2759` chars, `2.73 KB`)](output/agents/034.a5e3aa67ce0a25463/result.md)
+> - [Raw log (`856454` chars, `843 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/27a0d1ad-3acf-4320-b092-c1d6d2970363/tasks/a5e3aa67ce0a25463.output)
+> - `67` tools, `152057` tokens, `7.11732 s`
+
+❯ squash and rebase according to lplp style (this message goes into the last commit, too)
+

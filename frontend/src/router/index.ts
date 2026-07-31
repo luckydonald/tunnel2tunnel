@@ -8,6 +8,7 @@ import FriendsPage from '@/pages/FriendsPage.vue'
 import AdminUsersPage from '@/pages/AdminUsersPage.vue'
 import AdminConnectionLogsPage from '@/pages/AdminConnectionLogsPage.vue'
 import AdminBanRulesPage from '@/pages/AdminBanRulesPage.vue'
+import AdminLiveConnectionsPage from '@/pages/AdminLiveConnectionsPage.vue'
 import SettingsPage from '@/pages/SettingsPage.vue'
 import PurgeKeysPage from '@/pages/PurgeKeysPage.vue'
 import PurgeAccessPage from '@/pages/PurgeAccessPage.vue'
@@ -70,6 +71,12 @@ const routes: RouteRecordRaw[] = [
     path: '/admin/ban-rules',
     name: 'admin-ban-rules',
     component: AdminBanRulesPage,
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/admin/live-connections',
+    name: 'admin-live-connections',
+    component: AdminLiveConnectionsPage,
     meta: { requiresAuth: true },
   },
   {

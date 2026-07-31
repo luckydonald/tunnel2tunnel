@@ -64,6 +64,53 @@ export interface EntityDetail extends Entity {
   ports: PortConfig[]
 }
 
+// ── Live connections (Phase 5 dashboard) ────────────────────────────────────────
+
+export type LiveConnectionStatus = 'green' | 'gray' | 'orange'
+
+export interface LiveAccountRef {
+  user_id: string
+  username: string
+}
+
+export interface LiveEntityRef {
+  id: string
+  name: string | null
+}
+
+export interface LiveSubscriberInfo {
+  entity: LiveEntityRef
+  account: LiveAccountRef
+  peer_ip: string
+  connected_since: string
+}
+
+export interface ServiceLiveStatus {
+  port_config_id: string
+  service_name: string
+  proxy_port: number
+  /** A service you own is never "orange" — that status only applies to subscriber-side rows. */
+  status: 'green' | 'gray'
+  subscribers: LiveSubscriberInfo[]
+}
+
+export interface SubscriptionLiveStatus {
+  subscription_id: string
+  port_config_id: string
+  owner: LiveEntityRef
+  service_name: string
+  proxy_port: number
+  subscriber_local_port: number
+  enabled: boolean
+  status: LiveConnectionStatus
+  connected_since: string | null
+}
+
+export interface EntityLiveConnectionsResponse {
+  services: ServiceLiveStatus[]
+  subscriptions: SubscriptionLiveStatus[]
+}
+
 export interface CreateEntityParams {
   name?: string | null
   description?: string | null
@@ -196,4 +243,7 @@ export const entitiesApi = {
 
   deleteSubscription: (entityId: string, subscriptionId: string) =>
     apiFetch<void>(`/api/entities/${entityId}/subscriptions/${subscriptionId}`, { method: 'DELETE' }),
+
+  getLiveConnections: (entityId: string) =>
+    apiFetch<EntityLiveConnectionsResponse>(`/api/entities/${entityId}/live-connections`),
 }

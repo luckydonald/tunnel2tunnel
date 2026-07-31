@@ -51,6 +51,7 @@ async function handleLogout(): Promise<void> {
         <li v-if="auth.user?.is_admin"><RouterLink to="/admin/users">Admin: Users</RouterLink></li>
         <li v-if="auth.user?.is_admin"><RouterLink to="/admin/connection-logs">Admin: Connection Logs</RouterLink></li>
         <li v-if="auth.user?.is_admin"><RouterLink to="/admin/ban-rules">Admin: Ban Rules</RouterLink></li>
+        <li v-if="auth.user?.is_admin"><RouterLink to="/admin/live-connections">Admin: Live Connections</RouterLink></li>
       </ul>
       <div class="sidebar-footer">
         <span class="username">{{ auth.user?.username }}</span>

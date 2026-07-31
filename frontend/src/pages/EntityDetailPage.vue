@@ -6,11 +6,21 @@ import EntityName from '@/components/EntityName.vue'
 import PubkeyInput, { type ParsedKey } from '@/components/PubkeyInput.vue'
 import SshCommandDisplay, { type OwnSubscriptionRow } from '@/components/SshCommandDisplay.vue'
 import ServiceConnector from '@/components/ServiceConnector.vue'
-import { entitiesApi, type Entity, type EntityDetail, type PortConfig, type SubscribableOwner } from '@/api/entities'
+import StatusDot from '@/components/StatusDot.vue'
+import {
+  entitiesApi,
+  type Entity,
+  type EntityDetail,
+  type PortConfig,
+  type SubscribableOwner,
+  type ServiceLiveStatus,
+  type SubscriptionLiveStatus,
+} from '@/api/entities'
 import { friendsApi, type AccessRule, type Friendship } from '@/api/friends'
 import { adminApi, type ConnLog } from '@/api/admin'
 import { subjectTypeLabel, subjectTypeOptions, failReasonLabel, tarpitMethodLabel, roleBadges } from '@/labels'
 import { guessServiceName } from '@/portNames'
+import { formatSince } from '@/liveStatus'
 import { useAuthStore } from '@/stores/auth'
 import { useToast } from '@/composables/useToast'
 
@@ -25,6 +35,37 @@ const loading = ref(true)
 const pageError = ref<string | null>(null)
 
 const subscribableOwners = ref<SubscribableOwner[]>([])
+
+// ── Live connections ─────────────────────────────────────────────────────────
+const serviceLiveStatus = ref<ServiceLiveStatus[]>([])
+const subscriptionLiveStatus = ref<SubscriptionLiveStatus[]>([])
+const expandedServiceId = ref<string | null>(null)
+
+const serviceStatusMap = computed(() => {
+  const m = new Map<string, ServiceLiveStatus>()
+  for (const s of serviceLiveStatus.value) m.set(s.port_config_id, s)
+  return m
+})
+
+const subscriptionStatusMap = computed(() => {
+  const m = new Map<string, SubscriptionLiveStatus>()
+  for (const s of subscriptionLiveStatus.value) m.set(s.subscription_id, s)
+  return m
+})
+
+async function loadLiveConnections(): Promise<void> {
+  try {
+    const resp = await entitiesApi.getLiveConnections(entityId)
+    serviceLiveStatus.value = resp.services
+    subscriptionLiveStatus.value = resp.subscriptions
+  } catch {
+    // non-critical; status dots/subscribers just stay empty
+  }
+}
+
+function toggleServiceExpanded(portId: string): void {
+  expandedServiceId.value = expandedServiceId.value === portId ? null : portId
+}
 
 // SSH key form
 const showAddKey = ref(false)
@@ -83,6 +124,7 @@ async function load(): Promise<void> {
     await loadSubscribableServices()
     loadAccess()
     loadIncomingAccess()
+    loadLiveConnections()
   } catch (e) {
     pageError.value = e instanceof Error ? e.message : 'Failed to load entity'
   } finally {
@@ -199,6 +241,7 @@ async function handleSubscribe(portConfigId: string, localPort: number): Promise
   try {
     await entitiesApi.createSubscription(entityId, { port_config_id: portConfigId, subscriber_local_port: localPort })
     await loadSubscribableServices()
+    await loadLiveConnections()
     if (entity.value) entity.value.is_client = true
   } catch (e) {
     toast(e instanceof Error ? e.message : 'Failed to subscribe')
@@ -209,6 +252,7 @@ async function handleUnsubscribe(subscriptionId: string): Promise<void> {
   try {
     await entitiesApi.deleteSubscription(entityId, subscriptionId)
     await loadSubscribableServices()
+    await loadLiveConnections()
   } catch (e) {
     toast(e instanceof Error ? e.message : 'Failed to unsubscribe')
   }
@@ -449,56 +493,83 @@ onMounted(loadOwnEntityIds)
         <table v-if="entity.ports.length" class="data-table">
           <thead>
             <tr>
+              <th></th>
               <th>Enabled</th>
               <th>Proxy port</th>
               <th>Local port</th>
               <th>Host</th>
               <th>Name</th>
               <th>Order</th>
+              <th>Subscribers</th>
               <th></th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="port in entity.ports" :key="port.id">
-              <td>
-                <input
-                  type="checkbox"
-                  :checked="port.enabled"
-                  @change="port.enabled = ($event.target as HTMLInputElement).checked; handleUpdatePort(port)"
-                />
-              </td>
-              <td>
-                <input
-                  type="number" class="port-num" :value="port.proxy_port" min="1" max="65535" list="common-ports"
-                  @blur="port.proxy_port = +($event.target as HTMLInputElement).value; handleUpdatePort(port)"
-                />
-              </td>
-              <td>
-                <input
-                  type="number" class="port-num" :value="port.local_port" min="1" max="65535" list="common-ports"
-                  @blur="port.local_port = +($event.target as HTMLInputElement).value; handleUpdatePort(port)"
-                />
-              </td>
-              <td>
-                <input
-                  type="text" class="port-host" :value="port.host"
-                  @blur="port.host = ($event.target as HTMLInputElement).value || 'localhost'; handleUpdatePort(port)"
-                />
-              </td>
-              <td>
-                <input
-                  type="text" class="port-name" :value="port.name"
-                  @blur="port.name = ($event.target as HTMLInputElement).value || port.name; handleUpdatePort(port)"
-                />
-              </td>
-              <td>
-                <input
-                  type="number" class="port-order" :value="port.sort_order" min="0"
-                  @blur="port.sort_order = +($event.target as HTMLInputElement).value; handleUpdatePort(port)"
-                />
-              </td>
-              <td><button class="btn-del-sm" @click="handleDeletePort(port.id)">×</button></td>
-            </tr>
+            <template v-for="port in entity.ports" :key="port.id">
+              <tr>
+                <td>
+                  <StatusDot v-if="serviceStatusMap.get(port.id)" :status="serviceStatusMap.get(port.id)!.status" />
+                </td>
+                <td>
+                  <input
+                    type="checkbox"
+                    :checked="port.enabled"
+                    @change="port.enabled = ($event.target as HTMLInputElement).checked; handleUpdatePort(port)"
+                  />
+                </td>
+                <td>
+                  <input
+                    type="number" class="port-num" :value="port.proxy_port" min="1" max="65535" list="common-ports"
+                    @blur="port.proxy_port = +($event.target as HTMLInputElement).value; handleUpdatePort(port)"
+                  />
+                </td>
+                <td>
+                  <input
+                    type="number" class="port-num" :value="port.local_port" min="1" max="65535" list="common-ports"
+                    @blur="port.local_port = +($event.target as HTMLInputElement).value; handleUpdatePort(port)"
+                  />
+                </td>
+                <td>
+                  <input
+                    type="text" class="port-host" :value="port.host"
+                    @blur="port.host = ($event.target as HTMLInputElement).value || 'localhost'; handleUpdatePort(port)"
+                  />
+                </td>
+                <td>
+                  <input
+                    type="text" class="port-name" :value="port.name"
+                    @blur="port.name = ($event.target as HTMLInputElement).value || port.name; handleUpdatePort(port)"
+                  />
+                </td>
+                <td>
+                  <input
+                    type="number" class="port-order" :value="port.sort_order" min="0"
+                    @blur="port.sort_order = +($event.target as HTMLInputElement).value; handleUpdatePort(port)"
+                  />
+                </td>
+                <td>
+                  <button
+                    v-if="serviceStatusMap.get(port.id)?.subscribers.length"
+                    class="btn-subscribers"
+                    @click="toggleServiceExpanded(port.id)"
+                  >
+                    {{ expandedServiceId === port.id ? '▾' : '▸' }}
+                    {{ serviceStatusMap.get(port.id)!.subscribers.length }} connected
+                  </button>
+                  <span v-else class="td-desc">0</span>
+                </td>
+                <td><button class="btn-del-sm" @click="handleDeletePort(port.id)">×</button></td>
+              </tr>
+              <tr v-if="expandedServiceId === port.id && serviceStatusMap.get(port.id)?.subscribers.length" class="subscribers-row">
+                <td colspan="9">
+                  <ul class="subscriber-list">
+                    <li v-for="sub in serviceStatusMap.get(port.id)!.subscribers" :key="sub.entity.id + sub.account.user_id">
+                      {{ sub.entity.name ?? sub.entity.id.slice(0, 8) + '…' }} ({{ sub.account.username }}), {{ sub.peer_ip }}, {{ formatSince(sub.connected_since) }}
+                    </li>
+                  </ul>
+                </td>
+              </tr>
+            </template>
           </tbody>
         </table>
         <p v-else class="empty">No services configured.</p>
@@ -565,6 +636,7 @@ onMounted(loadOwnEntityIds)
         <ServiceConnector
           :subscribable-owners="subscribableOwners"
           :own-entity-ids="ownEntityIds"
+          :subscription-status="subscriptionStatusMap"
           @subscribe="handleSubscribe"
           @unsubscribe="handleUnsubscribe"
           @update-local-port="handleUpdateLocalPort"
@@ -852,6 +924,22 @@ onMounted(loadOwnEntityIds)
 }
 
 .td-desc { color: #64748b; }
+
+.btn-subscribers {
+  background: none; border: none; color: #94a3b8; font-size: 0.8125rem;
+  cursor: pointer; padding: 0;
+  &:hover { color: #e2e8f0; }
+}
+
+.subscribers-row td {
+  padding: 0.25rem 0.75rem 0.5rem 2.25rem;
+  background: #161927;
+}
+
+.subscriber-list {
+  margin: 0; padding: 0; list-style: none;
+  li { font-size: 0.8125rem; color: #94a3b8; padding: 0.125rem 0; }
+}
 
 .port-num   { width: 80px; }
 .port-name  { width: 120px; }

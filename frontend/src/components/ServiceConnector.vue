@@ -1,13 +1,16 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { RouterLink } from 'vue-router'
-import type { SubscribableOwner, SubscribableService } from '@/api/entities'
+import type { SubscribableOwner, SubscribableService, SubscriptionLiveStatus } from '@/api/entities'
 import { roleBadges } from '@/labels'
+import StatusDot from '@/components/StatusDot.vue'
 
 const props = defineProps<{
   subscribableOwners: SubscribableOwner[]
   /** The current user's own entity IDs, used for the Mine/Friends Origin filter. */
   ownEntityIds: string[]
+  /** Live status per subscription_id, keyed the same way as the entity-detail page's map. Optional — omitted in contexts without live data. */
+  subscriptionStatus?: Map<string, SubscriptionLiveStatus>
 }>()
 
 const emit = defineEmits<{
@@ -88,6 +91,10 @@ function setLocalPortFor(service: SubscribableService, value: number): void {
 function handleSubscribe(service: SubscribableService): void {
   emit('subscribe', service.id, localPortFor(service))
 }
+
+function statusFor(subscriptionId: string): SubscriptionLiveStatus | undefined {
+  return props.subscriptionStatus?.get(subscriptionId)
+}
 </script>
 
 <template>
@@ -126,47 +133,54 @@ function handleSubscribe(service: SubscribableService): void {
           <span v-if="!owner.online" class="owner-offline">offline</span>
         </div>
 
-        <div class="service-row" v-for="service in owner.visibleServices" :key="service.id">
-          <span class="service-name">{{ service.name }}</span>
-          <code class="service-port">proxy {{ service.proxy_port }}</code>
+        <template v-for="service in owner.visibleServices" :key="service.id">
+          <div class="service-row">
+            <StatusDot v-if="service.subscription && statusFor(service.subscription.id)" :status="statusFor(service.subscription.id)!.status" />
+            <span class="service-name">{{ service.name }}</span>
+            <code class="service-port">proxy {{ service.proxy_port }}</code>
 
-          <template v-if="service.subscription">
-            <template v-if="editingSubscriptionId === service.subscription.id">
+            <template v-if="service.subscription">
+              <template v-if="editingSubscriptionId === service.subscription.id">
+                <input
+                  v-model.number="editLocalPort"
+                  type="number"
+                  class="local-port-input"
+                  min="1"
+                  max="65535"
+                  @keyup.enter="confirmEditLocalPort(service.subscription.id)"
+                  @keyup.esc="cancelEditLocalPort"
+                />
+                <button class="btn-sm btn-primary" @click="confirmEditLocalPort(service.subscription.id)">Save</button>
+                <button class="btn-sm btn-secondary" @click="cancelEditLocalPort">Cancel</button>
+              </template>
+              <template v-else>
+                <span class="local-port-arrow">→ my local port</span>
+                <code
+                  class="service-port editable"
+                  title="Click to edit"
+                  @click="startEditLocalPort(service.subscription.id, service.subscription.subscriber_local_port)"
+                >{{ service.subscription.subscriber_local_port }}</code>
+                <button class="btn-sm btn-danger" @click="emit('unsubscribe', service.subscription.id)">Unsubscribe</button>
+              </template>
+            </template>
+            <template v-else>
+              <span class="local-port-arrow">→</span>
               <input
-                v-model.number="editLocalPort"
+                :value="localPortFor(service)"
                 type="number"
                 class="local-port-input"
                 min="1"
                 max="65535"
-                @keyup.enter="confirmEditLocalPort(service.subscription.id)"
-                @keyup.esc="cancelEditLocalPort"
+                @input="setLocalPortFor(service, +($event.target as HTMLInputElement).value)"
               />
-              <button class="btn-sm btn-primary" @click="confirmEditLocalPort(service.subscription.id)">Save</button>
-              <button class="btn-sm btn-secondary" @click="cancelEditLocalPort">Cancel</button>
+              <button class="btn-sm btn-primary" @click="handleSubscribe(service)">Subscribe</button>
             </template>
-            <template v-else>
-              <span class="local-port-arrow">→ my local port</span>
-              <code
-                class="service-port editable"
-                title="Click to edit"
-                @click="startEditLocalPort(service.subscription.id, service.subscription.subscriber_local_port)"
-              >{{ service.subscription.subscriber_local_port }}</code>
-              <button class="btn-sm btn-danger" @click="emit('unsubscribe', service.subscription.id)">Unsubscribe</button>
-            </template>
-          </template>
-          <template v-else>
-            <span class="local-port-arrow">→</span>
-            <input
-              :value="localPortFor(service)"
-              type="number"
-              class="local-port-input"
-              min="1"
-              max="65535"
-              @input="setLocalPortFor(service, +($event.target as HTMLInputElement).value)"
-            />
-            <button class="btn-sm btn-primary" @click="handleSubscribe(service)">Subscribe</button>
-          </template>
-        </div>
+          </div>
+          <p
+            v-if="service.subscription && statusFor(service.subscription.id)?.status === 'orange'"
+            class="orange-hint"
+          >server is offline — will connect automatically once it's back</p>
+        </template>
       </div>
     </div>
     <p v-else class="empty">
@@ -284,4 +298,10 @@ function handleSubscribe(service: SubscribableService): void {
 .btn-danger { background: none; border-color: #3f1e1e; color: #f87171; &:hover { background: rgba(239,68,68,.1); } }
 
 .empty { color: #64748b; font-size: 0.875rem; }
+
+.orange-hint {
+  margin: -0.25rem 0 0.25rem 1.5rem;
+  font-size: 0.75rem;
+  color: #fb923c;
+}
 </style>

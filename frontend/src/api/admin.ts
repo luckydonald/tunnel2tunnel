@@ -99,6 +99,32 @@ export interface TarpitThresholdParams {
   action: TarpitAction
 }
 
+// ── Live connections (Phase 5 dashboard) — admin flat view, one row per leg ────
+
+export type LiveConnectionStatus = 'green' | 'gray' | 'orange'
+export type LiveConnectionRole = 'server' | 'client'
+
+export interface LiveAccountRef {
+  user_id: string
+  username: string
+}
+
+export interface LiveEntityRef {
+  id: string
+  name: string | null
+}
+
+export interface LiveConnectionRow {
+  status: LiveConnectionStatus
+  account: LiveAccountRef
+  entity: LiveEntityRef
+  role: LiveConnectionRole
+  service_name: string
+  port: number
+  peer_ip: string | null
+  connected_since: string | null
+}
+
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     credentials: 'include',
@@ -247,4 +273,6 @@ export const adminApi = {
     apiFetch<void>(`/api/admin/tarpit-thresholds/${id}/restore`, { method: 'POST' }),
 
   sampleError: () => apiFetch<void>('/api/admin/sample-error'),
+
+  listLiveConnections: () => apiFetch<LiveConnectionRow[]>('/api/admin/live-connections'),
 }
