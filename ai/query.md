@@ -1162,3 +1162,90 @@ Generally:
 > </details>
 >
 
+❯ I feel like we should drop the current system of connecting two entities. I think it would be better to have a M2M table connecting from a port-config (of a server) to an entity, but on that m2m is the port for the (client) entity. There is no separate config for listening ports. Just direct "I want this routed to me" bascially. Note that while I wrote server/client, technically a client can also share a port with t2t and hence for that port be a server. Uuuuh, which is gonna make the frontend funny...
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. Should the entity.type ('server'/'client') distinction be dropped entirely from the data model (any entity can both offer ports and subscribe to others' ports), or kept as just a UI hint/default without actually restricting what an entity can do?
+>> 2. For the new M2M table (port-config → subscribing entity, with the subscriber's own local port on the join row): should it fully replace both entity_port_discovery_rules AND client-owned EntityPort rows (clean break, since this looks like early-stage/pre-production data), or should it be layered in alongside the old tables with a migration path for existing rows?
+>> 3. Does entity_access (whole-entity grants: public_lite/all_mine/all_user_entities/entity) still gate who's even allowed to see/subscribe to a port-config, with the M2M subscription just adding the port-level detail on top — or should port-level access replace entity_access entirely (i.e. a subscription row IS the access grant, no separate entity_access check)?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Entity type** (1/3) <kbd>Single Select</kbd><br>
+>> Should the entity.type ('server'/'client') distinction be dropped entirely from the data model (any entity can both offer ports and subscribe to others' ports), or kept as just a UI hint/default without actually restricting what an entity can do?
+> - [ ] 1\. Drop the constraint (Recommended)
+>   - _Remove the CHECK constraint / stop gating behavior on it. Any entity can own port-configs (offer services) and/or subscriptions (consume others' services) freely. Cleanest match for your description, but touches every place that currently branches on entity_type in both backend and frontend._
+> - [ ] 2\. Keep as a hint only
+>   - _Keep the column (maybe rename to something like 'primary_role') purely for default UI framing/sorting, but don't use it to restrict which tables an entity can have rows in. Smaller blast radius on existing code that reads entity_type._
+> - [x] 3\. _Type something:_
+>   - > Give me a list of what that would change.
+>
+>> **Migration approach** (2/3) <kbd>Single Select</kbd><br>
+>> For the new M2M table (port-config → subscribing entity, with the subscriber's own local port on the join row): should it fully replace both entity_port_discovery_rules AND client-owned EntityPort rows (clean break, since this looks like early-stage/pre-production data), or should it be layered in alongside the old tables with a migration path for existing rows?
+> - [x] 1\. Clean break, drop old tables (Recommended)
+>   - _New migration drops entity_port_discovery_rules and removes the server_entity_id/client-owned-port concept entirely, replaced by the new M2M table. Simpler resulting schema, assumes no meaningful production data to preserve._
+> - [ ] 2\. Migrate existing rows forward
+>   - _Write a data migration that converts existing discovery rules + client EntityPort rows into the new M2M rows before dropping the old tables. More defensive, more migration code, matters if there's real deployed data you care about._
+> - [ ] 3\. _Type something._
+>
+>> **Access model** (3/3) <kbd>Single Select</kbd><br>
+>> Does entity_access (whole-entity grants: public_lite/all_mine/all_user_entities/entity) still gate who's even allowed to see/subscribe to a port-config, with the M2M subscription just adding the port-level detail on top — or should port-level access replace entity_access entirely (i.e. a subscription row IS the access grant, no separate entity_access check)?
+> - [ ] 1\. entity_access still gates, subscription adds detail (Recommended)
+>   - _Keep entity_access as the 'can this entity see/reach that entity at all' layer (including public_lite/friends flows), and the M2M subscription is scoped to a specific port-config underneath that — minimal disruption to the existing friends/visibility system._
+>   - ```
+>     entity_access (unchanged)
+>       └─ gates: can entity B even see/reach entity A?
+>
+>     port_subscriptions (new M2M)
+>       └─ given B can reach A: which of A's port-configs has B subscribed to,
+>          and what local port does B want it on?
+>     ```
+> - [ ] 2\. Subscription rows become the access grant
+>   - _Replace entity_access's role for port-reachability with the subscription table itself — a subscription row is both 'I want this' and 'I'm allowed this'. Bigger change: would need to fold in how public_lite/friends visibility currently works into the new table._
+>   - ```text
+>     port_subscriptions (new M2M) becomes the SOLE gate
+>       └─ a row here means: allowed AND wanted, one concept
+>
+>     entity_access -- likely removed or reduced to just
+>       "can this entity see this port-config exists in the picker at all"
+>     ```
+> - [x] 3\. _Notes:_
+>   - > I mean the question is not about my own services, they should obviously be able to add access to my own other servers and port as needed. However I still want that friendship feature where I can share all my entities, a few selected entities or only specific ports with someone else; so they gain access to that.
+>
+> </details>
+>
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. Should the existing separate "Servers" and "Clients" list pages/nav items merge into one "Entities" list (type becomes just a filter/tag), or stay as two separate pages that both just show entities of that tag?
+>> 2. For the entity_access extension (adding an optional port_config_id column so a grant can be scoped to one port instead of the whole entity) — does that match what you want for the friendship port-sharing case, or did you have a different mechanism in mind?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **List pages** (1/2) <kbd>Single Select</kbd><br>
+>> Should the existing separate "Servers" and "Clients" list pages/nav items merge into one "Entities" list (type becomes just a filter/tag), or stay as two separate pages that both just show entities of that tag?
+> - [x] 1\. Merge into one Entities list (Recommended)
+>   - _Single list page with type shown as a small tag/filter chip, since any entity can now offer AND consume ports — matches the fact that the type no longer determines functionality._
+> - [ ] 2\. Keep two separate pages
+>   - _Keep 'Servers' and 'Clients' as separate nav items/pages, just as a display filter over the same underlying entities — smaller UI change, keeps today's navigation muscle memory._
+> - [ ] 3\. _Type something._
+>
+>> **Port-scoped access** (2/2) <kbd>Single Select</kbd><br>
+>> For the entity_access extension (adding an optional port_config_id column so a grant can be scoped to one port instead of the whole entity) — does that match what you want for the friendship port-sharing case, or did you have a different mechanism in mind?
+> - [ ] 1\. Yes, that matches (Recommended)
+>   - _entity_access rows gain an optional port_config_id: null = whole-entity grant (as today), set = scoped to just that one port. Works uniformly for direct entity_access rules and friendship-driven grants._
+> - [ ] 2\. Something else — let me explain
+>   - _Use the free-text option to describe a different approach you had in mind._
+> - [x] 3\. _Type something:_
+>   - > No, there is currently some table for defining ports (of a sort of port list per host) . It should be scoped to that.
+>
+> </details>
+>
+
