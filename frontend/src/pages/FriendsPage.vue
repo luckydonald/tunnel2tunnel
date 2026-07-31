@@ -6,7 +6,7 @@ import { useFriendsStore } from '@/stores/friends'
 import { friendsApi, type EntityGrant } from '@/api/friends'
 import { useEntitiesStore } from '@/stores/entities'
 import type { Friendship } from '@/api/friends'
-import { visibilityGrantOptions, friendshipStatusLabel } from '@/labels'
+import { visibilityGrantOptions, friendshipStatusLabel, roleBadges } from '@/labels'
 import { useToast } from '@/composables/useToast'
 
 const { show: toast } = useToast()
@@ -170,7 +170,7 @@ const myEntities = computed(() => entitiesStore.entities)
                 <select v-model="grantEntityId" class="select-sm">
                   <option value="">-- pick entity --</option>
                   <option v-for="e in myEntities" :key="e.id" :value="e.id">
-                    {{ e.name ?? e.id }} ({{ e.entity_type }})
+                    {{ e.name ?? e.id }} ({{ roleBadges(e) }})
                   </option>
                 </select>
                 <button

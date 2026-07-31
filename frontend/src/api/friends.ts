@@ -22,6 +22,7 @@ export interface AccessRule {
   subject_entity_id: string | null
   subject_user_id: string | null
   hostname: string | null
+  port_config_id: string | null
   created_at: string
   updated_at: string
 }
@@ -78,6 +79,7 @@ export const friendsApi = {
       subject_entity_id?: string | null
       subject_user_id?: string | null
       hostname?: string | null
+      port_config_id?: string | null
     },
   ) =>
     apiFetch<AccessRule>(`/api/entities/${entity_id}/access`, {

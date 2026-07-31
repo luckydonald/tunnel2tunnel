@@ -1,6 +1,5 @@
 export interface Entity {
   id: string
-  entity_type: string
   name: string | null
   description: string | null
   ip_whitelist: string | null
@@ -10,6 +9,8 @@ export interface Entity {
   deleted_at: string | null
   online: boolean
   last_disconnected_at: string | null
+  is_server: boolean
+  is_client: boolean
 }
 
 export interface SshKey {
@@ -26,40 +27,44 @@ export interface SshKey {
   deleted_at: string | null
 }
 
-export interface EntityPort {
+export interface PortConfig {
   id: string
   entity_id: string
   enabled: boolean
   local_port: number
   proxy_port: number
-  name: string | null
+  name: string
   description: string | null
   sort_order: number
   host: string
-  server_entity_id: string | null
   created_at: string
   updated_at: string
 }
 
+export interface PortSubscription {
+  id: string
+  port_config_id: string
+  subscriber_entity_id: string
+  subscriber_local_port: number
+  enabled: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface SubscribableService extends PortConfig {
+  subscription: PortSubscription | null
+}
+
+export interface SubscribableOwner extends Entity {
+  services: SubscribableService[]
+}
+
 export interface EntityDetail extends Entity {
   ssh_keys: SshKey[]
-  ports: EntityPort[]
-}
-
-export type DiscoveryState = 'enabled' | 'disabled'
-
-export interface DiscoveredPort extends EntityPort {
-  discovery_state: DiscoveryState | null
-  client_port_id: string | null
-}
-
-export interface ReachableServer extends Entity {
-  hostname: string | null
-  ports: DiscoveredPort[]
+  ports: PortConfig[]
 }
 
 export interface CreateEntityParams {
-  entity_type: 'server' | 'client'
   name?: string | null
   description?: string | null
   ip_whitelist?: string | null
@@ -85,22 +90,31 @@ export interface CreatePortParams {
   enabled?: boolean
   local_port: number
   proxy_port: number
-  name?: string | null
+  name: string
   description?: string | null
   sort_order?: number
   host?: string
-  server_entity_id?: string | null
 }
 
 export interface UpdatePortParams {
   enabled: boolean
   local_port: number
   proxy_port: number
-  name?: string | null
+  name: string
   description?: string | null
   sort_order: number
   host?: string
-  server_entity_id?: string | null
+}
+
+export interface CreateSubscriptionParams {
+  port_config_id: string
+  subscriber_local_port: number
+  enabled?: boolean
+}
+
+export interface UpdateSubscriptionParams {
+  subscriber_local_port?: number
+  enabled?: boolean
 }
 
 async function apiFetch<T>(url: string, options?: RequestInit): Promise<T> {
@@ -118,8 +132,8 @@ async function apiFetch<T>(url: string, options?: RequestInit): Promise<T> {
 }
 
 export const entitiesApi = {
-  list: (entityType?: 'server' | 'client') => {
-    const q = entityType ? `?entity_type=${entityType}` : ''
+  list: (role?: 'server' | 'client') => {
+    const q = role ? `?role=${role}` : ''
     return apiFetch<Entity[]>(`/api/entities${q}`)
   },
 
@@ -151,13 +165,13 @@ export const entitiesApi = {
     apiFetch<void>(`/api/entities/${entityId}/keys/${keyId}`, { method: 'DELETE' }),
 
   createPort: (entityId: string, params: CreatePortParams) =>
-    apiFetch<EntityPort>(`/api/entities/${entityId}/ports`, {
+    apiFetch<PortConfig>(`/api/entities/${entityId}/ports`, {
       method: 'POST',
       body: JSON.stringify(params),
     }),
 
   updatePort: (entityId: string, portId: string, params: UpdatePortParams) =>
-    apiFetch<EntityPort>(`/api/entities/${entityId}/ports/${portId}`, {
+    apiFetch<PortConfig>(`/api/entities/${entityId}/ports/${portId}`, {
       method: 'PUT',
       body: JSON.stringify(params),
     }),
@@ -165,17 +179,21 @@ export const entitiesApi = {
   deletePort: (entityId: string, portId: string) =>
     apiFetch<void>(`/api/entities/${entityId}/ports/${portId}`, { method: 'DELETE' }),
 
-  getReachableServers: (entityId: string) =>
-    apiFetch<ReachableServer[]>(`/api/entities/${entityId}/reachable-servers`),
+  getSubscribableServices: (entityId: string) =>
+    apiFetch<SubscribableOwner[]>(`/api/entities/${entityId}/subscribable-services`),
 
-  setPortDiscoveryState: (
-    clientEntityId: string,
-    serverPortId: string,
-    state: 'auto' | DiscoveryState,
-    localPort?: number,
-  ) =>
-    apiFetch<void>(`/api/entities/${clientEntityId}/port-discovery/${serverPortId}`, {
-      method: 'PUT',
-      body: JSON.stringify({ state, local_port: localPort ?? null }),
+  createSubscription: (entityId: string, params: CreateSubscriptionParams) =>
+    apiFetch<PortSubscription>(`/api/entities/${entityId}/subscriptions`, {
+      method: 'POST',
+      body: JSON.stringify(params),
     }),
+
+  updateSubscription: (entityId: string, subscriptionId: string, params: UpdateSubscriptionParams) =>
+    apiFetch<PortSubscription>(`/api/entities/${entityId}/subscriptions/${subscriptionId}`, {
+      method: 'PUT',
+      body: JSON.stringify(params),
+    }),
+
+  deleteSubscription: (entityId: string, subscriptionId: string) =>
+    apiFetch<void>(`/api/entities/${entityId}/subscriptions/${subscriptionId}`, { method: 'DELETE' }),
 }

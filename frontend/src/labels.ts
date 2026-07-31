@@ -29,9 +29,19 @@ export const friendshipStatusLabel: Record<Friendship['status'], string> = {
   declined: 'Declined',
 }
 
-export const entityTypeLabel: Record<'server' | 'client', string> = {
-  server: 'Server',
-  client: 'Client',
+// Display-only labels/badges for the *computed* is_server/is_client booleans on an entity.
+// There is no longer any stored `entity_type` field — these are purely presentational.
+export const roleBadgeLabel: Record<'server' | 'client', string> = {
+  server: '🖧 Server',
+  client: '💻 Client',
+}
+
+/** Renders both/either/neither role badge for an entity, joined for display. */
+export function roleBadges(entity: { is_server: boolean; is_client: boolean }): string {
+  const badges: string[] = []
+  if (entity.is_server) badges.push(roleBadgeLabel.server)
+  if (entity.is_client) badges.push(roleBadgeLabel.client)
+  return badges.join(' ')
 }
 
 export const tarpitMethodLabel: Record<TarpitMethod, string> = {

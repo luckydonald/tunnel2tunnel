@@ -7,11 +7,11 @@ export const useEntitiesStore = defineStore('entities', () => {
   const loading = ref(false)
   const error = ref<string | null>(null)
 
-  async function fetchEntities(entityType?: 'server' | 'client'): Promise<void> {
+  async function fetchEntities(role?: 'server' | 'client'): Promise<void> {
     loading.value = true
     error.value = null
     try {
-      entities.value = await entitiesApi.list(entityType)
+      entities.value = await entitiesApi.list(role)
     } catch (e) {
       error.value = e instanceof Error ? e.message : 'Failed to load entities'
     } finally {
