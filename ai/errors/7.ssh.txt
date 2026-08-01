@@ -1,0 +1,94 @@
+🔗 Connecting via SSH to tunnel2tunnel.example.com...
+⚡ Executing: ssh -p 2222 -i ~/.ssh/t2t_linux-laptop -v -o IdentitiesOnly=yes -C -o ServerAliveInterval=3 -o ServerAliveCountMax=8 -L 5951:server1:5900 -L 5952:server2:5900 -o UserKnownHostsFile=~/.ssh/known_hosts <redacted-uuid>@tunnel2tunnel.example.com
+
+debug1: OpenSSH_10.3p1, OpenSSL 3.5.7 9 Jun 2026
+debug1: Reading configuration data /etc/ssh/ssh_config
+debug1: /etc/ssh/ssh_config line 47: include /etc/ssh/ssh_config.d/*.conf matched no files
+debug1: auto-mux: Trying existing master at '/run/user/1000/rc-<redacted>'
+debug1: Control socket "/run/user/1000/rc-<redacted>" does not exist
+debug1: Connecting to tunnel2tunnel.example.com [<redacted-ip>] port 2222.
+debug1: Connection established.
+debug1: loaded pubkey from ~/.ssh/t2t_linux-laptop: ED25519 SHA256:<redacted>
+debug1: identity file ~/.ssh/t2t_linux-laptop type 2
+debug1: no identity pubkey loaded from ~/.ssh/t2t_linux-laptop
+debug1: Local version string SSH-2.0-OpenSSH_10.3
+debug1: Remote protocol version 2.0, remote software version russh_0.61.2
+debug1: compat_banner: no match: russh_0.61.2
+debug1: Authenticating to tunnel2tunnel.example.com:2222 as '<redacted-uuid>'
+debug1: load_hostkeys: fopen /etc/ssh/ssh_known_hosts: No such file or directory
+debug1: load_hostkeys: fopen /etc/ssh/ssh_known_hosts2: No such file or directory
+debug1: SSH2_MSG_KEXINIT sent
+debug1: SSH2_MSG_KEXINIT received
+debug1: kex: algorithm: mlkem768x25519-sha256
+debug1: kex: host key algorithm: ssh-ed25519
+debug1: kex: server->client cipher: chacha20-poly1305@openssh.com MAC: <implicit> compression: zlib@openssh.com
+debug1: kex: client->server cipher: chacha20-poly1305@openssh.com MAC: <implicit> compression: zlib@openssh.com
+debug1: expecting SSH2_MSG_KEX_ECDH_REPLY
+debug1: SSH2_MSG_KEX_ECDH_REPLY received
+debug1: Server host key: ssh-ed25519 SHA256:<redacted>
+debug1: load_hostkeys: fopen /etc/ssh/ssh_known_hosts: No such file or directory
+debug1: load_hostkeys: fopen /etc/ssh/ssh_known_hosts2: No such file or directory
+debug1: Host '[tunnel2tunnel.example.com]:2222' is known and matches the ED25519 host key.
+debug1: Found key in ~/.ssh/known_hosts:1
+debug1: ssh_packet_send2_wrapped: resetting send seqnr 3
+debug1: rekey out after 134217728 blocks
+debug1: SSH2_MSG_NEWKEYS sent
+debug1: Sending SSH2_MSG_EXT_INFO
+debug1: expecting SSH2_MSG_NEWKEYS
+debug1: ssh_packet_read_poll2: resetting read seqnr 3
+debug1: SSH2_MSG_NEWKEYS received
+debug1: rekey in after 134217728 blocks
+debug1: SSH2_MSG_EXT_INFO received
+debug1: kex_ext_info_client_parse: server-sig-algs=<ssh-ed25519,ecdsa-sha2-nistp256,ecdsa-sha2-nistp384,ecdsa-sha2-nistp521,rsa-sha2-512,rsa-sha2-256,ssh-rsa>
+debug1: SSH2_MSG_SERVICE_ACCEPT received
+debug1: Authentications that can continue: publickey
+debug1: Next authentication method: publickey
+debug1: get_agent_identities: bound agent to hostkey
+debug1: get_agent_identities: agent returned 2 keys
+debug1: Will attempt key: ~/.ssh/t2t_linux-laptop ED25519 SHA256:<redacted> explicit agent
+debug1: Offering public key: ~/.ssh/t2t_linux-laptop ED25519 SHA256:<redacted> explicit agent
+debug1: Server accepts key: ~/.ssh/t2t_linux-laptop ED25519 SHA256:<redacted> explicit agent
+debug1: Enabling compression at level 6.
+Authenticated to tunnel2tunnel.example.com ([<redacted-ip>]:2222) using "publickey".
+debug1: Local connections to LOCALHOST:5951 forwarded to remote address server1:5900
+debug1: Local forwarding listening on ::1 port 5951.
+bind [::1]:5951: Address already in use
+debug1: Local forwarding listening on 127.0.0.1 port 5951.
+bind [127.0.0.1]:5951: Address already in use
+channel_setup_fwd_listener_tcpip: cannot listen to port: 5951
+debug1: Local connections to LOCALHOST:5952 forwarded to remote address server2:5900
+debug1: Local forwarding listening on ::1 port 5952.
+debug1: channel 0: new port-listener [port listener] (inactive timeout: 0)
+debug1: Local forwarding listening on 127.0.0.1 port 5952.
+debug1: channel 1: new port-listener [port listener] (inactive timeout: 0)
+debug1: setting up multiplex master socket
+debug1: channel 2: new mux listener [/run/user/1000/rc-<redacted>] (inactive timeout: 0)
+debug1: control_persist_detach: backgrounding master process
+debug1: forking to background
+debug1: Entering interactive session.
+debug1: pledge: id
+debug1: multiplexing control connection
+debug1: channel 3: new mux-control [mux-control] (inactive timeout: 0)
+debug1: Received 'info' extension
+debug1: Requesting forwarding of local forward LOCALHOST:5951 -> server1:5900
+debug1: Requesting forwarding of local forward LOCALHOST:5952 -> server2:5900
+debug1: channel 4: new session [client-session] (inactive timeout: 0)
+debug1: mux_client_request_session: master session id: 4
+
+✨ Welcome to tunnel2tunnel, linux-laptop! ✨
+Twilight Sparkle has verified your access rules — everything checks out.
+The portal stands ready. Your connection is now active. 📚
+Type a message and press Enter to chat with other connected entities.
+
+Connection to tunnel2tunnel.example.com closed by remote host.
+debug1: channel 0: free: port listener, nchannels 5
+debug1: channel 1: free: port listener, nchannels 4
+debug1: channel 2: free: /run/user/1000/rc-<redacted>, nchannels 3
+debug1: channel 3: free: mux-control, nchannels 2
+debug1: channel 4: free: client-session, nchannels 1
+Transferred: sent 3844, received 2720 bytes, in 5.8 seconds
+Bytes per second: sent 664.7, received 470.4
+debug1: Exit status -1
+debug1: compress outgoing: raw data 442, compressed 281, factor 0.64
+debug1: compress incoming: raw data 316, compressed 275, factor 0.87
+Shared connection to tunnel2tunnel.example.com closed.

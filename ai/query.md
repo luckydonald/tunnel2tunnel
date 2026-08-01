@@ -1336,3 +1336,9 @@ Generally:
 ❯ Conversation compacted <kbd>manual</kbd>:
 > - [Result (`21243` chars, `20.8 KB`)](output/compact/002.b2399491-1975-40e3-9d5c-9c94452f9779/result.md)
 
+❯ Fix @ai/errors/7.ssh.txt if possible. Also you can check the server logs, `/home/user/Downloads/tunnel2tunnel-d5oteit4omkq577f6j4r3rd9-075130837969-all-logs-2026-08-01-08-33-33.txt` if helpful (if so, add the relevant parts to `7.t2t.md/.txt`. Make sure that the files contain no real user data, no keys, no ips, no uuids, fake machine names, etc. Also for commits: 1. commit normally (without `--amend` or similar) before rebasing to ssquash commits, 2. run `./scripts/tag_backup.py`, 3. squash as it makes sense. 4. Side node: use `--keep` instead of `--hard` when rebasing.
+
+❯ Also fix error 7, without any squashing/rebasing, I'll do that as approprate.
+
+❯ /sanitize-error-logs 7.*.md, no rebase/squashing
+
