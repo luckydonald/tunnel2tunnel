@@ -1329,3 +1329,10 @@ Generally:
 
 ❯ squash and rebase according to lplp style (this message goes into the last commit, too)
 
+❯ Would it make sense to have the dockerfile use that output for the library-compile step in a cache-mount, too? Like so it saves on recompiling those?
+
+❯ it is currently occasionly timing out while building the chef cook itself. I belive this can be solved by copying the binary `--from` the official docker image they provide, see @ai/references/https/github.com/LukeMathWalker/cargo-chef/blob/f044b7724b74d8fd4dfda0f6b2920450e340c81d/README.md
+
+❯ Conversation compacted <kbd>manual</kbd>:
+> - [Result (`21243` chars, `20.8 KB`)](output/compact/002.b2399491-1975-40e3-9d5c-9c94452f9779/result.md)
+

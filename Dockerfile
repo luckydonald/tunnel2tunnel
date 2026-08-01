@@ -12,8 +12,13 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev lld
 WORKDIR /app
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    cargo install cargo-chef --version 0.1.77 --locked
+# Copied from the prebuilt image instead of `cargo install cargo-chef` — the latter compiles
+# cargo-chef from source on every base-image bump and was an occasional source of build timeouts.
+# Only the OS/glibc ABI needs to match our `rust:1.88-slim` base (itself `slim-bookworm`) — the
+# cargo-chef binary is a standalone tool, its own build's Rust version is irrelevant here. No
+# `rust-1.88` tag is published upstream (they only track the last few Rust minors), hence the
+# OS-only tag rather than pinning an exact Rust version.
+COPY --from=lukemathwalker/cargo-chef:0.1.77-rust-slim-bookworm /usr/local/cargo/bin/cargo-chef /usr/local/cargo/bin/cargo-chef
 
 # Stage 1b: planner — figures out the dependency graph. Reruns on every source change
 # (cheap, just parses manifests) but its recipe.json output only changes when
