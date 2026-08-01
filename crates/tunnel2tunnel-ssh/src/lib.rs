@@ -10,7 +10,7 @@ use getrandom::SysRng;
 use russh::keys::ssh_key::LineEnding;
 use russh::keys::{Algorithm, PrivateKey};
 use russh::server::{Auth, Config, Handle, Handler, Msg, Server, Session};
-use russh::{Channel, ChannelId, ChannelMsg, Pty};
+use russh::{Channel, ChannelId, ChannelMsg, Preferred, Pty};
 use russh::{MethodKind, MethodSet};
 use sqlx::PgPool;
 use tokio::net::TcpListener;
@@ -127,6 +127,15 @@ pub async fn start(
 
     let russh_config = Arc::new(Config {
         keys: vec![key],
+        // russh 0.61.2's delayed `zlib@openssh.com` compression (negotiated whenever a
+        // client offers it, e.g. plain OpenSSH with `Compression yes`) corrupts packet
+        // framing shortly after auth completes — observed in production as sessions
+        // dying a few seconds in with `SshEncoding: length invalid` (see ai/errors/7.t2t.md).
+        // Restricting to "none" keeps negotiation from ever picking zlib.
+        preferred: Preferred {
+            compression: std::borrow::Cow::Borrowed(&[russh::compression::NONE]),
+            ..Preferred::default()
+        },
         ..Config::default()
     });
 
@@ -1431,7 +1440,12 @@ async fn resolve_target_entity(pool: &PgPool, hostname: &str) -> Option<Uuid> {
         return Some(id);
     }
     // Fall back to hostname alias in entity_access
-    EntityAccess::find_entity_by_hostname(pool, hostname)
+    if let Ok(Some(id)) = EntityAccess::find_entity_by_hostname(pool, hostname).await {
+        return Some(id);
+    }
+    // Fall back to a plain entity name — only if it's unambiguous, since
+    // entities.name has no uniqueness constraint.
+    Entity::find_unique_id_by_name(pool, hostname)
         .await
         .unwrap_or(None)
 }

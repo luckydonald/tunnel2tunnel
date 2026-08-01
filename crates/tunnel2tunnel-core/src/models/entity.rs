@@ -40,6 +40,26 @@ impl Entity {
             .map_err(CoreError::Sqlx)
     }
 
+    /// Resolve a plain entity name to its id, but only if the name is
+    /// unambiguous — `entities.name` has no uniqueness constraint, so a
+    /// name shared by more than one (non-deleted) entity is treated as
+    /// unresolved rather than guessing which one was meant.
+    pub async fn find_unique_id_by_name(
+        pool: &PgPool,
+        name: &str,
+    ) -> Result<Option<Uuid>, CoreError> {
+        let ids: Vec<Uuid> =
+            sqlx::query_scalar("SELECT id FROM entities WHERE name = $1 AND deleted_at IS NULL")
+                .bind(name)
+                .fetch_all(pool)
+                .await
+                .map_err(CoreError::Sqlx)?;
+        Ok(match ids.as_slice() {
+            [id] => Some(*id),
+            _ => None,
+        })
+    }
+
     pub async fn find_by_id_and_user(
         pool: &PgPool,
         id: Uuid,
