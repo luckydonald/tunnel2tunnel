@@ -1342,3 +1342,5 @@ Generally:
 
 ❯ /sanitize-error-logs 7.*.md, no rebase/squashing
 
+❯ I actually like writing the srever name, and think this should be a backend-supported feature. Having the hostname there, instead an weird UUID is so much more readable, too.
+
