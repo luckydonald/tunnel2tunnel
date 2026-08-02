@@ -1346,3 +1346,5 @@ Generally:
 
 ❯ /plan Add an end to end test for tunneling a port, with native os ssh commands, asserting the port working by sending multiple different requests through it, and utilizing two different client/server prifiles with separate ssh keys.
 
+❯ also add a second server, to check the routing.
+
