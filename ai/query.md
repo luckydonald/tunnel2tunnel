@@ -1348,3 +1348,11 @@ Generally:
 
 ❯ also add a second server, to check the routing.
 
+❯ Task Notification:
+> - Task `bc8yd0rkk` <kbd>completed</kbd>
+> - Tool `toolu_01PWuK3HG42QYvQuhvoP1sm4`
+> - > Background command "cargo test -p t2t --test tunnel_e2e --no-run 2>&1 | tail -20" completed (exit code 0)
+> - [Query (`105` chars, `105 B`)](output/agents/035.bc8yd0rkk/prompt.md)
+> - [Answer (`233` chars, `233 B`)](output/agents/035.bc8yd0rkk/result.md)
+> - [Raw log (`233` chars, `233 B`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/f6e17156-11fe-408a-b8c4-820640d9d2af/tasks/bc8yd0rkk.output)
+
