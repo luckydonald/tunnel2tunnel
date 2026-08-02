@@ -1344,3 +1344,5 @@ Generally:
 
 ❯ I actually like writing the srever name, and think this should be a backend-supported feature. Having the hostname there, instead an weird UUID is so much more readable, too.
 
+❯ /plan Add an end to end test for tunneling a port, with native os ssh commands, asserting the port working by sending multiple different requests through it, and utilizing two different client/server prifiles with separate ssh keys.
+
