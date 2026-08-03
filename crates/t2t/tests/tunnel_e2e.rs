@@ -28,10 +28,15 @@ use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
 
+use std::sync::Arc;
+
 use getrandom::rand_core::UnwrapErr;
 use getrandom::SysRng;
+use russh::client::{connect_stream, Config as ClientConfig, Handle as ClientHandle};
+use russh::keys::key::PrivateKeyWithHashAlg;
 use russh::keys::ssh_key::LineEnding;
 use russh::keys::{Algorithm, PrivateKey};
+use russh::ChannelMsg;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::process::{Child, Command};
@@ -759,6 +764,380 @@ async fn two_ssh_connections_tunnel_through_rendezvous() {
         );
         drop(keep_alive_b);
     }
+
+    let _ = std::fs::remove_dir_all(&scratch);
+}
+
+// ── Regression test: one connection, one offline target, one online target ──
+
+/// Minimal in-process SSH client `Handler` — accepts any host key, mirroring
+/// `tarpit_e2e.rs`'s `TestClient`. Needed for the test below (rather than
+/// driving real `ssh` subprocesses like the rest of this file) because it
+/// must issue two `channel_open_direct_tcpip` requests concurrently on the
+/// SAME connection/`Handle` — impossible with separate OS `ssh` processes,
+/// which always open their own independent connection.
+struct DirectTcpipTestClient;
+
+impl russh::client::Handler for DirectTcpipTestClient {
+    type Error = russh::Error;
+
+    async fn check_server_key(
+        &mut self,
+        _server_public_key: &russh::keys::ssh_key::PublicKey,
+    ) -> Result<bool, Self::Error> {
+        Ok(true)
+    }
+}
+
+async fn connect_direct_tcpip_test_client(port: u16) -> ClientHandle<DirectTcpipTestClient> {
+    let stream = TcpStream::connect(("127.0.0.1", port))
+        .await
+        .expect("connect to t2t server");
+    connect_stream(
+        Arc::new(ClientConfig::default()),
+        stream,
+        DirectTcpipTestClient,
+    )
+    .await
+    .expect("client connect")
+}
+
+/// Generates a fresh Ed25519 keypair kept entirely in memory — unlike
+/// `generate_test_keypair`, which writes to a file for `ssh -i`. Mirrors
+/// `tarpit_e2e.rs`'s `generate_keypair`.
+fn generate_inprocess_keypair() -> (PrivateKey, String, String) {
+    let key =
+        PrivateKey::random(&mut UnwrapErr(SysRng), Algorithm::Ed25519).expect("generate keypair");
+    let pub_line = key.public_key().to_openssh().expect("openssh pub line");
+    let (algorithm, key_data, _comment) =
+        parse_authorized_keys_line(&pub_line).expect("parse pub line");
+    (key, algorithm, key_data)
+}
+
+/// Regression test for a bug where `channel_open_direct_tcpip`
+/// (`crates/tunnel2tunnel-ssh/src/lib.rs`) ran its up-to-12s server-liveness
+/// retry-wait loop inline inside the `Handler` callback. Since russh
+/// processes one SSH connection on a single per-connection task
+/// (`server/session.rs`'s `select!` loop), that inline wait blocked ALL
+/// other channel activity on the same connection — including an unrelated,
+/// perfectly healthy tunnel's channel-open request that happened to share
+/// the connection. Observed in production as a VNC `-L` tunnel to a live
+/// target getting stuck on "Connecting..." because a second `-L` on the
+/// same `ssh` invocation, to a target that never came online, ate the full
+/// 12s retry window first.
+///
+/// `two_ssh_connections_tunnel_through_rendezvous` above never caught this:
+/// its concurrency is across two independent `ssh` subprocesses (= two
+/// independent connections), which structurally cannot exercise
+/// same-connection serialization. This test drives ONE connection via an
+/// in-process `russh::client::Handle` (cheaply `Clone`) instead, so it can
+/// fire both requests through the same `Handle` and observe whether one
+/// blocks behind the other.
+#[tokio::test]
+async fn same_connection_online_target_not_blocked_by_offline_target_timeout() {
+    if Command::new("ssh").arg("-V").output().await.is_err() {
+        eprintln!(
+            "skipping same_connection_online_target_not_blocked_by_offline_target_timeout: \
+             no `ssh` binary in PATH"
+        );
+        return;
+    }
+
+    let database_url = std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://t2t:t2t_secret@localhost:5432/tunnel2tunnel".to_string());
+    let pool = db::connect(&database_url).await.expect(
+        "failed to connect to Postgres — see MANUAL_TESTING.md step 1 to start one locally, \
+         or set DATABASE_URL",
+    );
+    sqlx::migrate!("../../migrations")
+        .run(&pool)
+        .await
+        .expect("failed to run migrations");
+
+    let scratch = std::env::temp_dir().join(format!("t2t-e2e-blocking-test-{}", Uuid::now_v7()));
+    std::fs::create_dir_all(&scratch).expect("create scratch dir");
+    let host_key_path = scratch.join("ssh_host_key");
+    let server_online_key_path = scratch.join("server_online_key");
+
+    let owner = User::create(
+        &pool,
+        &format!("t2t-e2e-blocking-test-{}", Uuid::now_v7()),
+        None,
+        "irrelevant-password-not-used-by-this-test",
+        false,
+        Some("scratch user for tunnel_e2e blocking-bug regression test"),
+    )
+    .await
+    .expect("create test user");
+
+    let server_entity_online = Entity::create(
+        &pool,
+        owner.id,
+        Some("blocking-test-server-online"),
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("create online server entity");
+    let server_entity_offline = Entity::create(
+        &pool,
+        owner.id,
+        Some("blocking-test-server-offline"),
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("create offline server entity");
+    let client_entity = Entity::create(
+        &pool,
+        owner.id,
+        Some("blocking-test-client"),
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("create client entity");
+
+    let (server_online_algo, server_online_key_data) =
+        generate_test_keypair(&server_online_key_path).expect("generate online server keypair");
+    let (client_key, client_algo, client_key_data) = generate_inprocess_keypair();
+
+    SshKey::create(
+        &pool,
+        server_entity_online.id,
+        &server_online_algo,
+        &server_online_key_data,
+        Some("e2e-test"),
+        None,
+        None,
+    )
+    .await
+    .expect("register online server key");
+    SshKey::create(
+        &pool,
+        client_entity.id,
+        &client_algo,
+        &client_key_data,
+        Some("e2e-test"),
+        None,
+        None,
+    )
+    .await
+    .expect("register client key");
+
+    EntityAccess::create(
+        &pool,
+        server_entity_online.id,
+        "entity",
+        Some(client_entity.id),
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("grant client access to online server");
+    EntityAccess::create(
+        &pool,
+        server_entity_offline.id,
+        "entity",
+        Some(client_entity.id),
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("grant client access to offline server");
+
+    let fixture_port = spawn_fixture_service("A").await;
+
+    let ssh_port = free_port();
+    let ssh_pool = pool.clone();
+    let ssh_host_key_path = host_key_path.to_str().unwrap().to_string();
+    let server_slots = new_server_slots();
+    let active_tunnels = new_active_tunnels();
+    tokio::spawn(async move {
+        start_ssh(
+            SshConfig {
+                ssh_port,
+                fail2ban_log_path: None,
+                host_key_path: ssh_host_key_path,
+                host_key_password: None,
+            },
+            ssh_pool,
+            server_slots,
+            active_tunnels,
+        )
+        .await
+        .expect("t2t SSH server failed");
+    });
+
+    for _ in 0..50 {
+        if TcpStream::connect(("127.0.0.1", ssh_port)).await.is_ok() {
+            break;
+        }
+        sleep(Duration::from_millis(100)).await;
+    }
+
+    // Only the online target ever registers a `-R` forward — the offline
+    // one deliberately never does, exercising "target server never came
+    // online within the retry window" (lib.rs's `channel_open_direct_tcpip`)
+    // on demand rather than relying on a race.
+    const PROXY_PORT_ONLINE: u16 = 19223;
+    const PROXY_PORT_OFFLINE: u16 = 19224;
+    let _server_online_guard = spawn_ssh_r(
+        &server_online_key_path,
+        ssh_port,
+        PROXY_PORT_ONLINE,
+        fixture_port,
+        "ssh -R (blocking-test online)",
+    );
+
+    let port_config_online =
+        wait_for_port_config(&pool, server_entity_online.id, PROXY_PORT_ONLINE).await;
+    // The offline target's port_config is created directly — no `-R` ever
+    // registers it, so `tcpip_forward`'s auto-create path never runs for it.
+    let port_config_offline = PortConfig::create(
+        &pool,
+        server_entity_offline.id,
+        true,
+        PROXY_PORT_OFFLINE as i32,
+        PROXY_PORT_OFFLINE as i32,
+        "blocking-test-offline",
+        None,
+        0,
+        "127.0.0.1",
+    )
+    .await
+    .expect("create offline target's port_config directly");
+
+    PortSubscription::create(
+        &pool,
+        port_config_online.id,
+        client_entity.id,
+        PROXY_PORT_ONLINE as i32,
+        true,
+    )
+    .await
+    .expect("subscribe client to online target");
+    PortSubscription::create(
+        &pool,
+        port_config_offline.id,
+        client_entity.id,
+        PROXY_PORT_OFFLINE as i32,
+        true,
+    )
+    .await
+    .expect("subscribe client to offline target");
+
+    // One shared connection/`Handle` for BOTH requests — the crux of this
+    // test. `channel_open_direct_tcpip` takes `&self` and uses its own
+    // per-call reply channel internally (not `Handle`'s own auth-reply
+    // receiver), so concurrent calls on one `Handle` are safe without
+    // needing `&mut` — wrap in `Arc` just to share ownership across the two
+    // spawned tasks below.
+    let mut handle = connect_direct_tcpip_test_client(ssh_port).await;
+    let key_with_alg = PrivateKeyWithHashAlg::new(Arc::new(client_key), None);
+    let auth_result = handle
+        .authenticate_publickey("client", key_with_alg)
+        .await
+        .expect("authenticate_publickey");
+    assert!(auth_result.success(), "client publickey auth must succeed");
+    let handle = Arc::new(handle);
+
+    // Fire both requests as independent tasks sharing the same `handle`, so
+    // awaiting one does not itself stop the other from being polled — this
+    // is what actually puts two channel-open requests in flight on one
+    // connection at once.
+    let online_handle = handle.clone();
+    let online_task = tokio::spawn(async move {
+        let started = tokio::time::Instant::now();
+        let result = online_handle
+            .channel_open_direct_tcpip(
+                server_entity_online.id.to_string(),
+                PROXY_PORT_ONLINE as u32,
+                "127.0.0.1",
+                0,
+            )
+            .await;
+        (result, started.elapsed())
+    });
+
+    let offline_handle = handle.clone();
+    let offline_task = tokio::spawn(async move {
+        offline_handle
+            .channel_open_direct_tcpip(
+                server_entity_offline.id.to_string(),
+                PROXY_PORT_OFFLINE as u32,
+                "127.0.0.1",
+                0,
+            )
+            .await
+    });
+
+    let (online_result, online_elapsed) = tokio::time::timeout(Duration::from_secs(5), online_task)
+        .await
+        .expect(
+            "the ONLINE target's channel-open must resolve well under the offline target's 12s \
+             retry window — if this times out, the two requests are being serialized on the \
+             shared connection (the bug this test guards against)",
+        )
+        .expect("online task panicked");
+    let mut online_channel =
+        online_result.expect("channel_open_direct_tcpip to the online target must succeed");
+    assert!(
+        online_elapsed < Duration::from_secs(3),
+        "online target's channel took {online_elapsed:?} to confirm — expected it to not be \
+         blocked behind the offline target's 12s retry window"
+    );
+
+    // Prove the bridge is actually live end-to-end, not merely confirmed —
+    // send a real request and expect the fixture service's response back.
+    online_channel
+        .data_bytes(
+            b"GET / HTTP/1.1\r\nHost: t2t-test\r\nConnection: close\r\n\r\n"
+                .to_vec(),
+        )
+        .await
+        .expect("write through the online bridge");
+    let msg = tokio::time::timeout(Duration::from_secs(5), online_channel.wait())
+        .await
+        .expect("expected a response through the online bridge")
+        .expect("channel closed with no data");
+    let ChannelMsg::Data { data } = msg else {
+        panic!("expected response Data through the online bridge, got: {msg:?}");
+    };
+    assert!(
+        String::from_utf8_lossy(&data).contains("A hello from the tunneled service"),
+        "expected the online target's fixture response, got: {:?}",
+        String::from_utf8_lossy(&data)
+    );
+
+    // The offline target's channel is confirmed too (steps 1-3 of
+    // `channel_open_direct_tcpip` pass — auth/port_config/subscription are
+    // all valid), then closed by the spawned retry-wait task once its 12s
+    // deadline lapses ("confirm-then-close-on-timeout", the documented
+    // trade-off of not blocking the connection to keep the retry window).
+    // Prove it actually closes rather than staying open forever.
+    let offline_result = tokio::time::timeout(Duration::from_secs(5), offline_task)
+        .await
+        .expect("offline task must not be blocked either")
+        .expect("offline task panicked");
+    let mut offline_channel = offline_result
+        .expect("channel_open_direct_tcpip to the offline target should still be confirmed");
+    let offline_msg = tokio::time::timeout(Duration::from_secs(14), offline_channel.wait())
+        .await
+        .expect("expected the offline target's channel to close once the 12s retry window lapses");
+    assert!(
+        matches!(
+            offline_msg,
+            None | Some(ChannelMsg::Close) | Some(ChannelMsg::Eof)
+        ),
+        "expected the offline target's channel to close/eof after the retry window elapsed, \
+         got: {offline_msg:?}"
+    );
 
     let _ = std::fs::remove_dir_all(&scratch);
 }

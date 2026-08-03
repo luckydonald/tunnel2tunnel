@@ -63,6 +63,18 @@ pub struct ActiveTunnelInfo {
 
 pub type ActiveTunnels = Arc<Mutex<HashMap<Uuid, ActiveTunnelInfo>>>;
 
+/// Client-side bridge channel -> (paired server handle, paired server-side
+/// channel id). `Arc<Mutex<_>>` rather than a plain field because bridge
+/// setup for a single `channel_open_direct_tcpip` request now happens in a
+/// `tokio::spawn`ed task (see that handler) rather than inline in the
+/// `Handler` callback, so it can no longer rely on holding `&mut self`.
+type Bridges = Arc<Mutex<HashMap<ChannelId, (Handle, ChannelId)>>>;
+
+/// Client-side bridge channel -> its `ActiveTunnels` key, so the entry can be
+/// removed again on `channel_close`/`Drop`. Same `Arc<Mutex<_>>` reasoning as
+/// `Bridges` above.
+type BridgeIds = Arc<Mutex<HashMap<ChannelId, Uuid>>>;
+
 /// Constructs a fresh, empty `ServerSlots` map. Exposed so `crates/t2t`'s
 /// `main.rs` can build one instance and share it between the SSH server and
 /// the web `AppState` (both need to read/write the same map).
@@ -258,8 +270,8 @@ impl Server for T2tServer {
             conn_id,
             peer_ip,
             entity: None,
-            bridges: HashMap::new(),
-            bridge_ids: HashMap::new(),
+            bridges: Arc::new(Mutex::new(HashMap::new())),
+            bridge_ids: Arc::new(Mutex::new(HashMap::new())),
             connection_log_ids: Vec::new(),
             tarpit_outcome: None,
             fake_shell: false,
@@ -288,11 +300,11 @@ struct T2tHandler {
     conn_id: Uuid,
     peer_ip: String,
     entity: Option<AuthedEntity>,
-    bridges: HashMap<ChannelId, (Handle, ChannelId)>,
+    bridges: Bridges,
     /// Maps this connection's client-side bridge channels to the
     /// `active_tunnels` key registered for them, so the entry can be removed
     /// again on `channel_close`/`Drop`.
-    bridge_ids: HashMap<ChannelId, Uuid>,
+    bridge_ids: BridgeIds,
     /// ids of every `connection_logs` row created for this TCP connection
     /// (successful login and/or any number of failed/trap attempts before
     /// it) — all of them get `ended_at` stamped together in `Drop`.
@@ -1211,13 +1223,117 @@ impl Handler for T2tHandler {
         // but whose target server just hasn't registered yet (races on
         // startup, a server mid-restart) gets bridged the moment it
         // appears, no reconnect needed.
-        let server_slot = {
+        //
+        // Fast path first: if the target is already registered (the
+        // overwhelmingly common case), do everything synchronously and
+        // return `Ok(true)` only once the bridge is actually wired up —
+        // exactly as before this fix. This matters, not just for latency:
+        // russh sends the client its channel-open confirmation the instant
+        // this function returns `Ok(true)`, and a `-L` client starts
+        // writing its request the instant it sees that confirmation. If
+        // confirmation went out before `self.bridges` had this channel's
+        // entry, those first bytes would hit `data()` before it has
+        // anywhere to forward them and be silently dropped. Keeping the
+        // fast path fully synchronous sidesteps that race entirely for
+        // every request that doesn't need to wait.
+        let immediate_slot = self
+            .server_slots
+            .lock()
+            .await
+            .get(&(target_entity_id, port_to_connect))
+            .cloned();
+
+        if let Some((server_handle, registered_address)) = immediate_slot {
+            let server_ch = match server_handle
+                .channel_open_forwarded_tcpip(&registered_address, port_to_connect, "127.0.0.1", 0)
+                .await
+            {
+                Ok(ch) => ch,
+                Err(e) => {
+                    tracing::error!(
+                        err = ?e,
+                        target_entity = %target_entity_id,
+                        target_entity_name = target_entity.name.as_deref().unwrap_or("(unnamed)"),
+                        proxy_port = port_to_connect,
+                        "direct-tcpip: forwarded-tcpip open failed"
+                    );
+                    return Ok(false);
+                }
+            };
+
+            let client_ch_id = channel.id();
+            let server_ch_id = server_ch.id();
+
+            self.bridges
+                .lock()
+                .await
+                .insert(client_ch_id, (server_handle.clone(), server_ch_id));
+
+            let bridge_id = Uuid::now_v7();
+            self.active_tunnels.lock().await.insert(
+                bridge_id,
+                ActiveTunnelInfo {
+                    client_entity_id: client_entity.id,
+                    client_user_id,
+                    target_entity_id,
+                    port_config_id: port_config.id,
+                    proxy_port: port_to_connect,
+                    peer_ip: self.peer_ip.clone(),
+                    since: time::OffsetDateTime::now_utc(),
+                },
+            );
+            self.bridge_ids.lock().await.insert(client_ch_id, bridge_id);
+
+            let client_handle = session.handle();
+            tokio::spawn(forward_channel(server_ch, client_handle, client_ch_id));
+
+            tracing::info!(
+                client_entity = %client_entity.id,
+                target_entity = %target_entity_id,
+                target_entity_name = target_entity.name.as_deref().unwrap_or("(unnamed)"),
+                host = host_to_connect,
+                port = port_to_connect,
+                client_ch = %client_ch_id,
+                server_ch = %server_ch_id,
+                "direct-tcpip: bridge established"
+            );
+            return Ok(true);
+        }
+
+        // Slow path: the target isn't registered yet. This is the case
+        // that used to run its up-to-12s retry-wait loop inline inside this
+        // `Handler` callback — since russh processes one SSH connection on
+        // a single per-connection task (see CLAUDE.md), that blocked every
+        // other channel-open request AND all data delivery on this
+        // connection's already-established bridges for the duration —
+        // observed in production as a second `-L` tunnel on the same `ssh`
+        // invocation stalling behind an unrelated, never-coming-online
+        // target. Move the wait (and the bridge setup that follows it) into
+        // a spawned task and confirm `Ok(true)` immediately so this
+        // connection isn't blocked. Trade-off: russh consumes this return
+        // value synchronously to send the confirmation, with no API to
+        // defer it, so a target that never comes online can no longer be
+        // rejected before confirmation — the spawned task closes the
+        // channel once the retry window lapses instead. This also reopens,
+        // for this slow path only, the confirm-before-bridge race described
+        // above — acceptable here since by definition nothing has
+        // successfully used this specific tunnel yet.
+        let handle = session.handle();
+        let server_slots = self.server_slots.clone();
+        let bridges = self.bridges.clone();
+        let bridge_ids = self.bridge_ids.clone();
+        let active_tunnels = self.active_tunnels.clone();
+        let peer_ip = self.peer_ip.clone();
+        let host_to_connect = host_to_connect.to_string();
+
+        tokio::spawn(async move {
+            let client_ch_id = channel.id();
+
             const POLL_INTERVAL: Duration = Duration::from_millis(250);
             const MAX_WAIT: Duration = Duration::from_secs(12);
             let deadline = tokio::time::Instant::now() + MAX_WAIT;
-            loop {
-                let found = self
-                    .server_slots
+            let server_slot = loop {
+                let found = server_slots
                     .lock()
                     .await
                     .get(&(target_entity_id, port_to_connect))
@@ -1229,66 +1345,81 @@ impl Handler for T2tHandler {
                     break None;
                 }
                 tokio::time::sleep(POLL_INTERVAL).await;
-            }
-        };
+            };
 
-        let Some((server_handle, registered_address)) = server_slot else {
+            let Some((server_handle, registered_address)) = server_slot else {
+                tracing::info!(
+                    target_entity = %target_entity_id,
+                    target_entity_name = target_entity.name.as_deref().unwrap_or("(unnamed)"),
+                    proxy_port = port_to_connect,
+                    "direct-tcpip: rejected — target server never came online within the retry window"
+                );
+                let _ = channel.close().await;
+                return;
+            };
+
+            // Ask server to open forwarded channel to its local service. The address must match
+            // what the server's ssh client registered via tcpip_forward (e.g. "localhost" from
+            // `-R port:...`) — OpenSSH matches incoming forwarded-tcpip requests against its
+            // registered (address, port) forward table, not the client's requested hostname.
+            let server_ch = match server_handle
+                .channel_open_forwarded_tcpip(&registered_address, port_to_connect, "127.0.0.1", 0)
+                .await
+            {
+                Ok(ch) => ch,
+                Err(e) => {
+                    tracing::error!(
+                        err = ?e,
+                        target_entity = %target_entity_id,
+                        target_entity_name = target_entity.name.as_deref().unwrap_or("(unnamed)"),
+                        proxy_port = port_to_connect,
+                        "direct-tcpip: forwarded-tcpip open failed"
+                    );
+                    let _ = channel.close().await;
+                    return;
+                }
+            };
+
+            let server_ch_id = server_ch.id();
+
+            bridges
+                .lock()
+                .await
+                .insert(client_ch_id, (server_handle.clone(), server_ch_id));
+
+            // Record this bridge in the aggregated active-tunnels map for the
+            // live-connections dashboard, and remember which bridge id belongs
+            // to this channel so it can be torn down again on close/disconnect.
+            let bridge_id = Uuid::now_v7();
+            active_tunnels.lock().await.insert(
+                bridge_id,
+                ActiveTunnelInfo {
+                    client_entity_id: client_entity.id,
+                    client_user_id,
+                    target_entity_id,
+                    port_config_id: port_config.id,
+                    proxy_port: port_to_connect,
+                    peer_ip,
+                    since: time::OffsetDateTime::now_utc(),
+                },
+            );
+            bridge_ids.lock().await.insert(client_ch_id, bridge_id);
+
+            // Spawn task: copy server channel → client session
+            tokio::spawn(forward_channel(server_ch, handle.clone(), client_ch_id));
+
             tracing::info!(
+                client_entity = %client_entity.id,
                 target_entity = %target_entity_id,
                 target_entity_name = target_entity.name.as_deref().unwrap_or("(unnamed)"),
-                proxy_port = port_to_connect,
-                "direct-tcpip: rejected — target server never came online within the retry window"
+                host = host_to_connect,
+                port = port_to_connect,
+                client_ch = %client_ch_id,
+                server_ch = %server_ch_id,
+                "direct-tcpip: bridge established"
             );
-            return Ok(false);
-        };
+        });
 
-        // Ask server to open forwarded channel to its local service. The address must match
-        // what the server's ssh client registered via tcpip_forward (e.g. "localhost" from
-        // `-R port:...`) — OpenSSH matches incoming forwarded-tcpip requests against its
-        // registered (address, port) forward table, not the client's requested hostname.
-        let server_ch = server_handle
-            .channel_open_forwarded_tcpip(&registered_address, port_to_connect, "127.0.0.1", 0)
-            .await
-            .map_err(|e| anyhow::anyhow!("forwarded-tcpip open failed: {e:?}"))?;
-
-        let client_ch_id = channel.id();
-        let server_ch_id = server_ch.id();
-
-        self.bridges
-            .insert(client_ch_id, (server_handle.clone(), server_ch_id));
-
-        // Record this bridge in the aggregated active-tunnels map for the
-        // live-connections dashboard, and remember which bridge id belongs
-        // to this channel so it can be torn down again on close/disconnect.
-        let bridge_id = Uuid::now_v7();
-        self.active_tunnels.lock().await.insert(
-            bridge_id,
-            ActiveTunnelInfo {
-                client_entity_id: client_entity.id,
-                client_user_id,
-                target_entity_id,
-                port_config_id: port_config.id,
-                proxy_port: port_to_connect,
-                peer_ip: self.peer_ip.clone(),
-                since: time::OffsetDateTime::now_utc(),
-            },
-        );
-        self.bridge_ids.insert(client_ch_id, bridge_id);
-
-        // Spawn task: copy server channel → client session
-        let client_handle = session.handle();
-        tokio::spawn(forward_channel(server_ch, client_handle, client_ch_id));
-
-        tracing::info!(
-            client_entity = %client_entity.id,
-            target_entity = %target_entity_id,
-            target_entity_name = target_entity.name.as_deref().unwrap_or("(unnamed)"),
-            host = host_to_connect,
-            port = port_to_connect,
-            client_ch = %client_ch_id,
-            server_ch = %server_ch_id,
-            "direct-tcpip: bridge established"
-        );
         Ok(true)
     }
 
@@ -1299,7 +1430,7 @@ impl Handler for T2tHandler {
         _session: &mut Session,
     ) -> Result<(), Self::Error> {
         // Bridge: forward data to the paired channel
-        let state = self.bridges.get(&channel).cloned();
+        let state = self.bridges.lock().await.get(&channel).cloned();
         if let Some((handle, ch)) = state {
             let _ = handle.data(ch, data.to_vec()).await;
             return Ok(());
@@ -1336,7 +1467,7 @@ impl Handler for T2tHandler {
         channel: ChannelId,
         _session: &mut Session,
     ) -> Result<(), Self::Error> {
-        if let Some((handle, ch)) = self.bridges.get(&channel).cloned() {
+        if let Some((handle, ch)) = self.bridges.lock().await.get(&channel).cloned() {
             let _ = handle.eof(ch).await;
         }
         Ok(())
@@ -1347,10 +1478,10 @@ impl Handler for T2tHandler {
         channel: ChannelId,
         _session: &mut Session,
     ) -> Result<(), Self::Error> {
-        if let Some((handle, ch)) = self.bridges.remove(&channel) {
+        if let Some((handle, ch)) = self.bridges.lock().await.remove(&channel) {
             let _ = handle.close(ch).await;
         }
-        if let Some(bridge_id) = self.bridge_ids.remove(&channel) {
+        if let Some(bridge_id) = self.bridge_ids.lock().await.remove(&channel) {
             self.active_tunnels.lock().await.remove(&bridge_id);
         }
         Ok(())
@@ -1403,14 +1534,20 @@ impl Drop for T2tHandler {
         // Clean up any active-tunnel entries this connection's bridges left
         // registered (a client-side `-L` connection torn down abruptly,
         // without a clean `channel_close`, would otherwise leak a "live"
-        // entry forever).
-        if !self.bridge_ids.is_empty() {
+        // entry forever). `bridge_ids` is now `Arc<Mutex<_>>` (bridge setup
+        // can run in a spawned task, see `channel_open_direct_tcpip`), so it
+        // can no longer be read synchronously here — always spawn, the async
+        // task itself checks whether there's anything to do.
+        {
             let active_tunnels = self.active_tunnels.clone();
-            let bridge_ids: Vec<Uuid> = self.bridge_ids.values().copied().collect();
+            let bridge_ids = self.bridge_ids.clone();
             tokio::spawn(async move {
-                let mut map = active_tunnels.lock().await;
-                for id in bridge_ids {
-                    map.remove(&id);
+                let ids: Vec<Uuid> = bridge_ids.lock().await.values().copied().collect();
+                if !ids.is_empty() {
+                    let mut map = active_tunnels.lock().await;
+                    for id in ids {
+                        map.remove(&id);
+                    }
                 }
             });
         }
