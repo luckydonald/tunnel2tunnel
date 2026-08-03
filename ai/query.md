@@ -1474,3 +1474,15 @@ Generally:
 > - `23` tools, `46192` tokens, `3.46185 s`
 
 ❯ /sanitize-error-logs @ai/errors/9.*
+
+❯ Why did test not find issue? Add tests which find issue.
+
+❯ Task Notification:
+> - Task `ab2ad160bfd14154b` <kbd>completed</kbd>
+> - Tool `toolu_01BEzXCMJrnAg9uJzv1Zz4j6`
+> - > Agent "Find and summarize tunnel_e2e test structure" finished
+> - [Query (`2067` chars, `2.03 KB`)](output/agents/038.ab2ad160bfd14154b/prompt.md)
+> - [Answer (`4981` chars, `4.88 KB`)](output/agents/038.ab2ad160bfd14154b/result.md)
+> - [Raw log (`186493` chars, `182 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/c02f4da6-a4be-4fd0-a63b-f884e2f6d863/tasks/ab2ad160bfd14154b.output)
+> - `8` tools, `43150` tokens, `1.04162 s`
+

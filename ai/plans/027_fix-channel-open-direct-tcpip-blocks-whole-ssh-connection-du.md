@@ -170,19 +170,93 @@ it explicitly if needed since the original code already treats `target_entity` a
 
 `crates/tunnel2tunnel-ssh/src/lib.rs:1453-1472` is already a standalone spawned task; unaffected.
 
+## Why the existing `tunnel_e2e` test didn't catch this
+
+`crates/t2t/tests/tunnel_e2e.rs` only ever drives **separate SSH connections** — its two `ssh -L`
+legs (`spawn_ssh_l`, real OpenSSH subprocesses) are each their own TCP+SSH connection, and its only
+concurrency (`tokio::join!` around its two tunnels) is across those separate connections, not two
+channel-open requests racing on *one* connection/`Session`. Since the bug is specifically that one
+connection's single-task event loop serializes everything on *that* connection, a test that never
+puts two direct-tcpip requests on the same connection structurally cannot see it — regardless of
+timeout generosity (the file uses 5–15s polling windows, well over the 12s stall, so even a
+coincidental slowdown wouldn't fail an assertion). No existing test also exercises the "target
+port_config/subscription/access all valid, but no server ever registered" case at all — that path
+exists in the source (`lib.rs:1235-1243`) but is currently untested.
+
+`crates/t2t/tests/tarpit_e2e.rs` already has the right shape for a same-connection test: it drives
+an in-process `russh::client::Handle<TestClient>` directly (`connect_client`/`connect_client_at`,
+`crates/t2t/tests/tarpit_e2e.rs:147-175`) instead of shelling out to `ssh`, which is exactly what's
+needed here since `ClientHandle` is cheaply cloneable and its
+`channel_open_direct_tcpip(host, port, originator_address, originator_port)` method
+(`russh-0.61.2/src/client/mod.rs:718`) can be called twice concurrently from the same handle.
+
+## New regression test
+
+Add to `crates/t2t/tests/tunnel_e2e.rs` (reuse its DB/fixture helpers — `User::create`,
+`Entity::create`, `SshKey::create`, `PortConfig::create`, `PortSubscription::create`,
+`EntityAccess::create` if cross-account — plus `spawn_server`/`connect_client`-style helpers ported
+from `tarpit_e2e.rs`, since `tunnel_e2e.rs` doesn't have an in-process client harness yet):
+
+`same_connection_online_target_not_blocked_by_offline_target_timeout`:
+
+1. Create one client entity + key, two target ("server") entities + keys, all under one user (or
+   a granted cross-account setup — same-account is simpler and sufficient here).
+2. For target A ("online"): create its `PortConfig` (`enabled=true`, arbitrary `proxy_port`), a
+   `PortSubscription` linking the client to it, and actually register the server side — either by
+   spawning a real `ssh -R` subprocess for target A (as `tunnel_e2e.rs` already does elsewhere), or
+   more simply by driving target A's own in-process `russh::client` connection through
+   `tcpip_forward` directly (check `lib.rs`'s `tcpip_forward` handler signature — should be
+   callable via `ClientHandle::tcpip_forward(address, port)` per the russh client API) so the
+   `server_slots` map has a live entry for `(target_a_id, proxy_port_a)` before the test proceeds.
+3. For target B ("offline"): create its `PortConfig` + `PortSubscription` the same way, but never
+   register anything for it — no `-R`, no `tcpip_forward` call. This exercises the previously
+   untested "never came online within the retry window" path deliberately, on demand, without
+   waiting on a real timeout race.
+4. Connect ONE client `ClientHandle` (`connect_client(port)` style, authenticated via the client's
+   key) — this is the single connection both requests must share.
+5. Using that one `handle`, fire both requests concurrently:
+   ```rust
+   let (online, offline) = tokio::join!(
+       handle.channel_open_direct_tcpip(target_a_id.to_string(), proxy_port_a as u32, "originator", 0),
+       handle.channel_open_direct_tcpip(target_b_id.to_string(), proxy_port_b as u32, "originator", 0),
+   );
+   ```
+6. Assert `online` resolves to `Ok(channel)` **within well under the 12s retry window** — e.g.
+   wrap the whole `join!` in `tokio::time::timeout(Duration::from_secs(3), ...)` and assert it
+   doesn't time out, or record `Instant::now()` before and assert `online`'s completion happened
+   in under ~2s. Before the fix, `online` would be stuck behind `offline`'s full 12s wait on the
+   shared connection; after the fix, it resolves immediately (steps 1–3 pass fast, `Ok(true)`
+   returns right away) independent of `offline`'s outcome.
+7. Assert `offline` eventually fails/closes (either `Err` from `channel_open_direct_tcpip`, since
+   russh's `finalize_channel_open` still sends `CHANNEL_OPEN_FAILURE` when steps 1–3 fail — note
+   this test's B path passes steps 1–3, so post-fix it will actually get `Ok(true)` immediately too,
+   then the spawned task closes the channel ~12s later once the retry window lapses; assert the
+   resulting `Channel`'s `wait()` yields `ChannelMsg::Close`/`Eof`/connection drop within ~13s, not
+   `Ok(bool)` — adjust the assertion to match whichever behavior the implementation actually
+   produces once step 2 above is written, since this is the "confirm-then-close-on-timeout"
+   trade-off documented above).
+8. Optionally, also directly unit/integration-test the previously-silent `channel_open_forwarded_tcpip`
+   error path (`lib.rs:1249-1252` pre-fix) by registering target A's server slot and then closing
+   its underlying connection/`Handle` before the client's request reaches that line, then asserting
+   an `error!`-level log line is emitted (e.g. via a `tracing` test subscriber capturing output) —
+   this is a secondary, lower-priority addition since it's a logging gap, not the main blocking bug.
+
 ## Verification
 
-1. `cargo build -p tunnel2tunnel-ssh` (and full workspace) to confirm the `Arc<Mutex<>>` field
-   changes don't break other call sites, and the moved/spawned block borrow-checks (in particular
-   that `channel`, `host_to_connect`, and all captured locals satisfy `'static` for `tokio::spawn`).
-2. Run the existing `tunnel_e2e` test (mentioned in recent commit history) — it should still pass
-   unmodified, since normal bridging behavior (server already online) is unchanged, just deferred
-   by one tick through the spawn.
-3. Manually reproduce the original bug scenario locally: register two entities under one SSH
-   connection profile analogous to the user's setup — one target port config with no server ever
-   registered (to force the 12s timeout) and one with a server actually online — request both via
-   `-L` on the same `ssh` invocation, and confirm the online target's tunnel now bridges
-   immediately instead of waiting behind the offline target's full 12s timeout.
-4. Check logs: confirm the previously-silent `channel_open_forwarded_tcpip` error path now emits
+1. `cargo build -p tunnel2tunnel-ssh -p t2t` (and full workspace) to confirm the `Arc<Mutex<>>`
+   field changes don't break other call sites, and the moved/spawned block borrow-checks (in
+   particular that `channel`, `host_to_connect`, and all captured locals satisfy `'static` for
+   `tokio::spawn`).
+2. Run the new test **against the pre-fix code first** (temporarily, or just reason about it) to
+   confirm it actually fails/times out there — proving it would have caught this bug — then run it
+   against the fixed code and confirm it passes quickly.
+3. Run the existing `tunnel_e2e` and `tarpit_e2e` test suites — both should still pass unmodified,
+   since normal bridging behavior (server already online, single-connection-at-a-time cases) is
+   unchanged, just deferred by one tick through the spawn.
+4. Manually reproduce the original bug scenario locally with real `ssh -L`/`-R` (the user's exact
+   setup): one target online, one target with no server registered, both requested via `-L` on the
+   same `ssh` invocation — confirm the online target's tunnel now bridges immediately instead of
+   waiting behind the offline target's full 12s timeout.
+5. Check logs: confirm the previously-silent `channel_open_forwarded_tcpip` error path now emits
    an `error!` line if forced (e.g. by killing the server-side SSH session between it registering
    its slot and the client's channel-open request).
