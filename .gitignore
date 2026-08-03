@@ -977,6 +977,7 @@ coverage/
 **/pending-commit.md
 # # rebase messages
 **/rebase-msg*.md
+**/rebase-todo.sh
 
 
 ######################################
