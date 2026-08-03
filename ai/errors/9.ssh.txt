@@ -1,0 +1,29 @@
+user@fedora:~$ ssh -i ~/.ssh/t2t_linux-laptop   -L 5951:server1:5900   -L 5952:server2:5900   <redacted-uuid>@tunnel2tunnel.example.com   -p 2222
+
+✨ Welcome to tunnel2tunnel, linux-laptop! ✨
+Twilight Sparkle has verified your access rules — everything checks out.
+The portal stands ready. Your connection is now active. 📚
+Type a message and press Enter to chat with other connected entities.
+
+
+✉ Derpy Hooves stopped by to make sure your tunnel is still up! 🧁
+
+
+✉ Derpy Hooves stopped by to make sure your tunnel is still up! 🧁
+
+
+✉ Derpy Hooves stopped by to make sure your tunnel is still up! 🧁
+
+
+✉ Derpy Hooves stopped by to make sure your tunnel is still up! 🧁
+
+
+✉ Derpy Hooves stopped by to make sure your tunnel is still up! 🧁
+
+
+✉ Derpy Hooves stopped by to make sure your tunnel is still up! 🧁
+
+channel 5: open failed: administratively prohibited: Rejected
+
+✉ Derpy Hooves stopped by to make sure your tunnel is still up! 🧁
+

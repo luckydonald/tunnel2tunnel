@@ -1449,3 +1449,28 @@ Generally:
 
 ❯ I rebased it all into the last commit; Anyways, write a skill for that kind of cleanup, which values to look for in `ai/errors/*.*`, etc, so it's easier next time.
 
+❯ My VNC is not connecting on `localhost:5951` or `5952`. See @ai/errors/9.ssh.txt and @ai/errors/9.t2t.txt
+
+❯ 5951 is not working. I just got the vnc stuck on `Connecting...`
+
+❯ /plan ^
+
+❯ Task Notification:
+> - Task `a4ade4e5b5164564f` <kbd>completed</kbd>
+> - Tool `toolu_01LdruyDkGhPKsGmxZbNATrv`
+> - > Agent "Find admin-prohibited reject source in SSH tunnel code" finished
+> - [Query (`2041` chars, `2 KB`)](output/agents/036.a4ade4e5b5164564f/prompt.md)
+> - [Answer (`6906` chars, `6.79 KB`)](output/agents/036.a4ade4e5b5164564f/result.md)
+> - [Raw log (`165166` chars, `161 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/c02f4da6-a4be-4fd0-a63b-f884e2f6d863/tasks/a4ade4e5b5164564f.output)
+> - `15` tools, `36242` tokens, `3.14017 s`
+
+❯ Task Notification:
+> - Task `a6aa20a5de54be921` <kbd>completed</kbd>
+> - Tool `toolu_01ChkiXStGGWHDSCieJ9kCMg`
+> - > Agent "Research russh 0.61 deferred channel-open confirmation API" finished
+> - [Query (`3005` chars, `2.94 KB`)](output/agents/037.a6aa20a5de54be921/prompt.md)
+> - [Answer (`6672` chars, `6.55 KB`)](output/agents/037.a6aa20a5de54be921/result.md)
+> - [Raw log (`221910` chars, `217 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/c02f4da6-a4be-4fd0-a63b-f884e2f6d863/tasks/a6aa20a5de54be921.output)
+> - `23` tools, `46192` tokens, `3.46185 s`
+
+❯ /sanitize-error-logs @ai/errors/9.*

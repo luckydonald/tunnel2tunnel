@@ -37,8 +37,9 @@ description: "Redact personal/production data from ai/errors/*.* files (client s
 ```bash
 grep -nE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' ai/errors/<N>.*   # any leftover IPs
 grep -nE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' ai/errors/<N>.*  # any leftover UUIDs
+grep -nE 'admin|user' ai/errors/<N>.*  # possibly leftover user accounts.
 grep -n 'SHA256:' ai/errors/<N>.*      # fingerprints should all read SHA256:<redacted>
-grep -n '/home/\|/run/user/' ai/errors/<N>.*  # leftover real local paths
+grep -nE '/home/\|/run/user/' ai/errors/<N>.*  # leftover real local paths
 ```
 
 If any of these commands return a hit that isn't already a placeholder, the file isn't done yet.
