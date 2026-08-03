@@ -1447,3 +1447,5 @@ Generally:
 
 ❯ IPs must be readacted, too.
 
+❯ I rebased it all into the last commit; Anyways, write a skill for that kind of cleanup, which values to look for in `ai/errors/*.*`, etc, so it's easier next time.
+
