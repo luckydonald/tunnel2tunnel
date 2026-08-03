@@ -1,0 +1,23 @@
+
+2026-08-03T11:00:17.363266484Z 2026-08-03T11:00:17.363117Z  INFO tunnel2tunnel_ssh: SSH: new connection peer_ip=<redacted-ip> conn_id=<redacted-uuid>
+2026-08-03T11:00:19.439985501Z 2026-08-03T11:00:19.439737Z  INFO tunnel2tunnel_ssh: SSH: auth attempt (password) — rejected (password auth not supported) peer_ip=<redacted-ip> user=root password_len=10 available="publickey"
+2026-08-03T11:00:20.809289162Z 2026-08-03T11:00:20.809045Z  INFO tunnel2tunnel_ssh: SSH: connection closed (unauthenticated) peer_ip=<redacted-ip>
+2026-08-03T11:00:20.809387684Z 2026-08-03T11:00:20.809212Z  WARN tunnel2tunnel_ssh: SSH: session ended with error err=early eof
+2026-08-03T11:18:17.245330543Z 2026-08-03T11:18:17.245122Z  INFO tunnel2tunnel_ssh: SSH: new connection peer_ip=<redacted-ip> conn_id=<redacted-uuid>
+2026-08-03T11:18:20.562140653Z 2026-08-03T11:18:20.561881Z  INFO tunnel2tunnel_ssh: SSH: auth attempt (password) — rejected (password auth not supported) peer_ip=<redacted-ip> user=root password_len=5 available="publickey"
+2026-08-03T11:18:22.166932192Z 2026-08-03T11:18:22.166530Z  INFO tunnel2tunnel_ssh: SSH: connection closed (unauthenticated) peer_ip=<redacted-ip>
+2026-08-03T11:18:22.166980073Z 2026-08-03T11:18:22.166657Z  WARN tunnel2tunnel_ssh: SSH: session ended with error err=early eof
+2026-08-03T11:39:29.172463137Z 2026-08-03T11:39:29.171798Z  INFO tunnel2tunnel_ssh: SSH: new connection peer_ip=<redacted-ip> conn_id=<redacted-uuid>
+2026-08-03T11:39:29.270532972Z 2026-08-03T11:39:29.270316Z  INFO tunnel2tunnel_ssh: SSH: auth attempt (none) — rejected peer_ip=<redacted-ip> user=<redacted-uuid> available="publickey"
+2026-08-03T11:39:30.319750069Z 2026-08-03T11:39:30.319571Z  INFO tunnel2tunnel_ssh: SSH: publickey offered (probe, no signature yet) peer_ip=<redacted-ip> user=<redacted-uuid> fp=SHA256:<redacted> key_algo="ssh-ed25519"
+2026-08-03T11:39:30.344242487Z 2026-08-03T11:39:30.344080Z  INFO tunnel2tunnel_ssh: SSH: auth attempt (publickey) peer_ip=<redacted-ip> user=<redacted-uuid> fp=SHA256:<redacted>
+2026-08-03T11:39:30.347176962Z 2026-08-03T11:39:30.346979Z  INFO tunnel2tunnel_ssh: SSH: auth accepted entity_id=<redacted-uuid> entity_name="linux-laptop" peer_ip=<redacted-ip> fp=SHA256:<redacted>
+2026-08-03T11:40:40.492696264Z 2026-08-03T11:40:40.490748Z  INFO tunnel2tunnel_ssh: direct-tcpip: channel open request client_entity=<redacted-uuid> client_entity_name="linux-laptop" peer_ip=<redacted-ip> host="server1" port=5900
+2026-08-03T11:40:40.492794065Z 2026-08-03T11:40:40.491901Z  INFO tunnel2tunnel_ssh: direct-tcpip: rejected — target hostname not found (not a UUID or known alias) host="server1" port=5900 client_entity=<redacted-uuid>
+2026-08-03T11:40:53.979716615Z 2026-08-03T11:40:53.979519Z  INFO tunnel2tunnel_ssh: direct-tcpip: channel open request client_entity=<redacted-uuid> client_entity_name="linux-laptop" peer_ip=<redacted-ip> host="server1" port=5900
+2026-08-03T11:40:53.981373675Z 2026-08-03T11:40:53.980998Z  INFO tunnel2tunnel_ssh: direct-tcpip: rejected — target hostname not found (not a UUID or known alias) host="server1" port=5900 client_entity=<redacted-uuid>
+2026-08-03T11:41:08.329773165Z 2026-08-03T11:41:08.329586Z  INFO tunnel2tunnel_ssh: direct-tcpip: channel open request client_entity=<redacted-uuid> client_entity_name="linux-laptop" peer_ip=<redacted-ip> host="server2" port=5900
+2026-08-03T11:41:08.330514174Z 2026-08-03T11:41:08.330276Z  INFO tunnel2tunnel_ssh: direct-tcpip: rejected — target hostname not found (not a UUID or known alias) host="server2" port=5900 client_entity=<redacted-uuid>
+2026-08-03T11:41:15.270516286Z 2026-08-03T11:41:15.269190Z  INFO tunnel2tunnel_ssh: direct-tcpip: channel open request client_entity=<redacted-uuid> client_entity_name="linux-laptop" peer_ip=<redacted-ip> host="server2" port=5900
+2026-08-03T11:41:15.270560726Z 2026-08-03T11:41:15.269916Z  INFO tunnel2tunnel_ssh: direct-tcpip: rejected — target hostname not found (not a UUID or known alias) host="server2" port=5900 client_entity=<redacted-uuid>
+

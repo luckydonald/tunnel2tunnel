@@ -1356,3 +1356,94 @@ Generally:
 > - [Answer (`233` chars, `233 B`)](output/agents/035.bc8yd0rkk/result.md)
 > - [Raw log (`233` chars, `233 B`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/f6e17156-11fe-408a-b8c4-820640d9d2af/tasks/bc8yd0rkk.output)
 
+❯ /plan Fix not being able to establish the VNC connection through the tunnel. @ai/errors/8.ssh.txt shows two attempts to connect to the vnc `localhost:5951`, and then two attempts for `localhost:4952`. The backend log is at @ai/errors/8.t2t.txt . As always, also make sure the error files do no longer contain personal data.
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. Prior fix (commit f05b20f) added a fallback: resolve `-L` hostname against `entities.name` (case-sensitive exact match), but only when the name is unambiguous (i.e., no two non-deleted entities share it). Error 8 shows the exact same rejection for `m1n` and `PC6` despite that fix already being live. Which is more likely the actual setup?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Root cause** (1/1) <kbd>Single Select</kbd><br>
+>> Prior fix (commit f05b20f) added a fallback: resolve `-L` hostname against `entities.name` (case-sensitive exact match), but only when the name is unambiguous (i.e., no two non-deleted entities share it). Error 8 shows the exact same rejection for `m1n` and `PC6` despite that fix already being live. Which is more likely the actual setup?
+> - [ ] 1\. Case mismatch
+>   - _Actual entity display name differs in case from what was typed in -L (e.g. entity is named "M1N", user typed "m1n") — exact `name = $1` match fails silently._
+> - [ ] 2\. Ambiguous name
+>   - _More than one non-deleted entity is named "m1n" or "PC6" in this account — lookup deliberately returns unresolved rather than guessing._
+> - [ ] 3\. Not sure / check DB
+>   - _Don't know — want me to write a plan step to query production entities/entity_access to confirm before deciding on a fix._
+> - [x] 4\. _Type something:_
+>   - > According to deployment log, `4d28ee523c4979754cf80b28644adfe4a8ba92a5` is live.
+>
+> </details>
+>
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. For real this time: what are the exact configured entity display names (case-for-case) for the two VNC targets you're calling "m1n" and "PC6" in the -L command? And do you have more than one entity sharing either name (even a soft-deleted/old one)?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Entity names** (1/1) <kbd>Single Select</kbd><br>
+>> For real this time: what are the exact configured entity display names (case-for-case) for the two VNC targets you're calling "m1n" and "PC6" in the -L command? And do you have more than one entity sharing either name (even a soft-deleted/old one)?
+> - [x] 1\. Names match exactly, no duplicates
+>   - _Entity names are literally "m1n" and "PC6", case-exact, and each is the only entity with that name — something else is broken._
+> - [ ] 2\. Case or typo mismatch
+>   - _Actual entity name differs in case/spelling from what was typed in -L (e.g. real name is "M1N")._
+> - [ ] 3\. Not sure, need to check
+>   - _Don't know off-hand — want to go check the Entities page / DB before deciding._
+> - [ ] 4\. _Type something._
+>
+> </details>
+>
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. No code change exists yet (plan pending, no Run commit to fold into). What to do with the 5 auto-commits (d2f2b79 prompt, 80c4926/d27dd21 referenced-file, f90ee2b/784795f decisions) sitting on top of e972b23?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Commit action** (1/1) <kbd>Single Select</kbd><br>
+>> No code change exists yet (plan pending, no Run commit to fold into). What to do with the 5 auto-commits (d2f2b79 prompt, 80c4926/d27dd21 referenced-file, f90ee2b/784795f decisions) sitting on top of e972b23?
+> - [ ] 1\. Leave as-is
+>   - _Don't touch history now. Fold them into the real work commit once the plan is approved and implemented._
+> - [ ] 2\. Squash chain now
+>   - _git reset --soft to e972b23 + one combined auto-commit, to keep history tidy while plan is still pending._
+> - [x] 3\. _Type something:_
+>   - > First make sure (& commit) a clean version of the added error files. No ids, no hostnames, etc. Use `server1`, `server2` and `linux-laptop`.
+>
+> </details>
+>
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. The log-sanitization commit (043ab7d) just landed. The 5 earlier auto-commits (prompt + 2 referenced-file + 2 decisions) predate it and aren't really about it. What now?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **History cleanup** (1/1) <kbd>Single Select</kbd><br>
+>> The log-sanitization commit (043ab7d) just landed. The 5 earlier auto-commits (prompt + 2 referenced-file + 2 decisions) predate it and aren't really about it. What now?
+> - [ ] 1\. Fold into sanitization commit
+>   - _Squash d2f2b79..784795f into 043ab7d (reset --soft + amend) since they're all part of this same task session._
+> - [ ] 2\. Leave as-is for now
+>   - _Keep them separate until the actual fix (push origin/mane + redeploy) lands, then fold everything together._
+> - [x] 3\. _Type something:_
+>   - > Those should be folded separately, as it's the error check, even if the resulution is _it's already fixed_ instead of actual code changes. And the commit for this question response goes with the log sanitization, I guess.
+>
+> </details>
+>
+
+❯ IPs must be readacted, too.
+
