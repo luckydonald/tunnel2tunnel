@@ -1712,3 +1712,9 @@ Generally:
 > - [Raw log (`262895` chars, `260 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/58b1a36c-7cbd-417f-8cb2-99004d35681f/tasks/abdfab7bc69376ceb.output)
 > - `14` tools, `55050` tokens, `2.9663 s`
 
+❯ Wouldn't it make sense to have those two websocket events ("x changed" and "here's the full new data") merged? I.e. in rust it's (only?) the new function described, and that basically then has a field for the diff/event and a field for the full data? Basically merging both approaches both in one call and in one websocket event? In a way, the full-data package get's a proper reason field. Just not called that.
+
+❯ Why do we need another loop for `my_live_connections_ws`? What's the "old" one?
+
+❯ Why is the old loop still needed?
+

@@ -45,24 +45,31 @@ Research findings (from two Explore passes):
 
 3. **`crates/tunnel2tunnel-web/src/lib.rs`** — add `live_event_tx: LiveEventTx` to `AppState`; **`crates/t2t/src/main.rs`** — construct it via `new_live_event_tx()` next to `new_live_update_tx()` and pass to both `start_ssh(...)` and the web `AppState`.
 
-4. **`crates/tunnel2tunnel-web/src/routes/live_ws.rs`** — new dedicated loop for `my_live_connections_ws` only (leave `run_loop`/the entity and admin routes untouched — they keep the old bare-array format):
+4. **`crates/tunnel2tunnel-web/src/routes/live_ws.rs`** — generalize the *existing* `run_loop` in place rather than adding a parallel function, so entity/admin routes stay byte-identical and only `me` opts into the new behavior:
+   ```rust
+   async fn run_loop<T, F, Fut>(
+       who: &str, mut socket: WebSocket, state: AppState, build: F,
+       events: Option<(broadcast::Receiver<LiveEvent>, fn(&LiveEvent, &T) -> bool)>,
+   )
+   where T: Serialize, F: Fn(AppState) -> Fut, Fut: Future<Output = Result<T, WebError>>,
+   ```
+   `events: None` (entity + admin routes, unchanged call sites) → behaves exactly as today: `T` serialized bare, no `reason` field, only `live_update_tx`/interval drive resync.
+   `events: Some((rx, filter))` (`me` route only) → the serialized envelope gains an optional field naming why this particular push happened:
    ```rust
    #[derive(Serialize)]
-   #[serde(tag = "type", rename_all = "snake_case")]
-   enum MyLiveMessage {
-       Snapshot { rows: Vec<DashboardRow> },
-       Event { #[serde(flatten)] event: LiveEvent },
-   }
+   struct WithReason<T> { #[serde(flatten)] data: T, #[serde(skip_serializing_if = "Option::is_none")] reason: Option<LiveEvent> }
    ```
-   Loop: subscribe to both `state.live_update_tx` and `state.live_event_tx`; keep a `HashSet<Uuid>` of the user's own entity ids, refreshed every time a snapshot is (re)built (`rows.iter().map(|r| r.entity_id).collect()`); on a snapshot trigger (event-driven wakeup, the existing 20s fallback interval, or initial connect) rebuild + send `Snapshot`; on an event-channel recv, send `Event` only if `event.entity_ids()` intersects the id set. `Lagged` on the event receiver is just dropped (a missed toast isn't correctness-critical, unlike a missed snapshot); `Lagged`/tick on the snapshot receiver behaves exactly as `run_loop` does today.
+   `my_live_connections_ws` stops subscribing to the old bare `live_update_tx` entirely — its `events` receiver (`state.live_event_tx.subscribe()`) doubles as both wake-signal *and* payload — and passes a `filter` closure checking `ev.entity_ids()` against `rows.iter().map(|r| r.entity_id)`:
+   - initial connect / interval tick / `Lagged` → rebuild + send with `reason: None` (plain resync, no toast).
+   - `rx.recv() == Ok(ev)` where `filter(&ev, &rebuilt_rows)` is true → rebuild + send with `reason: Some(ev)`. Irrelevant event → skip sending anything (no wasted resend for other users' activity).
+   One loop body, one `select!`, no second function to maintain; entity/admin routes are untouched aside from passing `None` at their call sites.
 
 ### Frontend
 
 5. **`frontend/src/stores/liveConnections.ts`** (new Pinia store) — owns the *one* app-wide connection to `/api/me/live-connections/ws`:
    - `rows: DashboardRow[]`, `connected: boolean`
    - `connect()` / `disconnect()` — manual lifecycle (not tied to component mount). Reuse the reconnect/backoff logic in `composables/useLiveSocket.ts` by extracting it into a plain `createLiveSocket(path, onMessage)` helper returning `{ close() }` that `useLiveSocket` (still used by `EntityDetailPage.vue`/`AdminLiveConnectionsPage.vue`, unchanged) wraps in `onMounted`/`onUnmounted`, and the store calls directly.
-   - On `{type: 'snapshot', rows}`: replace `rows.value`, and update two lookup maps kept in the store: `entityNameById: Map<string,string>` and `serviceNameByKey: Map<string,string>` (key `` `${entity_id}:${port}` ``) from the row data, plus `myEntityIds: Set<string>` (every `row.entity_id` — `DashboardRow.entity_id` is always *my* entity per `build_my_live_connections`).
-   - On `{type: 'event', kind, ...}`: resolve names from the maps (fall back to raw id/port if unknown), decide the "my" perspective for bridge events (is `client_entity_id` or `target_entity_id` mine — phrase "connected to X" vs "X connected to your Y"), then call `useToast().show(text, level)`. Suggested copy/level, reusing `liveStatus.ts` framing where possible:
+   - On every message (`{ rows, reason? }`): always replace `rows.value` and rebuild two lookup maps from it: `entityNameById: Map<string,string>` and `serviceNameByKey: Map<string,string>` (key `` `${entity_id}:${port}` ``), plus `myEntityIds: Set<string>` (every `row.entity_id` — `DashboardRow.entity_id` is always *my* entity per `build_my_live_connections`). Only if `reason` is present: resolve names from the just-rebuilt maps (fall back to raw id/port if unknown), decide the "my" perspective for bridge events (is `client_entity_id` or `target_entity_id` mine — phrase "connected to X" vs "X connected to your Y"), then call `useToast().show(text, level)`. A message with no `reason` (initial connect / 20s fallback resync / lagged-resync) only updates state, never toasts. Suggested copy/level, reusing `liveStatus.ts` framing where possible:
      - `entity_online` → "`{name}` is online" / `success`
      - `entity_offline` → "`{name}` went offline" / `info`
      - `port_forwarding_started` → "`{service}` on `{name}` started forwarding" / `info`
