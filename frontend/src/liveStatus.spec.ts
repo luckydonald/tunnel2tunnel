@@ -1,14 +1,20 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { formatSince, statusDotEmoji, statusDotLabel } from '@/liveStatus'
+import { formatSince, dotEmoji, dotLabel, ringLabel } from '@/liveStatus'
 
-describe('statusDotEmoji / statusDotLabel', () => {
-  it('has an entry for every status', () => {
-    expect(statusDotEmoji.green).toBe('🟢')
-    expect(statusDotEmoji.gray).toBe('⚪')
-    expect(statusDotEmoji.orange).toBe('🟠')
-    expect(statusDotLabel.green).toBeTruthy()
-    expect(statusDotLabel.gray).toBeTruthy()
-    expect(statusDotLabel.orange).toBeTruthy()
+describe('dotEmoji / dotLabel', () => {
+  it('has a truthy emoji and label for both live states', () => {
+    expect(dotEmoji(true)).toBe('🟢')
+    expect(dotEmoji(false)).toBe('⚪')
+    expect(dotLabel(true)).toBeTruthy()
+    expect(dotLabel(false)).toBeTruthy()
+  })
+})
+
+describe('ringLabel', () => {
+  it('has an entry for every remote status', () => {
+    expect(ringLabel.gray).toBeTruthy()
+    expect(ringLabel.orange).toBeTruthy()
+    expect(ringLabel.green).toBeTruthy()
   })
 })
 

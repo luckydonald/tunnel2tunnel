@@ -135,7 +135,11 @@ function statusFor(subscriptionId: string): SubscriptionLiveStatus | undefined {
 
         <template v-for="service in owner.visibleServices" :key="service.id">
           <div class="service-row">
-            <StatusDot v-if="service.subscription && statusFor(service.subscription.id)" :status="statusFor(service.subscription.id)!.status" />
+            <StatusDot
+              v-if="service.subscription && statusFor(service.subscription.id)"
+              :live="statusFor(service.subscription.id)!.live"
+              :remote-status="statusFor(service.subscription.id)!.remote_status"
+            />
             <span class="service-name">{{ service.name }}</span>
             <code class="service-port">proxy {{ service.proxy_port }}</code>
 
@@ -177,9 +181,9 @@ function statusFor(subscriptionId: string): SubscriptionLiveStatus | undefined {
             </template>
           </div>
           <p
-            v-if="service.subscription && statusFor(service.subscription.id)?.status === 'orange'"
+            v-if="service.subscription && statusFor(service.subscription.id)?.remote_status === 'orange'"
             class="orange-hint"
-          >server is offline — will connect automatically once it's back</p>
+          >server is online but hasn't provided this port yet — will connect automatically once it does</p>
         </template>
       </div>
     </div>

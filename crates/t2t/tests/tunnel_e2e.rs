@@ -46,15 +46,16 @@ use uuid::Uuid;
 use tunnel2tunnel_core::{
     db,
     models::{
-        entity::Entity, entity_access::EntityAccess, port_config::PortConfig,
-        port_subscription::PortSubscription, ssh_key::SshKey, user::User,
+        connection_log::ConnectionLog, entity::Entity, entity_access::EntityAccess,
+        port_config::PortConfig, port_subscription::PortSubscription, ssh_key::SshKey, user::User,
     },
     pubkey::parse_authorized_keys_line,
 };
 use tunnel2tunnel_ssh::{
     new_active_tunnels, new_server_slots, start as start_ssh, ActiveTunnelInfo, ActiveTunnels,
-    SshConfig,
+    ServerSlots, SshConfig,
 };
+use tunnel2tunnel_web::{start as start_web, WebConfig};
 
 /// The remote-forward routing keys used between the `ssh` legs. Neither is
 /// ever bound as a real OS socket by t2t (see `tcpip_forward` in
@@ -348,6 +349,149 @@ async fn wait_for_active_tunnel_entry(
     }
 }
 
+/// Spawns `ssh -N` against the t2t server with no `-R`/`-L` request at all —
+/// completes the SSH handshake and publickey auth (which is what flips
+/// `entity_status` online via `ConnectionLog`), then just holds the
+/// connection open. Used to reproduce "owner authenticated but hasn't
+/// forwarded this port yet": unlike `spawn_ssh_r`, this never issues a
+/// `tcpip_forward` request, so `server_slots` never gets an entry for this
+/// entity/port — exactly the orange-ring scenario in
+/// `crates/tunnel2tunnel-web/src/routes/live_connections.rs`.
+fn spawn_ssh_authenticated_only(key_path: &Path, ssh_port: u16, label: &'static str) -> ChildGuard {
+    let mut child = Command::new("ssh")
+        .args(["-N"])
+        .args(["-i", key_path.to_str().unwrap()])
+        .args(["-p", &ssh_port.to_string()])
+        .args(["-o", "StrictHostKeyChecking=no"])
+        .args(["-o", "UserKnownHostsFile=/dev/null"])
+        .arg("server@127.0.0.1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn ssh -N (auth-only, no forward)");
+    log_child_stderr(label, &mut child);
+    ChildGuard(child)
+}
+
+/// Polls `ConnectionLog::entity_status` until `entity_id` shows up online
+/// (a `connection_logs` row with `success = true AND ended_at IS NULL`),
+/// or panics after 10s. This is exactly the signal SSH auth success writes,
+/// independent of whether any port has been forwarded yet.
+async fn wait_for_entity_online(pool: &sqlx::PgPool, entity_id: Uuid) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let (online, _) = ConnectionLog::entity_status(pool, entity_id)
+            .await
+            .expect("query entity_status");
+        if online {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "entity {entity_id} never showed up online in connection_logs"
+        );
+        sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// Starts the real axum HTTP server (`tunnel2tunnel_web::start`) on a fresh
+/// ephemeral port, sharing the same `pool`/`server_slots`/`active_tunnels`
+/// the SSH server uses — mirrors how `crates/t2t/src/main.rs` wires both
+/// together. Used so these tests exercise the actual
+/// `GET /api/entities/{id}/live-connections` route (real session/login
+/// flow, real JSON response) rather than re-deriving its logic locally.
+async fn spawn_web_server(
+    pool: sqlx::PgPool,
+    server_slots: ServerSlots,
+    active_tunnels: ActiveTunnels,
+) -> u16 {
+    let http_port = free_port();
+    tokio::spawn(async move {
+        start_web(
+            WebConfig {
+                http_port,
+                ssh_port: 0,
+                static_dir: None,
+                ssh_host_key_fingerprint: "test-fingerprint".to_string(),
+            },
+            pool,
+            server_slots,
+            active_tunnels,
+        )
+        .await
+        .expect("t2t web server failed");
+    });
+    for _ in 0..50 {
+        if TcpStream::connect(("127.0.0.1", http_port)).await.is_ok() {
+            break;
+        }
+        sleep(Duration::from_millis(100)).await;
+    }
+    http_port
+}
+
+/// Logs into the given http server as `username`/`password` via the real
+/// `POST /api/auth/login` route, returning a cookie-jar-enabled client that
+/// carries the resulting session cookie on subsequent requests.
+async fn login(http_port: u16, username: &str, password: &str) -> reqwest::Client {
+    let client = reqwest::Client::builder()
+        .cookie_store(true)
+        .build()
+        .expect("build reqwest client");
+    let resp = client
+        .post(format!("http://127.0.0.1:{http_port}/api/auth/login"))
+        .json(&serde_json::json!({ "username": username, "password": password }))
+        .send()
+        .await
+        .expect("send login request");
+    assert!(
+        resp.status().is_success(),
+        "login failed with status {}: {}",
+        resp.status(),
+        resp.text().await.unwrap_or_default()
+    );
+    client
+}
+
+/// Fetches `GET /api/entities/{entity_id}/live-connections` as an already
+/// logged-in `client`, returning the parsed JSON body.
+async fn get_entity_live_connections(
+    client: &reqwest::Client,
+    http_port: u16,
+    entity_id: Uuid,
+) -> serde_json::Value {
+    let resp = client
+        .get(format!(
+            "http://127.0.0.1:{http_port}/api/entities/{entity_id}/live-connections"
+        ))
+        .send()
+        .await
+        .expect("send live-connections request");
+    assert!(
+        resp.status().is_success(),
+        "live-connections request failed with status {}: {}",
+        resp.status(),
+        resp.text().await.unwrap_or_default()
+    );
+    resp.json().await.expect("parse live-connections JSON")
+}
+
+/// Finds the subscription row for `port_config_id` inside a
+/// `GET /api/entities/{id}/live-connections` JSON body's `subscriptions`
+/// array, panicking if it's missing.
+fn find_subscription_row(body: &serde_json::Value, port_config_id: Uuid) -> serde_json::Value {
+    body["subscriptions"]
+        .as_array()
+        .expect("subscriptions array")
+        .iter()
+        .find(|row| row["port_config_id"].as_str() == Some(&port_config_id.to_string()))
+        .cloned()
+        .unwrap_or_else(|| {
+            panic!("no subscription row for port_config_id {port_config_id} in {body:?}")
+        })
+}
+
 #[tokio::test]
 async fn two_ssh_connections_tunnel_through_rendezvous() {
     if Command::new("ssh").arg("-V").output().await.is_err() {
@@ -383,11 +527,15 @@ async fn two_ssh_connections_tunnel_through_rendezvous() {
     // client profile that talks to both, so the test can assert on routing
     // (does the client's request for server A ever leak to server B?) and
     // not just on a single pipe staying open.
+    // The password IS used now — the live-connections dashboard assertions
+    // near the end of this test log in as `owner` via the real
+    // `POST /api/auth/login` route.
+    let owner_password = "e2e-test-owner-password-not-a-secret";
     let owner = User::create(
         &pool,
         &format!("t2t-e2e-test-{}", Uuid::now_v7()),
         None,
-        "irrelevant-password-not-used-by-this-test",
+        owner_password,
         false,
         Some("scratch user for tunnel_e2e integration test"),
     )
@@ -479,17 +627,20 @@ async fn two_ssh_connections_tunnel_through_rendezvous() {
     let fixture_port_b = spawn_fixture_service("B").await;
 
     // The t2t SSH rendezvous server itself, on an ephemeral port. The
-    // `ActiveTunnels` map is shared with the test itself (mirroring how
-    // `crates/t2t/src/main.rs` shares it with the web `AppState`) so this
-    // test can directly assert on the live-connections tracking added
-    // alongside `channel_open_direct_tcpip`, without standing up the full
-    // HTTP API + session/login flow just to exercise the new route.
+    // `ActiveTunnels`/`ServerSlots` maps are shared with the test itself
+    // (mirroring how `crates/t2t/src/main.rs` shares them with the web
+    // `AppState`) so this test can both directly assert on the
+    // live-connections tracking added alongside `channel_open_direct_tcpip`,
+    // AND stand up the real HTTP API against the very same maps to exercise
+    // `GET /api/entities/{id}/live-connections` end-to-end.
     let ssh_port = free_port();
     let ssh_pool = pool.clone();
     let ssh_host_key_path = host_key_path.to_str().unwrap().to_string();
     let server_slots = new_server_slots();
     let active_tunnels = new_active_tunnels();
     let test_active_tunnels = active_tunnels.clone();
+    let web_server_slots = server_slots.clone();
+    let web_active_tunnels = active_tunnels.clone();
     tokio::spawn(async move {
         start_ssh(
             SshConfig {
@@ -513,6 +664,9 @@ async fn two_ssh_connections_tunnel_through_rendezvous() {
         }
         sleep(Duration::from_millis(100)).await;
     }
+
+    let http_port = spawn_web_server(pool.clone(), web_server_slots, web_active_tunnels).await;
+    let owner_client = login(http_port, &owner.username, owner_password).await;
 
     // Connections 1+2: both server entities register their own
     // `-R proxy_port:127.0.0.1:fixture_port` forward, each to its own
@@ -730,6 +884,37 @@ async fn two_ssh_connections_tunnel_through_rendezvous() {
     assert_eq!(entry_b.proxy_port, PROXY_PORT_B as u32);
     assert_eq!(entry_b.client_user_id, owner.id);
 
+    // Fully-bridged live-connections check: with both `-R` forwards
+    // registered AND a live subscriber channel open on each, the client
+    // entity's subscription rows must report `live: true` (its own bridge is
+    // up) and `remote_status: "green"` (the owner is SSH-connected and this
+    // exact port is forwarded) — the fixed happy path this bug's orange/gray
+    // distinction is contrasted against below.
+    let client_live_connections =
+        get_entity_live_connections(&owner_client, http_port, client_entity.id).await;
+    let sub_row_a = find_subscription_row(&client_live_connections, port_config_a.id);
+    assert_eq!(sub_row_a["live"], serde_json::json!(true));
+    assert_eq!(sub_row_a["remote_status"], serde_json::json!("green"));
+    let sub_row_b = find_subscription_row(&client_live_connections, port_config_b.id);
+    assert_eq!(sub_row_b["live"], serde_json::json!(true));
+    assert_eq!(sub_row_b["remote_status"], serde_json::json!("green"));
+
+    // The service (owner) side must also aggregate `live: true` now that a
+    // subscriber has an active bridge, and never carries a `remote_status`
+    // ring (that's only meaningful for the subscriber side).
+    let server_a_live_connections =
+        get_entity_live_connections(&owner_client, http_port, server_entity_a.id).await;
+    let service_row_a = server_a_live_connections["services"]
+        .as_array()
+        .expect("services array")
+        .iter()
+        .find(|row| row["port_config_id"].as_str() == Some(&port_config_a.id.to_string()))
+        .unwrap_or_else(|| {
+            panic!("no service row for port_config_a in {server_a_live_connections:?}")
+        });
+    assert_eq!(service_row_a["live"], serde_json::json!(true));
+    assert_eq!(service_row_a["remote_status"], serde_json::json!(null));
+
     // Tearing down the client leg's ssh process must remove that entry
     // again (both the explicit `channel_close` path and the `Drop`
     // fallback exist for this — killing the process here exercises
@@ -762,6 +947,19 @@ async fn two_ssh_connections_tunnel_through_rendezvous() {
             still_has_b,
             "tunnel B's active_tunnels entry must survive tunnel A's client disconnecting"
         );
+
+        // Tunnel A's subscriber row must now report `live: false` — no
+        // bridge left for this subscriber — while `remote_status` stays
+        // `"green"`: server A is still SSH-connected (`_server_a_guard` is
+        // still alive) and its `-R` forward is still registered, so the ring
+        // reflects the *owner's* state, independent of whether any
+        // particular subscriber currently has a bridge open.
+        let client_live_connections_after_a_disconnect =
+            get_entity_live_connections(&owner_client, http_port, client_entity.id).await;
+        let sub_row_a_after = find_subscription_row(&client_live_connections_after_a_disconnect, port_config_a.id);
+        assert_eq!(sub_row_a_after["live"], serde_json::json!(false));
+        assert_eq!(sub_row_a_after["remote_status"], serde_json::json!("green"));
+
         drop(keep_alive_b);
     }
 
@@ -859,11 +1057,15 @@ async fn same_connection_online_target_not_blocked_by_offline_target_timeout() {
     let host_key_path = scratch.join("ssh_host_key");
     let server_online_key_path = scratch.join("server_online_key");
 
+    // The password IS used — the gray-ring live-connections assertion near
+    // the end of this test logs in as `owner` via the real
+    // `POST /api/auth/login` route.
+    let owner_password = "e2e-test-blocking-owner-password-not-a-secret";
     let owner = User::create(
         &pool,
         &format!("t2t-e2e-blocking-test-{}", Uuid::now_v7()),
         None,
-        "irrelevant-password-not-used-by-this-test",
+        owner_password,
         false,
         Some("scratch user for tunnel_e2e blocking-bug regression test"),
     )
@@ -958,6 +1160,8 @@ async fn same_connection_online_target_not_blocked_by_offline_target_timeout() {
     let ssh_host_key_path = host_key_path.to_str().unwrap().to_string();
     let server_slots = new_server_slots();
     let active_tunnels = new_active_tunnels();
+    let web_server_slots = server_slots.clone();
+    let web_active_tunnels = active_tunnels.clone();
     tokio::spawn(async move {
         start_ssh(
             SshConfig {
@@ -980,6 +1184,9 @@ async fn same_connection_online_target_not_blocked_by_offline_target_timeout() {
         }
         sleep(Duration::from_millis(100)).await;
     }
+
+    let http_port = spawn_web_server(pool.clone(), web_server_slots, web_active_tunnels).await;
+    let owner_client = login(http_port, &owner.username, owner_password).await;
 
     // Only the online target ever registers a `-R` forward — the offline
     // one deliberately never does, exercising "target server never came
@@ -1137,6 +1344,212 @@ async fn same_connection_online_target_not_blocked_by_offline_target_timeout() {
         ),
         "expected the offline target's channel to close/eof after the retry window elapsed, \
          got: {offline_msg:?}"
+    );
+
+    // Live-connections gray-ring regression check: `server_entity_offline`
+    // never registers an SSH key and never connects at all (unlike the
+    // orange scenario in `subscriber_sees_orange_ring_when_owner_online_but_port_not_forwarded`,
+    // where the owner IS authenticated but just hasn't forwarded yet) — its
+    // subscriber row must show `live: false, remote_status: "gray"`. The
+    // online target's row, by contrast, must show `remote_status: "green"`
+    // (SSH-connected AND the port is forwarded) even though this particular
+    // client used an in-process `russh::client::Handle` rather than a real
+    // `ssh -L` subprocess.
+    let client_live_connections =
+        get_entity_live_connections(&owner_client, http_port, client_entity.id).await;
+    let offline_row = find_subscription_row(&client_live_connections, port_config_offline.id);
+    assert_eq!(offline_row["live"], serde_json::json!(false));
+    assert_eq!(offline_row["remote_status"], serde_json::json!("gray"));
+    let online_row = find_subscription_row(&client_live_connections, port_config_online.id);
+    assert_eq!(online_row["remote_status"], serde_json::json!("green"));
+
+    let _ = std::fs::remove_dir_all(&scratch);
+}
+
+// ── Regression test: owner authenticated over SSH, but hasn't forwarded yet ──
+
+/// Regression test for the exact bug scenario documented in
+/// `crates/tunnel2tunnel-web/src/routes/live_connections.rs`'s module doc
+/// comment: an owner entity completes SSH publickey auth (so
+/// `ConnectionLog::entity_status` reports it online) but hasn't (yet, or
+/// ever) issued a `tcpip_forward` request for a given port, so `server_slots`
+/// has no entry for `(owner_entity_id, proxy_port)`. Before the fix, a
+/// subscriber's port dot just stayed gray in this case — indistinguishable
+/// from the owner being fully offline. This test drives a real `ssh -N`
+/// connection with no `-R` at all (see `spawn_ssh_authenticated_only`) to
+/// reach that exact state, then asserts the subscriber's live-connections
+/// row via the real `GET /api/entities/{id}/live-connections` route reports
+/// `live: false, remote_status: "orange"`.
+#[tokio::test]
+async fn subscriber_sees_orange_ring_when_owner_online_but_port_not_forwarded() {
+    if Command::new("ssh").arg("-V").output().await.is_err() {
+        eprintln!(
+            "skipping subscriber_sees_orange_ring_when_owner_online_but_port_not_forwarded: \
+             no `ssh` binary in PATH"
+        );
+        return;
+    }
+
+    let database_url = std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://t2t:t2t_secret@localhost:5432/tunnel2tunnel".to_string());
+    let pool = db::connect(&database_url).await.expect(
+        "failed to connect to Postgres — see MANUAL_TESTING.md step 1 to start one locally, \
+         or set DATABASE_URL",
+    );
+    sqlx::migrate!("../../migrations")
+        .run(&pool)
+        .await
+        .expect("failed to run migrations");
+
+    let scratch = std::env::temp_dir().join(format!("t2t-e2e-orange-test-{}", Uuid::now_v7()));
+    std::fs::create_dir_all(&scratch).expect("create scratch dir");
+    let host_key_path = scratch.join("ssh_host_key");
+    let owner_key_path = scratch.join("owner_key");
+
+    // The password IS used — logging in as `owner` to hit the
+    // live-connections route below via the real `POST /api/auth/login`.
+    let owner_password = "e2e-test-orange-owner-password-not-a-secret";
+    let owner = User::create(
+        &pool,
+        &format!("t2t-e2e-orange-test-{}", Uuid::now_v7()),
+        None,
+        owner_password,
+        false,
+        Some("scratch user for tunnel_e2e orange-ring regression test"),
+    )
+    .await
+    .expect("create test user");
+
+    // Both entities belong to the same user: `owner_entity` is the service
+    // side that authenticates but never forwards; `client_entity` is the
+    // subscriber whose live-connections row is asserted on.
+    let owner_entity = Entity::create(
+        &pool,
+        owner.id,
+        Some("orange-test-owner"),
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("create owner entity");
+    let client_entity = Entity::create(
+        &pool,
+        owner.id,
+        Some("orange-test-client"),
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("create client entity");
+
+    let (owner_algo, owner_key_data) =
+        generate_test_keypair(&owner_key_path).expect("generate owner keypair");
+    SshKey::create(
+        &pool,
+        owner_entity.id,
+        &owner_algo,
+        &owner_key_data,
+        Some("e2e-test"),
+        None,
+        None,
+    )
+    .await
+    .expect("register owner key");
+
+    // No `-R` ever registers this port_config, so `tcpip_forward`'s
+    // auto-create path never runs for it — created directly, same as the
+    // offline target in `same_connection_online_target_not_blocked_by_offline_target_timeout`.
+    const PROXY_PORT_NOT_FORWARDED: u16 = 19323;
+    let port_config = PortConfig::create(
+        &pool,
+        owner_entity.id,
+        true,
+        PROXY_PORT_NOT_FORWARDED as i32,
+        PROXY_PORT_NOT_FORWARDED as i32,
+        "orange-test-not-forwarded",
+        None,
+        0,
+        "127.0.0.1",
+    )
+    .await
+    .expect("create owner's port_config directly");
+    PortSubscription::create(
+        &pool,
+        port_config.id,
+        client_entity.id,
+        PROXY_PORT_NOT_FORWARDED as i32,
+        true,
+    )
+    .await
+    .expect("subscribe client to owner's port_config");
+
+    let ssh_port = free_port();
+    let ssh_pool = pool.clone();
+    let ssh_host_key_path = host_key_path.to_str().unwrap().to_string();
+    let server_slots = new_server_slots();
+    let active_tunnels = new_active_tunnels();
+    let test_server_slots = server_slots.clone();
+    let web_server_slots = server_slots.clone();
+    let web_active_tunnels = active_tunnels.clone();
+    tokio::spawn(async move {
+        start_ssh(
+            SshConfig {
+                ssh_port,
+                fail2ban_log_path: None,
+                host_key_path: ssh_host_key_path,
+                host_key_password: None,
+            },
+            ssh_pool,
+            server_slots,
+            active_tunnels,
+        )
+        .await
+        .expect("t2t SSH server failed");
+    });
+
+    for _ in 0..50 {
+        if TcpStream::connect(("127.0.0.1", ssh_port)).await.is_ok() {
+            break;
+        }
+        sleep(Duration::from_millis(100)).await;
+    }
+
+    let http_port = spawn_web_server(pool.clone(), web_server_slots, web_active_tunnels).await;
+    let owner_client = login(http_port, &owner.username, owner_password).await;
+
+    // The owner authenticates and holds the connection open, but never
+    // issues a `-R` forward request for `PROXY_PORT_NOT_FORWARDED` (or any
+    // port at all) — this is the crux of the regression this test guards
+    // against.
+    let _owner_guard = spawn_ssh_authenticated_only(&owner_key_path, ssh_port, "ssh -N (orange)");
+
+    wait_for_entity_online(&pool, owner_entity.id).await;
+
+    // Confirm the exact precondition the bug hinges on: online, but no
+    // `server_slots` entry for this entity/port — before trusting the
+    // route's JSON response to reflect it correctly.
+    assert!(
+        !test_server_slots
+            .lock()
+            .await
+            .contains_key(&(owner_entity.id, PROXY_PORT_NOT_FORWARDED as u32)),
+        "owner_entity must have no server_slots entry — it never issued a `-R` forward"
+    );
+
+    let client_live_connections =
+        get_entity_live_connections(&owner_client, http_port, client_entity.id).await;
+    let sub_row = find_subscription_row(&client_live_connections, port_config.id);
+    assert_eq!(
+        sub_row["live"],
+        serde_json::json!(false),
+        "expected live: false for a subscriber with no active bridge, got: {sub_row:?}"
+    );
+    assert_eq!(
+        sub_row["remote_status"],
+        serde_json::json!("orange"),
+        "expected remote_status: \"orange\" (owner online, port not forwarded), got: {sub_row:?}"
     );
 
     let _ = std::fs::remove_dir_all(&scratch);

@@ -53,7 +53,7 @@ describe('DashboardPage', () => {
     vi.mocked(entitiesApi.list).mockResolvedValue([makeEntity()])
     const live: EntityLiveConnectionsResponse = {
       services: [{
-        port_config_id: 'pc1', service_name: 'VNC', proxy_port: 5900, status: 'green',
+        port_config_id: 'pc1', service_name: 'VNC', proxy_port: 5900, live: true, remote_status: null,
         subscribers: [{
           entity: { id: 'client1', name: 'my-laptop' },
           account: { user_id: 'u1', username: 'alice' },
@@ -64,7 +64,7 @@ describe('DashboardPage', () => {
       subscriptions: [{
         subscription_id: 'sub1', port_config_id: 'pc2', owner: { id: 'owner1', name: 'old-vps' },
         service_name: 'Postgres', proxy_port: 5432, subscriber_local_port: 5555, enabled: true,
-        status: 'orange', connected_since: null,
+        live: false, remote_status: 'orange', connected_since: null,
       }],
     }
     vi.mocked(entitiesApi.getLiveConnections).mockResolvedValue(live)
@@ -77,6 +77,27 @@ describe('DashboardPage', () => {
     expect(wrapper.text()).toContain('Postgres')
     expect(wrapper.text()).toContain('🖧 Server')
     expect(wrapper.text()).toContain('💻 Client')
+  })
+
+  it('renders an independent ring for a subscription row whose remote is connected but not providing the port yet', async () => {
+    vi.mocked(entitiesApi.list).mockResolvedValue([makeEntity()])
+    const live: EntityLiveConnectionsResponse = {
+      services: [],
+      subscriptions: [{
+        subscription_id: 'sub1', port_config_id: 'pc2', owner: { id: 'owner1', name: 'old-vps' },
+        service_name: 'Postgres', proxy_port: 5432, subscriber_local_port: 5555, enabled: true,
+        live: false, remote_status: 'orange', connected_since: null,
+      }],
+    }
+    vi.mocked(entitiesApi.getLiveConnections).mockResolvedValue(live)
+
+    const wrapper = await mountDashboard()
+    await new Promise(r => setTimeout(r, 0))
+    await wrapper.vm.$nextTick()
+
+    const dot = wrapper.find('.status-dot')
+    expect(dot.classes()).toContain('not-live')
+    expect(dot.classes()).toContain('ring-orange')
   })
 
   it('shows an empty message when the user owns no services/subscriptions', async () => {

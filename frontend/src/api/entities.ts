@@ -66,7 +66,8 @@ export interface EntityDetail extends Entity {
 
 // ── Live connections (Phase 5 dashboard) ────────────────────────────────────────
 
-export type LiveConnectionStatus = 'green' | 'gray' | 'orange'
+export type { RemoteStatus } from '@/liveStatus'
+import type { RemoteStatus } from '@/liveStatus'
 
 export interface LiveAccountRef {
   user_id: string
@@ -89,8 +90,10 @@ export interface ServiceLiveStatus {
   port_config_id: string
   service_name: string
   proxy_port: number
-  /** A service you own is never "orange" — that status only applies to subscriber-side rows. */
-  status: 'green' | 'gray'
+  /** Aggregated over current subscribers — see `live_connections.rs`'s module doc comment. */
+  live: boolean
+  /** Always `null` — a service has 0..N subscribers, no single ring target. */
+  remote_status: RemoteStatus | null
   subscribers: LiveSubscriberInfo[]
 }
 
@@ -102,7 +105,8 @@ export interface SubscriptionLiveStatus {
   proxy_port: number
   subscriber_local_port: number
   enabled: boolean
-  status: LiveConnectionStatus
+  live: boolean
+  remote_status: RemoteStatus | null
   connected_since: string | null
 }
 

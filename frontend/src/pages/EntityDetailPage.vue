@@ -508,7 +508,11 @@ onMounted(loadOwnEntityIds)
             <template v-for="port in entity.ports" :key="port.id">
               <tr>
                 <td>
-                  <StatusDot v-if="serviceStatusMap.get(port.id)" :status="serviceStatusMap.get(port.id)!.status" />
+                  <StatusDot
+                    v-if="serviceStatusMap.get(port.id)"
+                    :live="serviceStatusMap.get(port.id)!.live"
+                    :remote-status="serviceStatusMap.get(port.id)!.remote_status"
+                  />
                 </td>
                 <td>
                   <input

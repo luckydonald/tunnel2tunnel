@@ -101,7 +101,8 @@ export interface TarpitThresholdParams {
 
 // ── Live connections (Phase 5 dashboard) — admin flat view, one row per leg ────
 
-export type LiveConnectionStatus = 'green' | 'gray' | 'orange'
+import type { RemoteStatus } from '@/liveStatus'
+
 export type LiveConnectionRole = 'server' | 'client'
 
 export interface LiveAccountRef {
@@ -115,7 +116,8 @@ export interface LiveEntityRef {
 }
 
 export interface LiveConnectionRow {
-  status: LiveConnectionStatus
+  live: boolean
+  remote_status: RemoteStatus | null
   account: LiveAccountRef
   entity: LiveEntityRef
   role: LiveConnectionRole

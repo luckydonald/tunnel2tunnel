@@ -1486,3 +1486,72 @@ Generally:
 > - [Raw log (`186493` chars, `182 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/c02f4da6-a4be-4fd0-a63b-f884e2f6d863/tasks/ab2ad160bfd14154b.output)
 > - `8` tools, `43150` tokens, `1.04162 s`
 
+❯ /plan when I connect with a client tunnel matching the webui command, the client is marked online, but the port is still gray. Btw, the "remote is not connected" should be displayed as the outer ring of that status icon being orange, and the main color still being about the client being connected or not, making those two states independent again. Please add api/state tests for those connection scenarios to the e2e testsuite, too.
+
+❯ Task Notification:
+> - Task `aad4cff578a901e3f` <kbd>completed</kbd>
+> - Tool `toolu_012G6w74hNCDic99EsDwqUYQ`
+> - > Agent "Research port/client status display bug" finished
+> - [Query (`2661` chars, `2.61 KB`)](output/agents/039.aad4cff578a901e3f/prompt.md)
+> - [Answer (`5252` chars, `5.16 KB`)](output/agents/039.aad4cff578a901e3f/result.md)
+> - [Raw log (`142160` chars, `140 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/ce753a61-fb87-4ae8-b513-32b41d2e470d/tasks/aad4cff578a901e3f.output)
+> - `16` tools, `53292` tokens, `1.70532 s`
+
+❯ Task Notification:
+> - Task `a36ab43102aad51b2` <kbd>completed</kbd>
+> - Tool `toolu_01TBVJfMAzsUaEo6iNbqsJZy`
+> - > Agent "Design implementation plan for status decoupling" finished
+> - [Query (`5439` chars, `5.32 KB`)](output/agents/040.a36ab43102aad51b2/prompt.md)
+> - [Answer (`15614` chars, `15.3 KB`)](output/agents/040.a36ab43102aad51b2/result.md)
+> - [Raw log (`184845` chars, `182 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/ce753a61-fb87-4ae8-b513-32b41d2e470d/tasks/a36ab43102aad51b2.output)
+> - `16` tools, `38614` tokens, `2.49862 s`
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. Subscription row's orange ring: drive off remote entity's SSH-online status (entity.online, broader — fixes reported bug where client online but port dot still gray) or keep today's narrower owner_live (remote's specific port already forwarding)?
+>> 2. Should service (owner) rows ever show the orange ring, or is it strictly a subscriber-side concept?
+>> 3. Replace old string status enum ('green'/'gray'/'orange') on the wire with two booleans, or keep the string for compatibility?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Ring signal** (1/3) <kbd>Single Select</kbd><br>
+>> Subscription row's orange ring: drive off remote entity's SSH-online status (entity.online, broader — fixes reported bug where client online but port dot still gray) or keep today's narrower owner_live (remote's specific port already forwarding)?
+> - [ ] 1\. entity.online (Recommended)
+>   - _Ring orange whenever remote SSH session authenticated at all, even if that port's forward hasn't started yet. Directly fixes bug report: client marked online, ring shows it, dot stays gray/green independently based on port liveness._
+> - [ ] 2\. owner_live (current)
+>   - _Keep ring tied to remote's specific port-forward being registered — narrower, no bug fix, only decouples visual rendering from single enum._
+> - [x] 3\. _Type something:_
+>   - > Inner=client, Ring = remote. Colors: gray=not connected, orange=connected but port not provided, green=port provided and can be connected to/routed through.
+>
+>> **Service ring** (2/3) <kbd>Single Select</kbd><br>
+>> Should service (owner) rows ever show the orange ring, or is it strictly a subscriber-side concept?
+> - [ ] 1\. Never — subscriber-only (Recommended)
+>   - _Service rows have 0..N subscribers, no single counterpart to reflect; subscriber list already shows who's connected. remote_online always false there._
+> - [ ] 2\. Show ring if 0 subscribers online
+>   - _Aggregate across all current subscribers of that port; adds asymmetric logic for a less clear signal._
+> - [x] 3\. _Type something:_
+>   - > Aggregate: gray if 0 subscribers online/configured. green if any subscriber connected. no orange.
+>
+>> **Wire format** (3/3) <kbd>Single Select</kbd><br>
+>> Replace old string status enum ('green'/'gray'/'orange') on the wire with two booleans, or keep the string for compatibility?
+> - [x] 1\. Replace cleanly (Recommended)
+>   - _Internal app, no external API consumers identified. Backend sends live: bool + remote_online: bool; frontend types updated in lockstep._
+> - [ ] 2\. Keep string, add booleans alongside
+>   - _Safer if something external depends on `status`, but adds redundant/derivable fields long-term._
+> - [ ] 3\. _Type something._
+>
+> </details>
+>
+
+❯ Task Notification:
+> - Task `a59a0dfa6954dba04` <kbd>completed</kbd>
+> - Tool `toolu_018nvj2phJ4FQE6ZGQYpYKwh`
+> - > Agent "Add e2e tests for live/remote_status fields" finished
+> - [Query (`7094` chars, `6.97 KB`)](output/agents/041.a59a0dfa6954dba04/prompt.md)
+> - [Answer (`3155` chars, `3.1 KB`)](output/agents/041.a59a0dfa6954dba04/result.md)
+> - [Raw log (`555285` chars, `544 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/ce753a61-fb87-4ae8-b513-32b41d2e470d/tasks/a59a0dfa6954dba04.output)
+> - `56` tools, `111932` tokens, `11.988 s`
+

@@ -2,15 +2,16 @@
 import { ref, onMounted } from 'vue'
 import AppShell from '@/components/AppShell.vue'
 import StatusDot from '@/components/StatusDot.vue'
-import { entitiesApi, type LiveConnectionStatus } from '@/api/entities'
+import { entitiesApi } from '@/api/entities'
 import { roleBadgeLabel } from '@/labels'
-import { formatSince } from '@/liveStatus'
+import { formatSince, type RemoteStatus } from '@/liveStatus'
 import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
 
 export interface DashboardRow {
-  status: LiveConnectionStatus
+  live: boolean
+  remoteStatus: RemoteStatus | null
   entityId: string
   entityName: string | null
   role: 'server' | 'client'
@@ -43,7 +44,8 @@ async function load(): Promise<void> {
           const flattened: DashboardRow[] = []
           for (const service of live.services) {
             flattened.push({
-              status: service.status,
+              live: service.live,
+              remoteStatus: service.remote_status,
               entityId: e.id,
               entityName: e.name,
               role: 'server',
@@ -54,7 +56,8 @@ async function load(): Promise<void> {
           }
           for (const sub of live.subscriptions) {
             flattened.push({
-              status: sub.status,
+              live: sub.live,
+              remoteStatus: sub.remote_status,
               entityId: e.id,
               entityName: e.name,
               role: 'client',
@@ -108,7 +111,7 @@ onMounted(load)
           </thead>
           <tbody>
             <tr v-for="(row, idx) in rows" :key="idx">
-              <td><StatusDot :status="row.status" /></td>
+              <td><StatusDot :live="row.live" :remote-status="row.remoteStatus" /></td>
               <td>
                 <RouterLink :to="{ name: 'entity-detail', params: { id: row.entityId } }">
                   {{ row.entityName ?? row.entityId.slice(0, 13) + '…' }}

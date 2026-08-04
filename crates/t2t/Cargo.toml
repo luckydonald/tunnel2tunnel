@@ -23,3 +23,5 @@ russh               = { workspace = true }
 getrandom           = { workspace = true }
 uuid                = { workspace = true }
 time                = { workspace = true }
+serde_json          = { workspace = true }
+reqwest             = { version = "0.13", default-features = false, features = ["json", "cookies"] }

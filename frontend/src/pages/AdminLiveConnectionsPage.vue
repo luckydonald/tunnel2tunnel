@@ -86,7 +86,7 @@ onMounted(load)
         </thead>
         <tbody>
           <tr v-for="(row, idx) in filteredRows" :key="idx">
-            <td><StatusDot :status="row.status" /></td>
+            <td><StatusDot :live="row.live" :remote-status="row.remote_status" /></td>
             <td>{{ row.account.username }}</td>
             <td>
               <RouterLink :to="{ name: 'entity-detail', params: { id: row.entity.id } }">

@@ -18,7 +18,8 @@ vi.mock('@/api/admin', async () => {
 
 function makeRow(overrides: Partial<LiveConnectionRow> = {}): LiveConnectionRow {
   return {
-    status: 'green',
+    live: true,
+    remote_status: null,
     account: { user_id: 'u1', username: 'alice' },
     entity: { id: 'e1', name: 'home-nas' },
     role: 'server',

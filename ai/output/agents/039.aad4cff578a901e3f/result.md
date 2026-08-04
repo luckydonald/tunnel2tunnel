@@ -1,0 +1,27 @@
+I have everything needed. Reporting findings.
+
+## Findings
+
+**1. Frontend status-icon rendering**
+
+- `frontend/src/components/StatusDot.vue:1-23` — renders a single emoji (🟢/⚪/🟠) driven by one `LiveStatus` prop (`'green' | 'gray' | 'orange'`). There is no separate visual channel for "remote not connected" — it's baked into the same three-way enum as client/port liveness.
+- `frontend/src/liveStatus.ts:6-19` — defines the `LiveStatus` type and the single-signal color/label map (green=live, gray=configured-not-live, orange=waiting-for-other-side).
+- Consumers: `frontend/src/pages/DashboardPage.vue:111`, `frontend/src/pages/EntityDetailPage.vue:511`, `frontend/src/pages/AdminLiveConnectionsPage.vue:89` — all just bind `:status="row.status"` from the API response; no client-side derivation logic exists (root cause is entirely server-side).
+- Entity-level "online" badge (separate from port dots): `frontend/src/pages/EntitiesPage.vue:123-124`, `frontend/src/pages/EntityDetailPage.vue:463-468`, typed in `frontend/src/api/entities.ts:10-11` (`online: boolean`, `last_disconnected_at`).
+
+**2. Backend status computation**
+
+- `crates/tunnel2tunnel-web/src/routes/live_connections.rs` is the single source of truth for port dot colors:
+  - "My services" (lines 111-147): `status: if live { "green" } else { "gray" }` where `live = live_slots.contains(&(entity_id, proxy_port))` (line 115) — `live_slots` is a snapshot of `state.server_slots`, an in-memory map populated only when that entity's SSH client issues `tcpip_forward` for that exact port (russh `tcpip_forward` handler, `crates/tunnel2tunnel-ssh/src/lib.rs:976`). A service is never "orange" (comment lines 62-64).
+  - "My subscriptions"/admin client rows: `status_for_subscription()` (lines 276-286) — green only if `active_tunnels` has a live bridge entry for that exact `(port_config_id, entity)`, which is only inserted when a real `direct-tcpip` channel is opened (`crates/tunnel2tunnel-ssh/src/lib.rs:1273`, `:1394`), not merely when the SSH session authenticates.
+- Entity "online" flag is a **completely separate signal**: `crates/tunnel2tunnel-core/src/models/connection_log.rs:330-370` (`entity_status`/`entity_statuses`) derives `online` purely from `connection_logs` — true iff there's a successful auth row with `ended_at IS NULL`. Wired into the API response in `crates/tunnel2tunnel-web/src/routes/entities.rs:96-128`.
+
+**3. Root cause of the "gray port despite online client" bug**
+
+Two independent state sources are conflated in the bug report but are actually already separate on the backend, just not bridged correctly: `entity.online` flips true the instant SSH auth succeeds (a `connection_logs` insert, no port/channel awareness at all), while the port-specific green dot requires a *further*, channel-level SSH event on that same connection — either a `tcpip_forward` request (server/service side) or an actual `direct-tcpip` channel open (client/subscription side, only fires when traffic is proxied through the local forwarded port). If the client authenticates but hasn't yet (or never) issues that specific channel request — e.g., an OpenSSH `-L` forward sitting idle with no local connections made through it yet, or hitting the same class of channel-open delay/blocking bug just fixed in commit `213f97a` for `channel_open_direct_tcpip`'s 12s liveness-retry wait — the port legitimately has no `server_slots`/`active_tunnels` entry yet, so it stays gray while `entity.online` is already true. This is not a stale query or refresh gap; it's a genuine model gap: nothing today distinguishes "SSH session is up" from "this specific port's forward/channel is up," and the two are only loosely correlated in time. The user's "orange ring vs. main dot" request maps directly onto separating these two already-distinct backend signals (`entity.online` for the outer-ring "remote not connected" state vs. `server_slots`/`active_tunnels` liveness for the main dot fill) into two independent props on `StatusDot.vue` instead of collapsing them into one `LiveStatus` enum.
+
+**4. Where to add tests**
+
+- Rust integration: `crates/t2t/tests/tunnel_e2e.rs` — existing helpers `wait_for_port_config` (line 296) and `wait_for_active_tunnel_entry` (line 321) are the natural extension points; the main scenario test is `two_ssh_connections_tunnel_through_rendezvous` (line 352), and `same_connection_online_target_not_blocked_by_offline_target_timeout` (line 837) is the recent regression test for the related liveness-retry bug — new scenarios (client authenticated+port active, client authenticated+port still gray, disconnected, remote-not-connected) belong alongside these, asserting against `live_connections.rs`'s `status_for_subscription` output and `server_slots`/`active_tunnels` contents directly rather than only end-to-end byte transfer.
+- Unit-level Rust: `status_for_subscription()` (`live_connections.rs:276`) has no dedicated unit tests currently — worth covering all 4 branches directly.
+- Frontend: `frontend/src/components/StatusDot.spec.ts` (21 lines, 3 cases for the 3 current colors) and `frontend/src/pages/DashboardPage.spec.ts` are the existing spec files to extend once `StatusDot` gains a second independent prop for the "remote not connected" ring.

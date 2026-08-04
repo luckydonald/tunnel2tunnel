@@ -3,12 +3,19 @@
 //! `AppState` in `crates/tunnel2tunnel-web/src/lib.rs`), joined with the
 //! `port_configs`/`port_subscriptions` tables for display context.
 //!
-//! Status-dot semantics (matches the plan's mockups):
-//!   - green  = a live entry exists for that `(entity, port)` right now.
-//!   - gray   = configured/subscribed, but nothing live currently.
-//!   - orange = subscriber-side only: the subscription is enabled but the
-//!              owner's port has no live `server_slots` entry at all (i.e.
-//!              "the other side is down", not just "haven't connected yet").
+//! Status is split into two independent channels:
+//!   - `live` (dot) — is traffic actually flowing right now for *this row*?
+//!     For a service (owner) row this aggregates over all current
+//!     subscribers: `true` iff at least one subscriber has a live bridge.
+//!     For a subscription row it's this subscriber's own bridge state.
+//!   - `remote_status` (ring) — subscriber-side rows only; `None` for
+//!     service rows (a service has 0..N subscribers, no single counterpart
+//!     to reflect — the subscriber list already shows who's connected).
+//!     Tri-state, based on the *owner* entity's SSH session and port:
+//!       - `gray`   — owner not SSH-connected at all.
+//!       - `orange` — owner SSH-connected, but hasn't forwarded this port yet.
+//!       - `green`  — owner SSH-connected and this port is forwarded/routable.
+//!     A disabled subscription is always `live = false, remote_status = gray`.
 
 use std::collections::HashSet;
 
@@ -19,7 +26,8 @@ use axum::{
 use serde::Serialize;
 use time::OffsetDateTime;
 use tunnel2tunnel_core::models::{
-    entity::Entity, port_config::PortConfig, port_subscription::PortSubscription, user::User,
+    connection_log::ConnectionLog, entity::Entity, port_config::PortConfig,
+    port_subscription::PortSubscription, user::User,
 };
 use uuid::Uuid;
 
@@ -54,14 +62,25 @@ pub struct SubscriberInfo {
     pub connected_since: OffsetDateTime,
 }
 
+/// Ring status for the remote/counterpart side of a subscriber-side row.
+/// See the module doc comment for the full semantics.
+#[derive(Serialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[serde(rename_all = "lowercase")]
+pub enum RemoteStatus {
+    Gray,
+    Orange,
+    Green,
+}
+
 #[derive(Serialize)]
 pub struct ServiceLiveStatus {
     pub port_config_id: Uuid,
     pub service_name: String,
     pub proxy_port: i32,
-    /// "green" | "gray" — a service you own is never "orange" (orange is a
-    /// subscriber-side-only status).
-    pub status: &'static str,
+    /// Aggregated over current subscribers — see module doc comment.
+    pub live: bool,
+    /// Always `None` — a service has 0..N subscribers, no single ring target.
+    pub remote_status: Option<RemoteStatus>,
     pub subscribers: Vec<SubscriberInfo>,
 }
 
@@ -74,7 +93,8 @@ pub struct SubscriptionLiveStatus {
     pub proxy_port: i32,
     pub subscriber_local_port: i32,
     pub enabled: bool,
-    pub status: &'static str,
+    pub live: bool,
+    pub remote_status: Option<RemoteStatus>,
     #[serde(with = "time::serde::rfc3339::option")]
     pub connected_since: Option<OffsetDateTime>,
 }
@@ -112,12 +132,13 @@ pub async fn list_entity_live_connections(
     let owned_ports = PortConfig::list_for_entity(&state.db, entity_id).await?;
     let mut services = Vec::with_capacity(owned_ports.len());
     for pc in owned_ports {
-        let live = live_slots.contains(&(entity_id, pc.proxy_port as u32));
+        let mut live = false;
         let mut subscribers = Vec::new();
         for info in active_tunnels
             .iter()
             .filter(|info| info.target_entity_id == entity_id && info.proxy_port == pc.proxy_port as u32)
         {
+            live = true;
             let sub_entity = Entity::find_by_id_only(&state.db, info.client_entity_id)
                 .await
                 .map_err(WebError::Core)?;
@@ -141,21 +162,31 @@ pub async fn list_entity_live_connections(
             port_config_id: pc.id,
             service_name: pc.name,
             proxy_port: pc.proxy_port,
-            status: if live { "green" } else { "gray" },
+            live,
+            remote_status: None,
             subscribers,
         });
     }
 
     // ── My subscriptions ───────────────────────────────────────────────────
     let subs = PortSubscription::list_for_subscriber_with_context(&state.db, entity_id).await?;
+    let owner_ids: Vec<Uuid> = subs.iter().map(|s| s.port_config.entity_id).collect();
+    let owner_statuses = ConnectionLog::entity_statuses(&state.db, &owner_ids)
+        .await
+        .map_err(WebError::Core)?;
     let mut subscriptions = Vec::with_capacity(subs.len());
     for s in subs {
         let bridge = active_tunnels.iter().find(|info| {
             info.client_entity_id == entity_id && info.port_config_id == s.port_config.id
         });
-        let owner_live =
+        let owner_online = owner_statuses
+            .get(&s.port_config.entity_id)
+            .map(|(online, _)| *online)
+            .unwrap_or(false);
+        let owner_port_live =
             live_slots.contains(&(s.port_config.entity_id, s.port_config.proxy_port as u32));
-        let status = status_for_subscription(s.subscription.enabled, bridge.is_some(), owner_live);
+        let live = subscription_live(s.subscription.enabled, bridge.is_some());
+        let remote_status = subscription_remote_status(s.subscription.enabled, owner_online, owner_port_live);
         subscriptions.push(SubscriptionLiveStatus {
             subscription_id: s.subscription.id,
             port_config_id: s.port_config.id,
@@ -167,7 +198,8 @@ pub async fn list_entity_live_connections(
             proxy_port: s.port_config.proxy_port,
             subscriber_local_port: s.subscription.subscriber_local_port,
             enabled: s.subscription.enabled,
-            status,
+            live,
+            remote_status: Some(remote_status),
             connected_since: bridge.map(|b| b.since),
         });
     }
@@ -182,7 +214,8 @@ pub async fn list_entity_live_connections(
 
 #[derive(Serialize)]
 pub struct LiveConnectionRow {
-    pub status: &'static str,
+    pub live: bool,
+    pub remote_status: Option<RemoteStatus>,
     pub account: AccountRef,
     pub entity: EntityRef,
     pub role: &'static str,
@@ -214,9 +247,13 @@ pub async fn list_admin_live_connections(
         .await
         .map_err(WebError::Core)?;
     for pc in server_pcs {
-        let live = live_slots.contains(&(pc.port_config.entity_id, pc.port_config.proxy_port as u32));
+        let live = active_tunnels.iter().any(|info| {
+            info.target_entity_id == pc.port_config.entity_id
+                && info.proxy_port == pc.port_config.proxy_port as u32
+        });
         rows.push(LiveConnectionRow {
-            status: if live { "green" } else { "gray" },
+            live,
+            remote_status: None,
             account: AccountRef {
                 user_id: pc.owner_user_id,
                 username: pc.owner_username,
@@ -237,16 +274,26 @@ pub async fn list_admin_live_connections(
     let subs = PortSubscription::list_all_with_context(&state.db)
         .await
         .map_err(WebError::Core)?;
+    let owner_ids: Vec<Uuid> = subs.iter().map(|s| s.port_config.entity_id).collect();
+    let owner_statuses = ConnectionLog::entity_statuses(&state.db, &owner_ids)
+        .await
+        .map_err(WebError::Core)?;
     for s in subs {
         let bridge = active_tunnels.iter().find(|info| {
             info.client_entity_id == s.subscription.subscriber_entity_id
                 && info.port_config_id == s.port_config.id
         });
-        let owner_live =
+        let owner_online = owner_statuses
+            .get(&s.port_config.entity_id)
+            .map(|(online, _)| *online)
+            .unwrap_or(false);
+        let owner_port_live =
             live_slots.contains(&(s.port_config.entity_id, s.port_config.proxy_port as u32));
-        let status = status_for_subscription(s.subscription.enabled, bridge.is_some(), owner_live);
+        let live = subscription_live(s.subscription.enabled, bridge.is_some());
+        let remote_status = subscription_remote_status(s.subscription.enabled, owner_online, owner_port_live);
         rows.push(LiveConnectionRow {
-            status,
+            live,
+            remote_status: Some(remote_status),
             account: AccountRef {
                 user_id: s.subscriber_user_id,
                 username: s.subscriber_username,
@@ -268,19 +315,70 @@ pub async fn list_admin_live_connections(
 
 // ── Shared status logic ────────────────────────────────────────────────────────
 
-/// Status-dot for a subscriber-side row/entry:
-///   - disabled subscription           -> gray  (paused, not an error)
-///   - enabled + live bridge           -> green
-///   - enabled + owner port is live    -> gray  (configured, just not connected right now)
-///   - enabled + owner port not live   -> orange (the other side is down)
-fn status_for_subscription(enabled: bool, has_active_bridge: bool, owner_live: bool) -> &'static str {
-    if !enabled {
-        "gray"
-    } else if has_active_bridge {
-        "green"
-    } else if owner_live {
-        "gray"
+/// Dot for a subscriber-side row: is *my own* bridge live right now?
+/// Disabled subscriptions are always dark (paused, not an error).
+fn subscription_live(enabled: bool, has_active_bridge: bool) -> bool {
+    enabled && has_active_bridge
+}
+
+/// Ring for a subscriber-side row: the *owner's* SSH/port state.
+///   - disabled subscription                 -> gray  (paused, not an error)
+///   - owner not SSH-connected                -> gray
+///   - owner SSH-connected, port not forwarded -> orange (the reported bug's exact case)
+///   - owner SSH-connected, port forwarded     -> green
+fn subscription_remote_status(enabled: bool, owner_online: bool, owner_port_live: bool) -> RemoteStatus {
+    if !enabled || !owner_online {
+        RemoteStatus::Gray
+    } else if owner_port_live {
+        RemoteStatus::Green
     } else {
-        "orange"
+        RemoteStatus::Orange
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn live_requires_enabled_and_bridge() {
+        assert!(!subscription_live(false, true));
+        assert!(!subscription_live(false, false));
+        assert!(!subscription_live(true, false));
+        assert!(subscription_live(true, true));
+    }
+
+    #[test]
+    fn remote_status_disabled_is_always_gray() {
+        assert_eq!(subscription_remote_status(false, true, true), RemoteStatus::Gray);
+        assert_eq!(subscription_remote_status(false, false, false), RemoteStatus::Gray);
+    }
+
+    #[test]
+    fn remote_status_owner_offline_is_gray() {
+        assert_eq!(subscription_remote_status(true, false, false), RemoteStatus::Gray);
+        assert_eq!(subscription_remote_status(true, false, true), RemoteStatus::Gray);
+    }
+
+    #[test]
+    fn remote_status_owner_online_but_port_not_forwarded_is_orange() {
+        // This is the reported bug's exact scenario: client authenticated,
+        // but hasn't (yet) forwarded this specific port.
+        assert_eq!(subscription_remote_status(true, true, false), RemoteStatus::Orange);
+    }
+
+    #[test]
+    fn remote_status_owner_online_and_port_forwarded_is_green() {
+        assert_eq!(subscription_remote_status(true, true, true), RemoteStatus::Green);
+    }
+
+    #[test]
+    fn service_dot_ignores_remote_status() {
+        // Service rows never carry a ring — enforced at the call site, not
+        // by these helpers, but assert the enum itself round-trips lowercase.
+        assert_eq!(
+            serde_json::to_string(&RemoteStatus::Orange).unwrap(),
+            "\"orange\""
+        );
     }
 }
