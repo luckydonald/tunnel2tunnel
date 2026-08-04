@@ -1718,3 +1718,32 @@ Generally:
 
 ❯ Why is the old loop still needed?
 
+❯ Before changing the plan further: What are the differences for those websocket routes/mode/whatever makes them different?
+
+❯ Yeah, the admin one can stay unchanged, that one is out of scope I guess. Probably. Maybe.   The entities I'm looking at are basically the same I can see/access on "me", right? Just in a way filtered even more to just one entity? So I guess they could share the same (new) format? And while thinking about it further, the `/me/` one is also processing the same data as the admin view, just again, a filtered subset (here: access). And well, the admin page would not show toasts for non-me events. So in the end this would be one data to push, and then a websocket scoped to the user's access right letting only the "allowed" events through? So the admin would get all (but be smart enough to only show own events - or the rust code establishing user access sets a flag if it is due to access or due to being admin, idk, so the frontend can just check that state on the object? I want you to brainstorm with me first right now.
+
+❯ I believe the entity route is not nessesarry, instead this should be the same /me/ being enhanced with the data. This makes switching to an entity instant, as we already have that data in sync in the local store. But that also probably means we should really think about a full dump only on connection (and possibly periodically), and otherwise talk diffs or something. But that would _also_ be the "events" causing toasts. And an admin is considered to have super powers, so them seeing all connected stats to all clients to all users is not a problem per se, just maybe a query-time and data-size issue? Otherwise we could really make all those ws responses the same, same data returned, just a filter onto the user to only include "their" (+shared, +connected) stuff or not, i.e. unfiltered for admin.
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. How far should this pass go?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Scope** (1/1) <kbd>Single Select</kbd><br>
+>> How far should this pass go?
+> - [ ] 1\. Full unification now (Recommended)
+>   - _One endpoint/shape, real server-side diff engine, retire entity+admin routes onto it, EntityDetailPage becomes a client-side filter. Toasts ride on the diff output. Bigger, touches every live-status consumer, but no throwaway work._
+> - [ ] 2\. Toasts first, unify later
+>   - _Ship toasts on today's 3-route architecture (manual LiveEvent at SSH mutation sites, me-route only). Smaller, faster, but some of it (the LiveEvent plumbing) gets thrown away when unification happens later._
+> - [ ] 3\. Diff engine now, route unification later
+>   - _Do the bigger simplification (server-side diff instead of manual SSH-side event tagging) since it touches less SSH code and is strictly better — but keep the 3 routes separate for now, folding entity/admin into `me` as a follow-up._
+> - [x] 4\. _Type something:_
+>   - > I'm not convinced we need a diff engine, as we basically have exact places where we know the data will change, and basically also how it will change. Having to build a diff engine sounds like we are waiting for some mysterious shared memory whatever to suddenly change our data, and we have to figure out what changed. But we know what we want to change. That's our websocket update already in essence.
+>
+> </details>
+>
+
