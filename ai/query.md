@@ -1575,3 +1575,5 @@ Generally:
 > - [Raw log (`28251` chars, `27.6 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/e270660a-90fd-48e8-9a24-e6ea048529ab/tasks/a9126801f9f036143.output)
 > - `4` tools, `131072` tokens, `0.27645 s`
 
+❯ Add a wrapper function for sending to the websocket and handling the error, simple logging there is fine for now: Error + would-be payload. Btw, does it make sense that there's a `Drop` _inside_ `log_auth_success`? That feels like quite the surprising side effect!
+

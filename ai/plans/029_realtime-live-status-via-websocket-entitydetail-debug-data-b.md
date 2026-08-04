@@ -21,7 +21,10 @@ Fire `let _ = live_update_tx.send(());` (ignore `SendError` — no receivers is 
 - `channel_open_direct_tcpip` slow path (spawned task) — after its `active_tunnels.lock().await.insert(...)` (~line 1394)
 - `channel_close` — after removing from `active_tunnels` (~line 1484)
 - `Drop` — after the `server_slots.retain(...)` cleanup (~line 1530) and after the `active_tunnels` cleanup (~line 1544)
-- `log_auth_success` (~line 412) and the `Drop` block that calls `ConnectionLog::set_ended` (~line 1558) — these are the online/offline transitions (`ConnectionLog::entity_statuses` is what `entities.rs`'s `online`/`last_disconnected_at` and `live_connections.rs`'s `remote_status` both read)
+- `log_auth_success` (~line 412, called from `auth_publickey` on a successful login) — this is the online transition
+- the `Drop` impl's `ConnectionLog::set_ended` loop (~line 1558) — this is the offline transition
+
+(Two independent call sites, not nested — both feed `ConnectionLog::entity_statuses`, which is what `entities.rs`'s `online`/`last_disconnected_at` and `live_connections.rs`'s `remote_status` both read.)
 
 This won't be perfectly exhaustive for every DB-side edit that could affect a ring color (e.g. someone disabling a `port_subscriptions` row via the HTTP API) — cover those with a periodic fallback tick in the WS handlers below (interval, ~20s) rather than wiring notifier calls into every HTTP mutation route; the in-memory-state transitions above are the ones that need to feel instant, HTTP-driven config edits reflecting within ~20s is fine.
 
@@ -45,7 +48,32 @@ Add an aggregate builder for the dashboard (replaces its N+1 client-side fetch):
 Each handler: `WebSocketUpgrade` (auth extractors run first — they only need request parts, `WebSocketUpgrade` consumes the rest), on upgrade spawn a loop that:
 1. Sends one snapshot immediately (via the relevant builder(s) — for the per-entity route, bundle `build_entity_status` + `build_entity_live_connections` into one JSON message).
 2. `tokio::select!`s a `live_update_tx.subscribe()` receiver against a `tokio::time::interval(20s)` fallback tick; on either firing (or `RecvError::Lagged`, treated the same as a fire — just resync), rebuilds and sends the snapshot again.
-3. Exits the loop when the client-side send fails (socket closed).
+3. Exits the loop when the send wrapper below reports the socket is dead.
+
+Add one shared helper (module-level in `live_ws.rs`) instead of inlining `.send(...)` at each of the three call sites:
+
+```rust
+/// Serializes `payload` and sends it as a WS text message. Logs the error and
+/// the payload that failed to send (small, bounded snapshots — safe to log in
+/// full) rather than propagating, since a send failure just means "give up on
+/// this socket" — the loop's caller checks the returned bool to decide that.
+async fn send_json<T: Serialize>(socket: &mut WebSocket, payload: &T) -> bool {
+    let text = match serde_json::to_string(payload) {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!(err = %e, "live_ws: failed to serialize payload");
+            return false;
+        }
+    };
+    if let Err(e) = socket.send(Message::Text(text.clone().into())).await {
+        tracing::warn!(err = %e, payload = %text, "live_ws: failed to send to socket");
+        return false;
+    }
+    true
+}
+```
+
+Each of the three handlers' loops calls `if !send_json(&mut socket, &snapshot).await { break; }` at both the initial send and every resync.
 
 ### Tests
 Extend `live_connections.rs`'s existing `#[cfg(test)]` module only if the refactor changes any logic (it shouldn't — pure extraction). No new backend integration test is required for the WS wiring itself given the size of this change, but do add one test asserting `live_update_tx.send(())` is actually reached from `tcpip_forward`/`channel_open_direct_tcpip`/`channel_close` (a receiver subscribed before the call observes exactly one notification) — cheap and catches a forgotten call site regressing silently.
