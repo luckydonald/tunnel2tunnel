@@ -3,18 +3,15 @@ import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { createRouter, createWebHistory } from 'vue-router'
 import AdminLiveConnectionsPage from './AdminLiveConnectionsPage.vue'
-import { adminApi, type LiveConnectionRow } from '@/api/admin'
+import type { LiveConnectionRow } from '@/api/admin'
 
-vi.mock('@/api/admin', async () => {
-  const actual = await vi.importActual<typeof import('@/api/admin')>('@/api/admin')
-  return {
-    ...actual,
-    adminApi: {
-      ...actual.adminApi,
-      listLiveConnections: vi.fn(),
-    },
-  }
-})
+let latestRows: LiveConnectionRow[] = []
+
+vi.mock('@/composables/useLiveSocket', () => ({
+  useLiveSocket: (_path: string, onMessage: (data: LiveConnectionRow[]) => void) => {
+    onMessage(latestRows)
+  },
+}))
 
 function makeRow(overrides: Partial<LiveConnectionRow> = {}): LiveConnectionRow {
   return {
@@ -49,14 +46,14 @@ async function mountPage() {
 describe('AdminLiveConnectionsPage', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
-    vi.mocked(adminApi.listLiveConnections).mockReset()
+    latestRows = []
   })
 
   it('renders one row per leg', async () => {
-    vi.mocked(adminApi.listLiveConnections).mockResolvedValue([
+    latestRows = [
       makeRow({ role: 'server', service_name: 'VNC' }),
       makeRow({ role: 'client', service_name: 'Postgres', account: { user_id: 'u2', username: 'bob' } }),
-    ])
+    ]
     const wrapper = await mountPage()
     expect(wrapper.text()).toContain('alice')
     expect(wrapper.text()).toContain('bob')
@@ -65,23 +62,23 @@ describe('AdminLiveConnectionsPage', () => {
   })
 
   it('omits the Peer IP column entirely when no row has one', async () => {
-    vi.mocked(adminApi.listLiveConnections).mockResolvedValue([makeRow({ peer_ip: null })])
+    latestRows = [makeRow({ peer_ip: null })]
     const wrapper = await mountPage()
     expect(wrapper.text()).not.toContain('Peer IP')
   })
 
   it('shows the Peer IP column when at least one row has one', async () => {
-    vi.mocked(adminApi.listLiveConnections).mockResolvedValue([makeRow({ peer_ip: '1.2.3.4' })])
+    latestRows = [makeRow({ peer_ip: '1.2.3.4' })]
     const wrapper = await mountPage()
     expect(wrapper.text()).toContain('Peer IP')
     expect(wrapper.text()).toContain('1.2.3.4')
   })
 
   it('filters by role', async () => {
-    vi.mocked(adminApi.listLiveConnections).mockResolvedValue([
+    latestRows = [
       makeRow({ role: 'server', service_name: 'VNC' }),
       makeRow({ role: 'client', service_name: 'Postgres' }),
-    ])
+    ]
     const wrapper = await mountPage()
     const tableText = () => wrapper.find('tbody').text()
     expect(tableText()).toContain('VNC')
@@ -94,7 +91,7 @@ describe('AdminLiveConnectionsPage', () => {
   })
 
   it('shows an empty message when there are no matching rows', async () => {
-    vi.mocked(adminApi.listLiveConnections).mockResolvedValue([])
+    latestRows = []
     const wrapper = await mountPage()
     expect(wrapper.text()).toContain('No live connections match.')
   })

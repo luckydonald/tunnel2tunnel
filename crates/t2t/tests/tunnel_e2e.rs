@@ -52,8 +52,8 @@ use tunnel2tunnel_core::{
     pubkey::parse_authorized_keys_line,
 };
 use tunnel2tunnel_ssh::{
-    new_active_tunnels, new_server_slots, start as start_ssh, ActiveTunnelInfo, ActiveTunnels,
-    ServerSlots, SshConfig,
+    new_active_tunnels, new_live_update_tx, new_server_slots, start as start_ssh,
+    ActiveTunnelInfo, ActiveTunnels, LiveUpdateTx, ServerSlots, SshConfig,
 };
 use tunnel2tunnel_web::{start as start_web, WebConfig};
 
@@ -395,6 +395,19 @@ async fn wait_for_entity_online(pool: &sqlx::PgPool, entity_id: Uuid) {
     }
 }
 
+/// Waits until `rx` observes at least one `live_update_tx` notification
+/// (a `Lagged` counts too — it means several fired since the last check),
+/// or panics after `timeout`. Regression guard for
+/// `tunnel2tunnel-ssh::LiveUpdateTx` call sites silently going missing —
+/// see that type's doc comment in `crates/tunnel2tunnel-ssh/src/lib.rs` for
+/// the full list of state transitions expected to fire it.
+async fn wait_for_live_update(rx: &mut tokio::sync::broadcast::Receiver<()>, timeout: Duration) {
+    tokio::time::timeout(timeout, rx.recv())
+        .await
+        .expect("expected a live_update_tx notification")
+        .ok(); // Ok(()) or Err(Lagged) both count as "it fired at least once"
+}
+
 /// Starts the real axum HTTP server (`tunnel2tunnel_web::start`) on a fresh
 /// ephemeral port, sharing the same `pool`/`server_slots`/`active_tunnels`
 /// the SSH server uses — mirrors how `crates/t2t/src/main.rs` wires both
@@ -405,6 +418,7 @@ async fn spawn_web_server(
     pool: sqlx::PgPool,
     server_slots: ServerSlots,
     active_tunnels: ActiveTunnels,
+    live_update_tx: LiveUpdateTx,
 ) -> u16 {
     let http_port = free_port();
     tokio::spawn(async move {
@@ -418,6 +432,7 @@ async fn spawn_web_server(
             pool,
             server_slots,
             active_tunnels,
+            live_update_tx,
         )
         .await
         .expect("t2t web server failed");
@@ -638,9 +653,12 @@ async fn two_ssh_connections_tunnel_through_rendezvous() {
     let ssh_host_key_path = host_key_path.to_str().unwrap().to_string();
     let server_slots = new_server_slots();
     let active_tunnels = new_active_tunnels();
+    let live_update_tx = new_live_update_tx();
+    let mut live_update_rx = live_update_tx.subscribe();
     let test_active_tunnels = active_tunnels.clone();
     let web_server_slots = server_slots.clone();
     let web_active_tunnels = active_tunnels.clone();
+    let web_live_update_tx = live_update_tx.clone();
     tokio::spawn(async move {
         start_ssh(
             SshConfig {
@@ -652,6 +670,7 @@ async fn two_ssh_connections_tunnel_through_rendezvous() {
             ssh_pool,
             server_slots,
             active_tunnels,
+            live_update_tx,
         )
         .await
         .expect("t2t SSH server failed");
@@ -665,7 +684,13 @@ async fn two_ssh_connections_tunnel_through_rendezvous() {
         sleep(Duration::from_millis(100)).await;
     }
 
-    let http_port = spawn_web_server(pool.clone(), web_server_slots, web_active_tunnels).await;
+    let http_port = spawn_web_server(
+        pool.clone(),
+        web_server_slots,
+        web_active_tunnels,
+        web_live_update_tx,
+    )
+    .await;
     let owner_client = login(http_port, &owner.username, owner_password).await;
 
     // Connections 1+2: both server entities register their own
@@ -685,6 +710,11 @@ async fn two_ssh_connections_tunnel_through_rendezvous() {
         fixture_port_b,
         "ssh -R (B)",
     );
+
+    // `tcpip_forward` (both A and B just registered above) must fire
+    // `live_update_tx` — this is what lets `routes::live_ws` push a fresh
+    // snapshot to any connected socket the instant a port is forwarded.
+    wait_for_live_update(&mut live_update_rx, Duration::from_secs(5)).await;
 
     // `tcpip_forward` auto-creates a port_configs row the first time each
     // server registers its proxy_port — poll for both to appear, then
@@ -884,6 +914,10 @@ async fn two_ssh_connections_tunnel_through_rendezvous() {
     assert_eq!(entry_b.proxy_port, PROXY_PORT_B as u32);
     assert_eq!(entry_b.client_user_id, owner.id);
 
+    // Both `channel_open_direct_tcpip` bridges above must also have fired
+    // `live_update_tx` (at least the fast-path insert did, twice).
+    wait_for_live_update(&mut live_update_rx, Duration::from_secs(5)).await;
+
     // Fully-bridged live-connections check: with both `-R` forwards
     // registered AND a live subscriber channel open on each, the client
     // entity's subscription rows must report `live: true` (its own bridge is
@@ -937,6 +971,10 @@ async fn two_ssh_connections_tunnel_through_rendezvous() {
             );
             sleep(Duration::from_millis(150)).await;
         }
+
+        // The `channel_close`/`Drop` cleanup that just removed tunnel A's
+        // `active_tunnels` entry must also have fired `live_update_tx`.
+        wait_for_live_update(&mut live_update_rx, Duration::from_secs(5)).await;
         // Tunnel B must be unaffected by tunnel A's client leg disconnecting.
         let still_has_b = test_active_tunnels
             .lock()
@@ -1160,8 +1198,10 @@ async fn same_connection_online_target_not_blocked_by_offline_target_timeout() {
     let ssh_host_key_path = host_key_path.to_str().unwrap().to_string();
     let server_slots = new_server_slots();
     let active_tunnels = new_active_tunnels();
+    let live_update_tx = new_live_update_tx();
     let web_server_slots = server_slots.clone();
     let web_active_tunnels = active_tunnels.clone();
+    let web_live_update_tx = live_update_tx.clone();
     tokio::spawn(async move {
         start_ssh(
             SshConfig {
@@ -1173,6 +1213,7 @@ async fn same_connection_online_target_not_blocked_by_offline_target_timeout() {
             ssh_pool,
             server_slots,
             active_tunnels,
+            live_update_tx,
         )
         .await
         .expect("t2t SSH server failed");
@@ -1185,7 +1226,13 @@ async fn same_connection_online_target_not_blocked_by_offline_target_timeout() {
         sleep(Duration::from_millis(100)).await;
     }
 
-    let http_port = spawn_web_server(pool.clone(), web_server_slots, web_active_tunnels).await;
+    let http_port = spawn_web_server(
+        pool.clone(),
+        web_server_slots,
+        web_active_tunnels,
+        web_live_update_tx,
+    )
+    .await;
     let owner_client = login(http_port, &owner.username, owner_password).await;
 
     // Only the online target ever registers a `-R` forward — the offline
@@ -1490,9 +1537,11 @@ async fn subscriber_sees_orange_ring_when_owner_online_but_port_not_forwarded() 
     let ssh_host_key_path = host_key_path.to_str().unwrap().to_string();
     let server_slots = new_server_slots();
     let active_tunnels = new_active_tunnels();
+    let live_update_tx = new_live_update_tx();
     let test_server_slots = server_slots.clone();
     let web_server_slots = server_slots.clone();
     let web_active_tunnels = active_tunnels.clone();
+    let web_live_update_tx = live_update_tx.clone();
     tokio::spawn(async move {
         start_ssh(
             SshConfig {
@@ -1504,6 +1553,7 @@ async fn subscriber_sees_orange_ring_when_owner_online_but_port_not_forwarded() 
             ssh_pool,
             server_slots,
             active_tunnels,
+            live_update_tx,
         )
         .await
         .expect("t2t SSH server failed");
@@ -1516,7 +1566,13 @@ async fn subscriber_sees_orange_ring_when_owner_online_but_port_not_forwarded() 
         sleep(Duration::from_millis(100)).await;
     }
 
-    let http_port = spawn_web_server(pool.clone(), web_server_slots, web_active_tunnels).await;
+    let http_port = spawn_web_server(
+        pool.clone(),
+        web_server_slots,
+        web_active_tunnels,
+        web_live_update_tx,
+    )
+    .await;
     let owner_client = login(http_port, &owner.username, owner_password).await;
 
     // The owner authenticates and holds the connection open, but never

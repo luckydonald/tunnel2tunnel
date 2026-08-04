@@ -33,7 +33,9 @@ use tunnel2tunnel_core::{
     },
     pubkey::parse_authorized_keys_line,
 };
-use tunnel2tunnel_ssh::{new_active_tunnels, new_server_slots, start as start_ssh, SshConfig};
+use tunnel2tunnel_ssh::{
+    new_active_tunnels, new_live_update_tx, new_server_slots, start as start_ssh, SshConfig,
+};
 
 /// Asserts that `log.ended_at` was actually stamped, that it isn't nonsensically
 /// before `started_at`, and that at least `min_gap` elapsed between the two —
@@ -105,6 +107,7 @@ async fn spawn_server(pool: sqlx::PgPool) -> u16 {
             pool,
             new_server_slots(),
             new_active_tunnels(),
+            new_live_update_tx(),
         )
         .await
         .expect("t2t SSH server failed");

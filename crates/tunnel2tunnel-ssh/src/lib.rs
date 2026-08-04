@@ -14,7 +14,7 @@ use russh::{Channel, ChannelId, ChannelMsg, Preferred, Pty};
 use russh::{MethodKind, MethodSet};
 use sqlx::PgPool;
 use tokio::net::TcpListener;
-use tokio::sync::Mutex;
+use tokio::sync::{broadcast, Mutex};
 use uuid::Uuid;
 
 use tunnel2tunnel_core::{
@@ -62,6 +62,19 @@ pub struct ActiveTunnelInfo {
 }
 
 pub type ActiveTunnels = Arc<Mutex<HashMap<Uuid, ActiveTunnelInfo>>>;
+
+/// Fired (empty payload — just a "something changed" ping) whenever
+/// `ServerSlots`/`ActiveTunnels`/online-status state mutates, so
+/// `tunnel2tunnel-web`'s live-connections WebSocket routes can push a fresh
+/// snapshot instead of the client having to poll. No receivers subscribed is
+/// fine — `send` returning an error just means nobody's listening right now.
+pub type LiveUpdateTx = broadcast::Sender<()>;
+
+/// Constructs a fresh `LiveUpdateTx` — see `new_server_slots` for the sharing
+/// pattern (one instance handed to both the SSH server and the web `AppState`).
+pub fn new_live_update_tx() -> LiveUpdateTx {
+    broadcast::channel(16).0
+}
 
 /// Client-side bridge channel -> (paired server handle, paired server-side
 /// channel id). `Arc<Mutex<_>>` rather than a plain field because bridge
@@ -133,6 +146,7 @@ pub async fn start(
     pool: PgPool,
     server_slots: ServerSlots,
     active_tunnels: ActiveTunnels,
+    live_update_tx: LiveUpdateTx,
 ) -> Result<()> {
     let key =
         load_or_generate_host_key(&config.host_key_path, config.host_key_password.as_deref())?;
@@ -162,6 +176,7 @@ pub async fn start(
         pool: pool.clone(),
         server_slots,
         active_tunnels,
+        live_update_tx,
         session_registry,
         fail2ban,
         tarpit: tarpit_state,
@@ -244,6 +259,7 @@ struct T2tServer {
     pool: PgPool,
     server_slots: ServerSlots,
     active_tunnels: ActiveTunnels,
+    live_update_tx: LiveUpdateTx,
     session_registry: SessionRegistry,
     fail2ban: Option<Arc<String>>,
     tarpit: TarpitState,
@@ -263,6 +279,7 @@ impl Server for T2tServer {
             pool: self.pool.clone(),
             server_slots: self.server_slots.clone(),
             active_tunnels: self.active_tunnels.clone(),
+            live_update_tx: self.live_update_tx.clone(),
             session_registry: self.session_registry.clone(),
             fail2ban: self.fail2ban.clone(),
             tarpit: self.tarpit.clone(),
@@ -293,6 +310,7 @@ struct T2tHandler {
     pool: PgPool,
     server_slots: ServerSlots,
     active_tunnels: ActiveTunnels,
+    live_update_tx: LiveUpdateTx,
     session_registry: SessionRegistry,
     fail2ban: Option<Arc<String>>,
     tarpit: TarpitState,
@@ -439,6 +457,7 @@ impl T2tHandler {
         }
 
         tarpit::record_auth_success(&self.tarpit, &self.peer_ip, Some(entity.user_id)).await;
+        let _ = self.live_update_tx.send(());
 
         if let Some(path) = &self.fail2ban {
             let line = format!(
@@ -1031,6 +1050,7 @@ impl Handler for T2tHandler {
             .lock()
             .await
             .insert((entity_id, *port), (session.handle(), address.to_string()));
+        let _ = self.live_update_tx.send(());
 
         // Notify all other sessions
         let msg = format!(
@@ -1061,6 +1081,7 @@ impl Handler for T2tHandler {
             .lock()
             .await
             .remove(&(authed.entity.id, port));
+        let _ = self.live_update_tx.send(());
 
         // Notify all other sessions
         let msg = format!(
@@ -1283,6 +1304,7 @@ impl Handler for T2tHandler {
                 },
             );
             self.bridge_ids.lock().await.insert(client_ch_id, bridge_id);
+            let _ = self.live_update_tx.send(());
 
             let client_handle = session.handle();
             tokio::spawn(forward_channel(server_ch, client_handle, client_ch_id));
@@ -1323,6 +1345,7 @@ impl Handler for T2tHandler {
         let bridges = self.bridges.clone();
         let bridge_ids = self.bridge_ids.clone();
         let active_tunnels = self.active_tunnels.clone();
+        let live_update_tx = self.live_update_tx.clone();
         let peer_ip = self.peer_ip.clone();
         let host_to_connect = host_to_connect.to_string();
 
@@ -1404,6 +1427,7 @@ impl Handler for T2tHandler {
                 },
             );
             bridge_ids.lock().await.insert(client_ch_id, bridge_id);
+            let _ = live_update_tx.send(());
 
             // Spawn task: copy server channel → client session
             tokio::spawn(forward_channel(server_ch, handle.clone(), client_ch_id));
@@ -1483,6 +1507,7 @@ impl Handler for T2tHandler {
         }
         if let Some(bridge_id) = self.bridge_ids.lock().await.remove(&channel) {
             self.active_tunnels.lock().await.remove(&bridge_id);
+            let _ = self.live_update_tx.send(());
         }
         Ok(())
     }
@@ -1526,8 +1551,10 @@ impl Drop for T2tHandler {
         if let Some(ref authed) = self.entity {
             let entity_id = authed.entity.id;
             let slots = self.server_slots.clone();
+            let live_update_tx = self.live_update_tx.clone();
             tokio::spawn(async move {
                 slots.lock().await.retain(|(eid, _), _| *eid != entity_id);
+                let _ = live_update_tx.send(());
             });
         }
 
@@ -1541,6 +1568,7 @@ impl Drop for T2tHandler {
         {
             let active_tunnels = self.active_tunnels.clone();
             let bridge_ids = self.bridge_ids.clone();
+            let live_update_tx = self.live_update_tx.clone();
             tokio::spawn(async move {
                 let ids: Vec<Uuid> = bridge_ids.lock().await.values().copied().collect();
                 if !ids.is_empty() {
@@ -1548,6 +1576,8 @@ impl Drop for T2tHandler {
                     for id in ids {
                         map.remove(&id);
                     }
+                    drop(map);
+                    let _ = live_update_tx.send(());
                 }
             });
         }
@@ -1558,12 +1588,14 @@ impl Drop for T2tHandler {
         if !self.connection_log_ids.is_empty() {
             let pool = self.pool.clone();
             let log_ids = self.connection_log_ids.clone();
+            let live_update_tx = self.live_update_tx.clone();
             tokio::spawn(async move {
                 for log_id in log_ids {
                     if let Err(e) = ConnectionLog::set_ended(&pool, log_id).await {
                         tracing::warn!(err = %e, "failed to mark connection ended");
                     }
                 }
+                let _ = live_update_tx.send(());
             });
         }
     }

@@ -14,7 +14,7 @@ use tower::ServiceBuilder;
 use tower_http::services::{ServeDir, ServeFile};
 use tower_sessions::{cookie::time::Duration, Expiry, SessionManagerLayer};
 use tower_sessions_sqlx_store::PostgresStore;
-use tunnel2tunnel_ssh::{ActiveTunnels, ServerSlots};
+use tunnel2tunnel_ssh::{ActiveTunnels, LiveUpdateTx, ServerSlots};
 
 pub use bootstrap::bootstrap_admin;
 pub use error::WebError;
@@ -29,6 +29,10 @@ pub struct AppState {
     /// constructed once and handed to the SSH server and this `AppState`.
     pub server_slots: ServerSlots,
     pub active_tunnels: ActiveTunnels,
+    /// Fires whenever `server_slots`/`active_tunnels`/online-status state
+    /// changes — consumed by `routes::live_ws` to push fresh snapshots to
+    /// connected WebSocket clients instead of them having to poll.
+    pub live_update_tx: LiveUpdateTx,
 }
 
 pub struct WebConfig {
@@ -45,6 +49,7 @@ pub async fn start(
     pool: PgPool,
     server_slots: ServerSlots,
     active_tunnels: ActiveTunnels,
+    live_update_tx: LiveUpdateTx,
 ) -> anyhow::Result<()> {
     let state = AppState {
         db: pool.clone(),
@@ -52,6 +57,7 @@ pub async fn start(
         ssh_host_key_fingerprint: config.ssh_host_key_fingerprint,
         server_slots,
         active_tunnels,
+        live_update_tx,
     };
 
     let session_store = PostgresStore::new(pool.clone());
@@ -148,6 +154,19 @@ pub async fn start(
         .route(
             "/api/admin/live-connections",
             get(routes::live_connections::list_admin_live_connections),
+        )
+        // live connections dashboard — realtime WebSocket push variants
+        .route(
+            "/api/entities/{id}/live-connections/ws",
+            get(routes::live_ws::entity_live_connections_ws),
+        )
+        .route(
+            "/api/me/live-connections/ws",
+            get(routes::live_ws::my_live_connections_ws),
+        )
+        .route(
+            "/api/admin/live-connections/ws",
+            get(routes::live_ws::admin_live_connections_ws),
         )
         // admin
         .route(

@@ -115,7 +115,17 @@ pub async fn list_entity_live_connections(
     Path(entity_id): Path<Uuid>,
 ) -> Result<Json<EntityLiveConnectionsResponse>, WebError> {
     require_owner(&state.db, entity_id, user.id).await?;
+    Ok(Json(build_entity_live_connections(&state, entity_id).await?))
+}
 
+/// Reusable snapshot builder — shared by the HTTP route above and the
+/// `live-connections/ws` WebSocket route (`routes::live_ws`). Callers are
+/// responsible for their own auth check (`require_owner`/`AdminUser`) before
+/// calling this.
+pub async fn build_entity_live_connections(
+    state: &AppState,
+    entity_id: Uuid,
+) -> Result<EntityLiveConnectionsResponse, WebError> {
     // Snapshot the in-memory maps once up front — cheap (small, short-lived
     // locks) and avoids re-locking per row below.
     let live_slots: HashSet<(Uuid, u32)> = state
@@ -204,10 +214,25 @@ pub async fn list_entity_live_connections(
         });
     }
 
-    Ok(Json(EntityLiveConnectionsResponse {
+    Ok(EntityLiveConnectionsResponse {
         services,
         subscriptions,
-    }))
+    })
+}
+
+/// Reusable single-entity online-status lookup — same source
+/// (`ConnectionLog::entity_status`) that `routes::entities::get_entity` uses
+/// for `EntityResponse::online`/`last_disconnected_at`, exposed here so
+/// `live_ws`'s per-entity route can push live updates for those two fields
+/// alongside the live-connections snapshot (today they're only loaded once,
+/// via `GET /api/entities/{id}`).
+pub async fn build_entity_status(
+    state: &AppState,
+    entity_id: Uuid,
+) -> Result<(bool, Option<OffsetDateTime>), WebError> {
+    ConnectionLog::entity_status(&state.db, entity_id)
+        .await
+        .map_err(WebError::Core)
 }
 
 // ── Admin response — one flat row per leg ─────────────────────────────────────
@@ -230,6 +255,13 @@ pub async fn list_admin_live_connections(
     AdminUser(_admin): AdminUser,
     State(state): State<AppState>,
 ) -> Result<Json<Vec<LiveConnectionRow>>, WebError> {
+    Ok(Json(build_admin_live_connections(&state).await?))
+}
+
+/// Reusable snapshot builder — shared by the HTTP route above and the
+/// `admin/live-connections/ws` WebSocket route (`routes::live_ws`). Callers
+/// are responsible for their own `AdminUser` check before calling this.
+pub async fn build_admin_live_connections(state: &AppState) -> Result<Vec<LiveConnectionRow>, WebError> {
     let live_slots: HashSet<(Uuid, u32)> = state
         .server_slots
         .lock()
@@ -310,7 +342,67 @@ pub async fn list_admin_live_connections(
         });
     }
 
-    Ok(Json(rows))
+    Ok(rows)
+}
+
+// ── Aggregate builder — "my live connections" across all owned entities ───────
+
+/// One flattened row (service or subscription leg) for the dashboard's
+/// "your live connections" table — mirrors `LiveConnectionRow` but scoped to
+/// a single user's own entities rather than every entity in the system, and
+/// without the `account`/`role` breakdown admin needs (every row here is
+/// already known to belong to `user_id`).
+#[derive(Serialize)]
+pub struct DashboardRow {
+    pub live: bool,
+    pub remote_status: Option<RemoteStatus>,
+    pub entity_id: Uuid,
+    pub entity_name: Option<String>,
+    pub role: &'static str,
+    pub service_name: String,
+    pub port: i32,
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub connected_since: Option<OffsetDateTime>,
+}
+
+/// Reusable snapshot builder for `GET /api/me/live-connections/ws`
+/// (`routes::live_ws`) — replaces the frontend's previous N+1 client-side
+/// fetch (one `build_entity_live_connections` HTTP call per owned entity)
+/// with a single server-side loop over the same builder.
+pub async fn build_my_live_connections(
+    state: &AppState,
+    user_id: Uuid,
+) -> Result<Vec<DashboardRow>, WebError> {
+    let entities = Entity::list_for_user(&state.db, user_id).await?;
+    let mut rows = Vec::new();
+    for entity in entities {
+        let snapshot = build_entity_live_connections(state, entity.id).await?;
+        for service in snapshot.services {
+            rows.push(DashboardRow {
+                live: service.live,
+                remote_status: service.remote_status,
+                entity_id: entity.id,
+                entity_name: entity.name.clone(),
+                role: "server",
+                service_name: service.service_name,
+                port: service.proxy_port,
+                connected_since: service.subscribers.first().map(|s| s.connected_since),
+            });
+        }
+        for sub in snapshot.subscriptions {
+            rows.push(DashboardRow {
+                live: sub.live,
+                remote_status: sub.remote_status,
+                entity_id: entity.id,
+                entity_name: entity.name.clone(),
+                role: "client",
+                service_name: sub.service_name,
+                port: sub.subscriber_local_port,
+                connected_since: sub.connected_since,
+            });
+        }
+    }
+    Ok(rows)
 }
 
 // ── Shared status logic ────────────────────────────────────────────────────────

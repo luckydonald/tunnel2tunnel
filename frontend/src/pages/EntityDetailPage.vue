@@ -15,6 +15,7 @@ import {
   type SubscribableOwner,
   type ServiceLiveStatus,
   type SubscriptionLiveStatus,
+  type EntityLiveConnectionsResponse,
 } from '@/api/entities'
 import { friendsApi, type AccessRule, type Friendship } from '@/api/friends'
 import { adminApi, type ConnLog } from '@/api/admin'
@@ -23,6 +24,7 @@ import { guessServiceName } from '@/portNames'
 import { formatSince } from '@/liveStatus'
 import { useAuthStore } from '@/stores/auth'
 import { useToast } from '@/composables/useToast'
+import { useLiveSocket } from '@/composables/useLiveSocket'
 
 const { show: toast } = useToast()
 
@@ -62,6 +64,24 @@ async function loadLiveConnections(): Promise<void> {
     // non-critical; status dots/subscribers just stay empty
   }
 }
+
+interface EntityLiveMessage extends EntityLiveConnectionsResponse {
+  entity_online: boolean
+  entity_last_disconnected_at: string | null
+}
+
+// Realtime push — replaces the one-shot `loadLiveConnections` fetch above for
+// ongoing updates (still called once after subscribe/unsubscribe below, for
+// an optimistic refresh since those actions aren't wired to the backend's
+// live_update_tx notifier).
+useLiveSocket<EntityLiveMessage>(`/api/entities/${entityId}/live-connections/ws`, data => {
+  serviceLiveStatus.value = data.services
+  subscriptionLiveStatus.value = data.subscriptions
+  if (entity.value) {
+    entity.value.online = data.entity_online
+    entity.value.last_disconnected_at = data.entity_last_disconnected_at
+  }
+})
 
 function toggleServiceExpanded(portId: string): void {
   expandedServiceId.value = expandedServiceId.value === portId ? null : portId
@@ -124,7 +144,6 @@ async function load(): Promise<void> {
     await loadSubscribableServices()
     loadAccess()
     loadIncomingAccess()
-    loadLiveConnections()
   } catch (e) {
     pageError.value = e instanceof Error ? e.message : 'Failed to load entity'
   } finally {
@@ -440,6 +459,30 @@ async function handleDeleteEntity(): Promise<void> {
   }
 }
 
+async function handleCopyDebugData(): Promise<void> {
+  if (!entity.value) return
+  try {
+    await Promise.all([loadAccess(), loadIncomingAccess()])
+    const recentLogs = await adminApi.listConnectionLogs(entityId)
+    const debugData = {
+      generated_at: new Date().toISOString(),
+      entity: entity.value,
+      live: {
+        services: serviceLiveStatus.value,
+        subscriptions: subscriptionLiveStatus.value,
+      },
+      access_rules: accessRules.value,
+      incoming_grants: incomingGrants.value,
+      subscribable_owners: subscribableOwners.value,
+      recent_connection_logs: recentLogs,
+    }
+    await navigator.clipboard.writeText(JSON.stringify(debugData, null, 2))
+    toast('Debug data copied to clipboard', 'success')
+  } catch (e) {
+    toast(e instanceof Error ? e.message : 'Failed to copy debug data')
+  }
+}
+
 onMounted(loadOwnEntityIds)
 </script>
 
@@ -469,7 +512,12 @@ onMounted(loadOwnEntityIds)
           </p>
           <p v-if="entity.description" class="subtitle">{{ entity.description }}</p>
         </div>
-        <button class="btn-del" @click="handleDeleteEntity">Delete entity</button>
+        <div class="header-actions">
+          <button class="btn-kbd" title="Copy all known state about this entity as JSON" @click="handleCopyDebugData">
+            Copy debug data
+          </button>
+          <button class="btn-del" @click="handleDeleteEntity">Delete entity</button>
+        </div>
       </div>
 
       <!-- SSH command -->
@@ -894,6 +942,16 @@ onMounted(loadOwnEntityIds)
 .page-header {
   display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 2rem;
   h1 { margin: 0.25rem 0 0; font-size: 1.5rem; }
+}
+
+.header-actions { display: flex; align-items: center; gap: 0.5rem; }
+
+.btn-kbd {
+  padding: .3rem .7rem; background: #1a1d27; border: 1px solid #2d3248; border-bottom-width: 2px;
+  border-radius: 5px; color: #94a3b8; font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: .8125rem; cursor: pointer;
+  &:hover { color: #e2e8f0; border-color: #4f6ef7; }
+  &:active { border-bottom-width: 1px; transform: translateY(1px); }
 }
 
 .breadcrumb {

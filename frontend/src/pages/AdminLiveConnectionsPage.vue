@@ -1,13 +1,11 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed } from 'vue'
 import AppShell from '@/components/AppShell.vue'
 import StatusDot from '@/components/StatusDot.vue'
-import { adminApi, type LiveConnectionRow } from '@/api/admin'
+import { type LiveConnectionRow } from '@/api/admin'
 import { roleBadgeLabel } from '@/labels'
 import { formatSince } from '@/liveStatus'
-import { useToast } from '@/composables/useToast'
-
-const { show: toast } = useToast()
+import { useLiveSocket } from '@/composables/useLiveSocket'
 
 const rows = ref<LiveConnectionRow[]>([])
 const loading = ref(true)
@@ -32,25 +30,16 @@ const filteredRows = computed(() =>
   ),
 )
 
-async function load(): Promise<void> {
-  loading.value = true
-  try {
-    rows.value = await adminApi.listLiveConnections()
-  } catch (e) {
-    toast(e instanceof Error ? e.message : 'Failed to load live connections')
-  } finally {
-    loading.value = false
-  }
-}
-
-onMounted(load)
+useLiveSocket<LiveConnectionRow[]>('/api/admin/live-connections/ws', data => {
+  rows.value = data
+  loading.value = false
+})
 </script>
 
 <template>
   <AppShell>
     <div class="page-header">
       <h1>Live Connections</h1>
-      <button class="btn-secondary" @click="load">Refresh</button>
     </div>
 
     <div class="filter-bar">
@@ -132,10 +121,4 @@ onMounted(load)
 
 .empty { color: #64748b; }
 .loading { color: #94a3b8; }
-
-.btn-secondary {
-  padding: .375rem .875rem; background: none; border: 1px solid #2d3248; border-radius: 4px;
-  color: #94a3b8; font-size: .875rem; cursor: pointer;
-  &:hover { color: #e2e8f0; border-color: #4f6ef7; }
-}
 </style>

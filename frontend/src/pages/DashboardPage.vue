@@ -1,87 +1,35 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref } from 'vue'
 import AppShell from '@/components/AppShell.vue'
 import StatusDot from '@/components/StatusDot.vue'
-import { entitiesApi } from '@/api/entities'
 import { roleBadgeLabel } from '@/labels'
 import { formatSince, type RemoteStatus } from '@/liveStatus'
 import { useAuthStore } from '@/stores/auth'
+import { useLiveSocket } from '@/composables/useLiveSocket'
 
 const auth = useAuthStore()
 
 export interface DashboardRow {
   live: boolean
-  remoteStatus: RemoteStatus | null
-  entityId: string
-  entityName: string | null
+  remote_status: RemoteStatus | null
+  entity_id: string
+  entity_name: string | null
   role: 'server' | 'client'
-  serviceName: string
+  service_name: string
   port: number
-  connectedSince: string | null
+  connected_since: string | null
 }
 
 const rows = ref<DashboardRow[]>([])
 const loading = ref(true)
-const loadError = ref<string | null>(null)
 
-/**
- * There is no single "my live connections across all my entities" endpoint —
- * only a per-entity `GET .../live-connections`. So this fetches the user's own
- * entities, then calls that endpoint once per owned entity and flattens the
- * result. This is an N+1-per-page-load pattern; it's correct given the current
- * API surface, but a follow-up aggregate endpoint (e.g. `GET /api/me/live-connections`)
- * would be a reasonable optimization if the entity count per user grows large.
- */
-async function load(): Promise<void> {
-  loading.value = true
-  loadError.value = null
-  try {
-    const entities = await entitiesApi.list()
-    const perEntity = await Promise.all(
-      entities.map(async e => {
-        try {
-          const live = await entitiesApi.getLiveConnections(e.id)
-          const flattened: DashboardRow[] = []
-          for (const service of live.services) {
-            flattened.push({
-              live: service.live,
-              remoteStatus: service.remote_status,
-              entityId: e.id,
-              entityName: e.name,
-              role: 'server',
-              serviceName: service.service_name,
-              port: service.proxy_port,
-              connectedSince: service.subscribers[0]?.connected_since ?? null,
-            })
-          }
-          for (const sub of live.subscriptions) {
-            flattened.push({
-              live: sub.live,
-              remoteStatus: sub.remote_status,
-              entityId: e.id,
-              entityName: e.name,
-              role: 'client',
-              serviceName: sub.service_name,
-              port: sub.subscriber_local_port,
-              connectedSince: sub.connected_since,
-            })
-          }
-          return flattened
-        } catch {
-          // one entity's live-connections fetch failing shouldn't blank the whole dashboard
-          return [] as DashboardRow[]
-        }
-      }),
-    )
-    rows.value = perEntity.flat()
-  } catch (e) {
-    loadError.value = e instanceof Error ? e.message : 'Failed to load live connections'
-  } finally {
-    loading.value = false
-  }
-}
-
-onMounted(load)
+// Server-side aggregate over all of this user's own entities — replaces the
+// previous N+1 client-side fetch (one `getLiveConnections` call per entity)
+// with a single realtime WebSocket push.
+useLiveSocket<DashboardRow[]>('/api/me/live-connections/ws', data => {
+  rows.value = data
+  loading.value = false
+})
 </script>
 
 <template>
@@ -96,7 +44,6 @@ onMounted(load)
       </div>
 
       <div v-if="loading" class="loading">Loading…</div>
-      <div v-else-if="loadError" class="error-msg">{{ loadError }}</div>
       <template v-else>
         <table v-if="rows.length" class="data-table">
           <thead>
@@ -111,16 +58,16 @@ onMounted(load)
           </thead>
           <tbody>
             <tr v-for="(row, idx) in rows" :key="idx">
-              <td><StatusDot :live="row.live" :remote-status="row.remoteStatus" /></td>
+              <td><StatusDot :live="row.live" :remote-status="row.remote_status" /></td>
               <td>
-                <RouterLink :to="{ name: 'entity-detail', params: { id: row.entityId } }">
-                  {{ row.entityName ?? row.entityId.slice(0, 13) + '…' }}
+                <RouterLink :to="{ name: 'entity-detail', params: { id: row.entity_id } }">
+                  {{ row.entity_name ?? row.entity_id.slice(0, 13) + '…' }}
                 </RouterLink>
               </td>
               <td>{{ roleBadgeLabel[row.role] }}</td>
-              <td>{{ row.serviceName }}</td>
+              <td>{{ row.service_name }}</td>
               <td>{{ row.port }}</td>
-              <td>{{ formatSince(row.connectedSince) }}</td>
+              <td>{{ formatSince(row.connected_since) }}</td>
             </tr>
           </tbody>
         </table>
@@ -152,5 +99,4 @@ onMounted(load)
 
 .empty { color: #64748b; }
 .loading { color: #94a3b8; }
-.error-msg { color: #fca5a5; }
 </style>

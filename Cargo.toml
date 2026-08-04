@@ -21,7 +21,7 @@ uuid        = { version = "1",    features = ["v7", "serde"] }
 time        = { version = "0.3",  features = ["serde", "serde-well-known"] }
 sha2        = "0.10"
 base64      = "0.22"
-axum        = { version = "0.8" }
+axum        = { version = "0.8",  features = ["ws"] }
 tower-sessions = "0.14"
 tower-sessions-sqlx-store = { version = "0.15", features = ["postgres"] }
 tower-http  = { version = "0.7",  features = ["fs"] }
