@@ -921,21 +921,23 @@ async fn two_ssh_connections_tunnel_through_rendezvous() {
     // Fully-bridged live-connections check: with both `-R` forwards
     // registered AND a live subscriber channel open on each, the client
     // entity's subscription rows must report `live: true` (its own bridge is
-    // up) and `remote_status: "green"` (the owner is SSH-connected and this
-    // exact port is forwarded) — the fixed happy path this bug's orange/gray
-    // distinction is contrasted against below.
+    // up) and `remote_status: "active"` (an active bridge exists right now)
+    // — the fixed happy path this bug's not_forwarded/idle distinction is
+    // contrasted against below.
     let client_live_connections =
         get_entity_live_connections(&owner_client, http_port, client_entity.id).await;
     let sub_row_a = find_subscription_row(&client_live_connections, port_config_a.id);
     assert_eq!(sub_row_a["live"], serde_json::json!(true));
-    assert_eq!(sub_row_a["remote_status"], serde_json::json!("green"));
+    assert_eq!(sub_row_a["remote_status"], serde_json::json!("active"));
     let sub_row_b = find_subscription_row(&client_live_connections, port_config_b.id);
     assert_eq!(sub_row_b["live"], serde_json::json!(true));
-    assert_eq!(sub_row_b["remote_status"], serde_json::json!("green"));
+    assert_eq!(sub_row_b["remote_status"], serde_json::json!("active"));
 
     // The service (owner) side must also aggregate `live: true` now that a
-    // subscriber has an active bridge, and never carries a `remote_status`
-    // ring (that's only meaningful for the subscriber side).
+    // subscriber has an active bridge, and now carries its own
+    // `remote_status` ring too (mirroring the subscriber side's semantics,
+    // just from this entity's own point of view) — `"active"` here as well,
+    // since a bridge is up.
     let server_a_live_connections =
         get_entity_live_connections(&owner_client, http_port, server_entity_a.id).await;
     let service_row_a = server_a_live_connections["services"]
@@ -947,7 +949,7 @@ async fn two_ssh_connections_tunnel_through_rendezvous() {
             panic!("no service row for port_config_a in {server_a_live_connections:?}")
         });
     assert_eq!(service_row_a["live"], serde_json::json!(true));
-    assert_eq!(service_row_a["remote_status"], serde_json::json!(null));
+    assert_eq!(service_row_a["remote_status"], serde_json::json!("active"));
 
     // Tearing down the client leg's ssh process must remove that entry
     // again (both the explicit `channel_close` path and the `Drop`
@@ -987,16 +989,16 @@ async fn two_ssh_connections_tunnel_through_rendezvous() {
         );
 
         // Tunnel A's subscriber row must now report `live: false` — no
-        // bridge left for this subscriber — while `remote_status` stays
-        // `"green"`: server A is still SSH-connected (`_server_a_guard` is
-        // still alive) and its `-R` forward is still registered, so the ring
-        // reflects the *owner's* state, independent of whether any
-        // particular subscriber currently has a bridge open.
+        // bridge left for this subscriber — and `remote_status` drops from
+        // `"active"` to `"idle"`: server A is still SSH-connected
+        // (`_server_a_guard` is still alive) and its `-R` forward is still
+        // registered, but with no bridge open the ring now reflects "port
+        // forwarded/routable but idle" rather than "actively bridged".
         let client_live_connections_after_a_disconnect =
             get_entity_live_connections(&owner_client, http_port, client_entity.id).await;
         let sub_row_a_after = find_subscription_row(&client_live_connections_after_a_disconnect, port_config_a.id);
         assert_eq!(sub_row_a_after["live"], serde_json::json!(false));
-        assert_eq!(sub_row_a_after["remote_status"], serde_json::json!("green"));
+        assert_eq!(sub_row_a_after["remote_status"], serde_json::json!("idle"));
 
         drop(keep_alive_b);
     }
@@ -1393,22 +1395,23 @@ async fn same_connection_online_target_not_blocked_by_offline_target_timeout() {
          got: {offline_msg:?}"
     );
 
-    // Live-connections gray-ring regression check: `server_entity_offline`
+    // Live-connections offline-ring regression check: `server_entity_offline`
     // never registers an SSH key and never connects at all (unlike the
-    // orange scenario in `subscriber_sees_orange_ring_when_owner_online_but_port_not_forwarded`,
+    // not_forwarded scenario in `subscriber_sees_not_forwarded_ring_when_owner_online_but_port_not_forwarded`,
     // where the owner IS authenticated but just hasn't forwarded yet) — its
-    // subscriber row must show `live: false, remote_status: "gray"`. The
-    // online target's row, by contrast, must show `remote_status: "green"`
-    // (SSH-connected AND the port is forwarded) even though this particular
-    // client used an in-process `russh::client::Handle` rather than a real
-    // `ssh -L` subprocess.
+    // subscriber row must show `live: false, remote_status: "offline"`. The
+    // online target's row, by contrast, must show `remote_status: "active"`
+    // (SSH-connected, the port is forwarded, AND its bridge is still open
+    // from the request above) even though this particular client used an
+    // in-process `russh::client::Handle` rather than a real `ssh -L`
+    // subprocess.
     let client_live_connections =
         get_entity_live_connections(&owner_client, http_port, client_entity.id).await;
     let offline_row = find_subscription_row(&client_live_connections, port_config_offline.id);
     assert_eq!(offline_row["live"], serde_json::json!(false));
-    assert_eq!(offline_row["remote_status"], serde_json::json!("gray"));
+    assert_eq!(offline_row["remote_status"], serde_json::json!("offline"));
     let online_row = find_subscription_row(&client_live_connections, port_config_online.id);
-    assert_eq!(online_row["remote_status"], serde_json::json!("green"));
+    assert_eq!(online_row["remote_status"], serde_json::json!("active"));
 
     let _ = std::fs::remove_dir_all(&scratch);
 }
@@ -1420,18 +1423,18 @@ async fn same_connection_online_target_not_blocked_by_offline_target_timeout() {
 /// comment: an owner entity completes SSH publickey auth (so
 /// `ConnectionLog::entity_status` reports it online) but hasn't (yet, or
 /// ever) issued a `tcpip_forward` request for a given port, so `server_slots`
-/// has no entry for `(owner_entity_id, proxy_port)`. Before the fix, a
-/// subscriber's port dot just stayed gray in this case — indistinguishable
+/// has no entry for `(owner_entity_id, proxy_port)`. Before the original fix,
+/// a subscriber's port dot just stayed gray in this case — indistinguishable
 /// from the owner being fully offline. This test drives a real `ssh -N`
 /// connection with no `-R` at all (see `spawn_ssh_authenticated_only`) to
 /// reach that exact state, then asserts the subscriber's live-connections
 /// row via the real `GET /api/entities/{id}/live-connections` route reports
-/// `live: false, remote_status: "orange"`.
+/// `live: false, remote_status: "not_forwarded"`.
 #[tokio::test]
-async fn subscriber_sees_orange_ring_when_owner_online_but_port_not_forwarded() {
+async fn subscriber_sees_not_forwarded_ring_when_owner_online_but_port_not_forwarded() {
     if Command::new("ssh").arg("-V").output().await.is_err() {
         eprintln!(
-            "skipping subscriber_sees_orange_ring_when_owner_online_but_port_not_forwarded: \
+            "skipping subscriber_sees_not_forwarded_ring_when_owner_online_but_port_not_forwarded: \
              no `ssh` binary in PATH"
         );
         return;
@@ -1604,8 +1607,8 @@ async fn subscriber_sees_orange_ring_when_owner_online_but_port_not_forwarded() 
     );
     assert_eq!(
         sub_row["remote_status"],
-        serde_json::json!("orange"),
-        "expected remote_status: \"orange\" (owner online, port not forwarded), got: {sub_row:?}"
+        serde_json::json!("not_forwarded"),
+        "expected remote_status: \"not_forwarded\" (owner online, port not forwarded), got: {sub_row:?}"
     );
 
     let _ = std::fs::remove_dir_all(&scratch);

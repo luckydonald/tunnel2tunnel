@@ -1579,3 +1579,79 @@ Generally:
 
 ❯ For now, actually log successfully websocket sends, as well, so I can see in the server logs what the connections are doing, and the browser should have available.
 
+❯ /plan The frontend is showing at the client that the server has the port available @ai/errors/10.client.txt but the server shows it's port as not active, @ai/errors/10.server.txt so what's going on here?
+
+❯ /sanitize-error-logs
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. Plan mode block edits. Sanitize needs edit ai/errors files. How proceed?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Plan mode conflict** (1/1) <kbd>Single Select</kbd><br>
+>> Plan mode block edits. Sanitize needs edit ai/errors files. How proceed?
+> - [ ] 1\. Exit plan mode, sanitize now
+>   - _Drop current /plan task (port-live debugging), exit plan mode, run sanitize-error-logs skill on the new error files, then can re-enter plan mode after._
+> - [x] 2\. Sanitize after plan finish
+>   - _Keep plan mode active, finish port-live debugging plan first, then run sanitize afterward._
+> - [ ] 3\. _Type something._
+>
+> </details>
+>
+
+❯ Task Notification:
+> - Task `af58d18a2ca976523` <kbd>completed</kbd>
+> - Tool `toolu_01BsybNfJ9VFPbkfpLhagnhk`
+> - > Agent "Explore live-status port tracking code" finished
+> - [Query (`2418` chars, `2.37 KB`)](output/agents/044.af58d18a2ca976523/prompt.md)
+> - [Answer (`10845` chars, `10.6 KB`)](output/agents/044.af58d18a2ca976523/result.md)
+> - [Raw log (`220745` chars, `218 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/ad661020-3b11-48d1-8350-2ba67b357087/tasks/af58d18a2ca976523.output)
+> - `12` tools, `48659` tokens, `2.63305 s`
+
+❯ Task Notification:
+> - Task `a0ed212a29e0e4cee` <kbd>completed</kbd>
+> - Tool `toolu_016Ak78dJRXhScsm9edmjSFj`
+> - > Agent "Check frontend labels for remote_status/live wording" finished
+> - [Query (`738` chars, `738 B`)](output/agents/045.a0ed212a29e0e4cee/prompt.md)
+> - [Answer (`2120` chars, `2.09 KB`)](output/agents/045.a0ed212a29e0e4cee/result.md)
+> - [Raw log (`54921` chars, `53.7 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/ad661020-3b11-48d1-8350-2ba67b357087/tasks/a0ed212a29e0e4cee.output)
+> - `7` tools, `18483` tokens, `0.583733 s`
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. Root cause is UX/wording, not a functional bug (green ring just means owner offered forward, not that data flowing). Which direction for plan?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Fix direction** (1/1) <kbd>Single Select</kbd><br>
+>> Root cause is UX/wording, not a functional bug (green ring just means owner offered forward, not that data flowing). Which direction for plan?
+> - [ ] 1\. Clarify wording + rename `subscribers` (Recommended)
+>   - _Reword ring tooltip to something like "Remote is connected and forwarding this port (no guarantee of active traffic)", and rename owner-side `subscribers`/`live` fields (API+UI) to something like `active_bridges` so debug data doesn't read as contradictory._
+> - [ ] 2\. Also fix proxy_port/port_config_id matching bug
+>   - _Same as above, plus fix the latent correctness bug where owner-side live/subscribers and ring lookup key off (entity_id, proxy_port number) instead of port_config_id._
+> - [ ] 3\. Just explain, no code change
+>   - _Nothing is actually broken — skip plan, just document/close this out as expected behavior._
+> - [x] 4\. _Type something:_
+>   - > The client-ring (pointing to the server) and the server entity satus should have the same color. Check if you can use orange for that "port forwarded but not active", or if we should introduce a new color.
+>
+> </details>
+>
+
+❯ Task Notification:
+> - Task `abe078946f0b840ae` <kbd>completed</kbd>
+> - Tool `toolu_01KZcRD2KF5mkvLchncUaBc7`
+> - > Agent "Check exact struct fields for live status types" finished
+> - [Query (`1136` chars, `1.11 KB`)](output/agents/046.abe078946f0b840ae/prompt.md)
+> - [Answer (`6019` chars, `5.89 KB`)](output/agents/046.abe078946f0b840ae/result.md)
+> - [Raw log (`50893` chars, `50.6 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/ad661020-3b11-48d1-8350-2ba67b357087/tasks/abe078946f0b840ae.output)
+> - `4` tools, `18155` tokens, `0.563483 s`
+
+❯ /sanitize-error-logs make sure all files commited in the last commit are scrubbed of personal stuff.
+

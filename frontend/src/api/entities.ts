@@ -92,7 +92,7 @@ export interface ServiceLiveStatus {
   proxy_port: number
   /** Aggregated over current subscribers — see `live_connections.rs`'s module doc comment. */
   live: boolean
-  /** Always `null` — a service has 0..N subscribers, no single ring target. */
+  /** This entity's own SSH-session/port state — see `live_connections.rs`'s module doc comment. */
   remote_status: RemoteStatus | null
   subscribers: LiveSubscriberInfo[]
 }

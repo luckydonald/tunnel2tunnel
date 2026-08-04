@@ -181,9 +181,9 @@ function statusFor(subscriptionId: string): SubscriptionLiveStatus | undefined {
             </template>
           </div>
           <p
-            v-if="service.subscription && statusFor(service.subscription.id)?.remote_status === 'orange'"
+            v-if="service.subscription && statusFor(service.subscription.id)?.remote_status === 'not_forwarded'"
             class="orange-hint"
-          >server is online but hasn't provided this port yet — will connect automatically once it does</p>
+          >server is online but hasn't forwarded this port yet — will connect automatically once it does</p>
         </template>
       </div>
     </div>

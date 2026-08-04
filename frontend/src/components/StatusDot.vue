@@ -36,15 +36,19 @@ const ringClass = computed(() => (props.remoteStatus ? `ring-${props.remoteStatu
   border-radius: 50%;
   box-shadow: 0 0 0 2px transparent;
 
-  &.ring-gray {
+  &.ring-offline {
     box-shadow: 0 0 0 2px #9e9e9e;
   }
 
-  &.ring-orange {
+  &.ring-not_forwarded {
     box-shadow: 0 0 0 2px #ff9800;
   }
 
-  &.ring-green {
+  &.ring-idle {
+    box-shadow: 0 0 0 2px #2196f3;
+  }
+
+  &.ring-active {
     box-shadow: 0 0 0 2px #4caf50;
   }
 }

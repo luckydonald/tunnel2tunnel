@@ -1,0 +1,1 @@
+In tunnel2tunnel repo crates/tunnel2tunnel-core/src/models/port_config.rs, show the `PortConfig` struct definition (all fields) and the `list_for_entity` function signature/return type. Just report the struct fields verbatim with types, nothing else.

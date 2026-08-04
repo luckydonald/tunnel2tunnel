@@ -1,0 +1,5 @@
+In tunnel2tunnel repo, crates/tunnel2tunnel-web/src/routes/live_connections.rs: find the exact struct definitions for whatever types represent a "service" live status row and a "subscription" live status row (likely named something like ServiceLiveStatus, SubscriptionLiveStatus, or similar — grep for `struct.*Live` and `pub struct` near lines 100-350). For each struct, list every field and its type, and note which fields are `Option<...>` vs required. Specifically confirm: does the service-side struct currently have any `remote_status` field at all, or only `live`+`subscribers`? Show the exact code that constructs each struct instance (the `services[]` loop around line 144-179 and `subscriptions[]` loop around line 187-215) with literal field-by-field values.
+
+Also in frontend/src/api/entities.ts, find the TypeScript type definitions matching these (ServiceLiveStatus / SubscriptionLiveStatus interfaces) - list every field with its type, confirm whether remote_status appears on the service-side TS type too.
+
+Report field lists and the literal construction code, verbatim with line numbers. No analysis needed, just facts.

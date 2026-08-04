@@ -12,9 +12,10 @@ describe('dotEmoji / dotLabel', () => {
 
 describe('ringLabel', () => {
   it('has an entry for every remote status', () => {
-    expect(ringLabel.gray).toBeTruthy()
-    expect(ringLabel.orange).toBeTruthy()
-    expect(ringLabel.green).toBeTruthy()
+    expect(ringLabel.offline).toBeTruthy()
+    expect(ringLabel.not_forwarded).toBeTruthy()
+    expect(ringLabel.idle).toBeTruthy()
+    expect(ringLabel.active).toBeTruthy()
   })
 })
 

@@ -3,14 +3,15 @@
 // and AdminLiveConnectionsPage.vue — kept here once so the color/label/timing logic
 // never has to be re-derived in more than one place.
 //
-// Status is split into two independent channels:
+// Status is split into two channels that share the same 4-state semantics
+// on both service (owner) and subscription (subscriber) rows:
 //   - `live` (dot): is traffic actually flowing for this row right now?
-//   - `remoteStatus` (ring): subscriber-side rows only — the counterpart
-//     (owner) entity's SSH/port state. `null`/`undefined` means no ring is
-//     shown at all (service rows never carry one — see the backend's
-//     `live_connections.rs` module doc comment for the full rationale).
+//   - `remoteStatus` (ring): the counterpart's (owner, for a subscription
+//     row; this entity itself, for a service row) SSH/port state — see the
+//     backend's `live_connections.rs` module doc comment for the full
+//     rationale.
 
-export type RemoteStatus = 'gray' | 'orange' | 'green'
+export type RemoteStatus = 'offline' | 'not_forwarded' | 'idle' | 'active'
 
 /** Dot legend: 🟢 live now · ⚪ not live right now. */
 export function dotEmoji(live: boolean): string {
@@ -21,11 +22,12 @@ export function dotLabel(live: boolean): string {
   return live ? 'Live now' : 'Not live right now'
 }
 
-/** Ring legend: gray = remote not connected · orange = remote connected, port not provided yet · green = remote connected and port provided. */
+/** Ring legend: offline = not connected · not_forwarded = connected but port not forwarded yet · idle = forwarded but nothing bridged right now · active = actively bridging traffic. */
 export const ringLabel: Record<RemoteStatus, string> = {
-  gray: 'Remote is not connected',
-  orange: 'Remote is connected, but this port is not provided yet',
-  green: 'Remote is connected and providing this port',
+  offline: 'Remote is not connected',
+  not_forwarded: 'Remote is connected, but this port is not forwarded yet',
+  idle: 'Port is forwarded, but nothing is bridged through it right now',
+  active: 'Actively bridging traffic through this port right now',
 }
 
 /**

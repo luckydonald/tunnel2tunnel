@@ -53,7 +53,7 @@ describe('DashboardPage', () => {
         role: 'server', service_name: 'VNC', port: 5900, connected_since: '2026-01-01T00:00:00Z',
       },
       {
-        live: false, remote_status: 'orange', entity_id: 'e1', entity_name: 'home-nas',
+        live: false, remote_status: 'not_forwarded', entity_id: 'e1', entity_name: 'home-nas',
         role: 'client', service_name: 'Postgres', port: 5555, connected_since: null,
       },
     ]
@@ -67,10 +67,10 @@ describe('DashboardPage', () => {
     expect(wrapper.text()).toContain('💻 Client')
   })
 
-  it('renders an independent ring for a subscription row whose remote is connected but not providing the port yet', async () => {
+  it('renders an independent ring for a subscription row whose remote is connected but hasn\'t forwarded the port yet', async () => {
     latestRows = [
       {
-        live: false, remote_status: 'orange', entity_id: 'e1', entity_name: 'home-nas',
+        live: false, remote_status: 'not_forwarded', entity_id: 'e1', entity_name: 'home-nas',
         role: 'client', service_name: 'Postgres', port: 5555, connected_since: null,
       },
     ]
@@ -80,7 +80,7 @@ describe('DashboardPage', () => {
 
     const dot = wrapper.find('.status-dot')
     expect(dot.classes()).toContain('not-live')
-    expect(dot.classes()).toContain('ring-orange')
+    expect(dot.classes()).toContain('ring-not_forwarded')
   })
 
   it('shows an empty message when the user owns no services/subscriptions', async () => {
