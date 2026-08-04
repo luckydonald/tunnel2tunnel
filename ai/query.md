@@ -1577,3 +1577,5 @@ Generally:
 
 ❯ Add a wrapper function for sending to the websocket and handling the error, simple logging there is fine for now: Error + would-be payload. Btw, does it make sense that there's a `Drop` _inside_ `log_auth_success`? That feels like quite the surprising side effect!
 
+❯ For now, actually log successfully websocket sends, as well, so I can see in the server logs what the connections are doing, and the browser should have available.
+

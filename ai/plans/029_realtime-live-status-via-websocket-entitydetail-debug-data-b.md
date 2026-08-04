@@ -53,27 +53,37 @@ Each handler: `WebSocketUpgrade` (auth extractors run first — they only need r
 Add one shared helper (module-level in `live_ws.rs`) instead of inlining `.send(...)` at each of the three call sites:
 
 ```rust
-/// Serializes `payload` and sends it as a WS text message. Logs the error and
-/// the payload that failed to send (small, bounded snapshots — safe to log in
-/// full) rather than propagating, since a send failure just means "give up on
-/// this socket" — the loop's caller checks the returned bool to decide that.
-async fn send_json<T: Serialize>(socket: &mut WebSocket, payload: &T) -> bool {
+/// Serializes `payload` and sends it as a WS text message. Logs both outcomes
+/// — success (so server logs show what a connection is actually doing, not
+/// just its failures) and failure, including the payload that failed to send
+/// (small, bounded snapshots — safe to log in full) — rather than propagating,
+/// since a send failure just means "give up on this socket"; the loop's caller
+/// checks the returned bool to decide that.
+async fn send_json<T: Serialize>(who: &str, socket: &mut WebSocket, payload: &T) -> bool {
     let text = match serde_json::to_string(payload) {
         Ok(t) => t,
         Err(e) => {
-            tracing::error!(err = %e, "live_ws: failed to serialize payload");
+            tracing::error!(err = %e, %who, "live_ws: failed to serialize payload");
             return false;
         }
     };
-    if let Err(e) = socket.send(Message::Text(text.clone().into())).await {
-        tracing::warn!(err = %e, payload = %text, "live_ws: failed to send to socket");
-        return false;
+    match socket.send(Message::Text(text.clone().into())).await {
+        Ok(()) => {
+            tracing::debug!(%who, payload = %text, "live_ws: sent snapshot");
+            true
+        }
+        Err(e) => {
+            tracing::warn!(err = %e, %who, payload = %text, "live_ws: failed to send to socket");
+            false
+        }
     }
-    true
 }
 ```
 
-Each of the three handlers' loops calls `if !send_json(&mut socket, &snapshot).await { break; }` at both the initial send and every resync.
+`who` is a short tag identifying the route/subject (e.g. `format!("entity:{entity_id}")`, `"admin"`, `format!("me:{user_id}")`) so concurrent connections are distinguishable in logs. Each of the three handlers' loops calls `if !send_json(who, &mut socket, &snapshot).await { break; }` at both the initial send and every resync.
+
+### Browser-side logging
+`useLiveSocket` (frontend) logs socket lifecycle to the console — `console.debug` for connect/message-received/reconnect-scheduled, `console.warn` for close/error — tagged with the path, so devtools shows the same "what is this connection doing" story the server-side `tracing::debug!` gives on the backend.
 
 ### Tests
 Extend `live_connections.rs`'s existing `#[cfg(test)]` module only if the refactor changes any logic (it shouldn't — pure extraction). No new backend integration test is required for the WS wiring itself given the size of this change, but do add one test asserting `live_update_tx.send(())` is actually reached from `tcpip_forward`/`channel_open_direct_tcpip`/`channel_close` (a receiver subscribed before the call observes exactly one notification) — cheap and catches a forgotten call site regressing silently.
