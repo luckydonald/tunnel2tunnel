@@ -1655,3 +1655,60 @@ Generally:
 
 ❯ /sanitize-error-logs make sure all files commited in the last commit are scrubbed of personal stuff.
 
+❯ /plan For the websocket events live events I want toasts.
+
+❯ I.e. connections, port started, etc.
+
+❯ Task Notification:
+> - Task `a0a65ad4b9d7e4c16` <kbd>completed</kbd>
+> - Tool `toolu_01HrWN3pCx6u7qxJJdV9u1vt`
+> - > Agent "Explore websocket live events + toast infra" finished
+> - [Query (`1379` chars, `1.35 KB`)](output/agents/048.a0a65ad4b9d7e4c16/prompt.md)
+> - [Answer (`8647` chars, `8.49 KB`)](output/agents/048.a0a65ad4b9d7e4c16/result.md)
+> - [Raw log (`148907` chars, `146 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/58b1a36c-7cbd-417f-8cb2-99004d35681f/tasks/a0a65ad4b9d7e4c16.output)
+> - `21` tools, `34231` tokens, `1.1316 s`
+
+❯ Question answered.
+> <details><summary>
+>
+>> 1. Which live-status transitions should fire a toast?
+>> 2. Toast on which pages?
+>
+> (click to expand)
+>
+> </summary>
+>
+>> **Toast scope** (1/2) <kbd>Multi Select</kbd><br>
+>> Which live-status transitions should fire a toast?
+> - [x] 1\. Connection up/down (live: false↔true) <sup><sub><kbd>#1</kbd></sub></sup>
+>   - _Entity/subscriber comes online or goes offline over websocket._
+> - [x] 2\. Port forwarding start/stop (offline↔not_forwarded) <sup><sub><kbd>#2</kbd></sub></sup>
+>   - _Remote connects but port not yet forwarded, or stops forwarding entirely._
+> - [x] 3\. Bridging start/stop (idle↔active) <sup><sub><kbd>#3</kbd></sub></sup>
+>   - _Traffic actually starts/stops flowing through an already-forwarded port. Risk: this can flip often under normal use (every connect/disconnect through the tunnel), so could get spammy._
+> - [x] 4\. _Type something:_
+>   - >  Ideally this would not be caused by any state change, but the code accepting the connection would trigger an update which changes the state and shoves that into the websocket immediatly (or at least queue a "direct" update). So no fake websocket which is just a `GET` route in disguise, but real server side update pushing. 
+>
+>> **Page scope** (2/2) <kbd>Multi Select</kbd><br>
+>> Toast on which pages?
+> - [ ] 1\. Dashboard (own live connections)
+>   - _pages/DashboardPage.vue — user's own rows._
+> - [ ] 2\. Entity detail page
+>   - _pages/EntityDetailPage.vue — services + subscriptions for one entity._
+> - [ ] 3\. Admin live connections page
+>   - _pages/AdminLiveConnectionsPage.vue — all accounts, likely noisiest._
+> - [x] 4\. _Type something:_
+>   - > Only the logged in user (i.e. no admin page = all user events). But frontend wise: globally independent on vue route.
+>
+> </details>
+>
+
+❯ Task Notification:
+> - Task `abdfab7bc69376ceb` <kbd>completed</kbd>
+> - Tool `toolu_01PnQNvgpy3pFcQaYiXWAYm8`
+> - > Agent "Explore backend live-status push mechanism" finished
+> - [Query (`2892` chars, `2.84 KB`)](output/agents/049.abdfab7bc69376ceb/prompt.md)
+> - [Answer (`14290` chars, `14 KB`)](output/agents/049.abdfab7bc69376ceb/result.md)
+> - [Raw log (`262895` chars, `260 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/58b1a36c-7cbd-417f-8cb2-99004d35681f/tasks/abdfab7bc69376ceb.output)
+> - `14` tools, `55050` tokens, `2.9663 s`
+
