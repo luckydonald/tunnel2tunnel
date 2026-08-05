@@ -31,6 +31,19 @@ export const ringLabel: Record<RemoteStatus, string> = {
 }
 
 /**
+ * Same 4-state semantics as `ringLabel`, worded from this side's own point
+ * of view instead of the counterpart's — used when a row's dot (not just
+ * its ring) needs to show a 4-state fill, e.g. a service row's own
+ * forwarding state (see `StatusDot`'s `selfStatus` prop).
+ */
+export const selfLabel: Record<RemoteStatus, string> = {
+  offline: 'Not connected',
+  not_forwarded: 'Connected, but not forwarding this port yet',
+  idle: 'Forwarding this port, but nothing is bridged through it right now',
+  active: 'Actively bridging traffic through this port right now',
+}
+
+/**
  * Formats a `connected_since` timestamp (rfc3339) as a short relative duration,
  * e.g. "2h 3m", "45s", "3d 1h". Returns "waiting…" when there's no timestamp
  * (the not-live "not connected yet" case).

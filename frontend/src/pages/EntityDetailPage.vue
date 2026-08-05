@@ -19,7 +19,7 @@ import { friendsApi, type AccessRule, type Friendship } from '@/api/friends'
 import { adminApi, type ConnLog } from '@/api/admin'
 import { subjectTypeLabel, subjectTypeOptions, failReasonLabel, tarpitMethodLabel, roleBadges } from '@/labels'
 import { guessServiceName } from '@/portNames'
-import { formatSince } from '@/liveStatus'
+import { formatSince, type RemoteStatus } from '@/liveStatus'
 import { useAuthStore } from '@/stores/auth'
 import { useToast } from '@/composables/useToast'
 import { useLiveConnectionsStore } from '@/stores/liveConnections'
@@ -53,6 +53,17 @@ const serviceStatusMap = computed(() => {
   for (const s of serviceLiveStatus.value) m.set(s.port_config_id, s)
   return m
 })
+
+// The service row's ring shows the *other* side (subscribers), not this
+// entity's own state (that's the dot — see `self-status` above). The
+// snapshot only lists subscribers with an active bridge right now, so
+// "idle but connected" can't be distinguished here — active/offline is
+// all this data supports.
+function subscriberRingStatus(portId: string): RemoteStatus | null {
+  const s = serviceStatusMap.value.get(portId)
+  if (!s) return null
+  return s.subscribers.length > 0 ? 'active' : 'offline'
+}
 
 const subscriptionStatusMap = computed(() => {
   const m = new Map<string, typeof subscriptionLiveStatus.value[number]>()
@@ -553,7 +564,8 @@ onMounted(loadOwnEntityIds)
                   <StatusDot
                     v-if="serviceStatusMap.get(port.id)"
                     :live="serviceStatusMap.get(port.id)!.live"
-                    :remote-status="serviceStatusMap.get(port.id)!.remote_status"
+                    :self-status="serviceStatusMap.get(port.id)!.remote_status"
+                    :remote-status="subscriberRingStatus(port.id)"
                     :connection-count="serviceStatusMap.get(port.id)!.subscribers.length"
                   />
                 </td>

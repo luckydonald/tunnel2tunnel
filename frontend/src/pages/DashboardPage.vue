@@ -15,6 +15,7 @@ const { snapshots, connected } = storeToRefs(liveConnections)
 interface DashboardRow {
   live: boolean
   remote_status: RemoteStatus | null
+  self_status: RemoteStatus | null
   entity_id: string
   entity_name: string | null
   role: 'server' | 'client'
@@ -35,7 +36,12 @@ const rows = computed((): DashboardRow[] => {
     for (const service of snap.services) {
       out.push({
         live: service.live,
-        remote_status: service.remote_status,
+        // The ring shows the *other* side (subscribers) for a server row —
+        // the row's own forwarding state is `self_status` (dot). Only
+        // active bridges are known here, so active/offline is all this
+        // supports (see the same note in EntityDetailPage.vue).
+        remote_status: service.subscribers.length > 0 ? 'active' : 'offline',
+        self_status: service.remote_status,
         entity_id: snap.entity_id,
         entity_name: snap.entity_name,
         role: 'server',
@@ -48,6 +54,7 @@ const rows = computed((): DashboardRow[] => {
       out.push({
         live: sub.live,
         remote_status: sub.remote_status,
+        self_status: null,
         entity_id: snap.entity_id,
         entity_name: snap.entity_name,
         role: 'client',
@@ -87,7 +94,7 @@ const rows = computed((): DashboardRow[] => {
           </thead>
           <tbody>
             <tr v-for="(row, idx) in rows" :key="idx">
-              <td><StatusDot :live="row.live" :remote-status="row.remote_status" /></td>
+              <td><StatusDot :live="row.live" :self-status="row.self_status" :remote-status="row.remote_status" /></td>
               <td>
                 <RouterLink :to="{ name: 'entity-detail', params: { id: row.entity_id } }">
                   {{ row.entity_name ?? row.entity_id.slice(0, 13) + '…' }}
