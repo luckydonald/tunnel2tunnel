@@ -9,6 +9,11 @@ const auth = useAuthStore()
 
 const sidebarOpen = ref(false)
 
+const gitCommitFull = __GIT_COMMIT_FULL__
+const gitCommitShort = gitCommitFull.slice(0, 7)
+const gitBranch = __GIT_BRANCH__
+const buildTime = __BUILD_TIME__
+
 watch(
   () => route.fullPath,
   () => {
@@ -53,8 +58,17 @@ async function handleLogout(): Promise<void> {
         <li v-if="auth.user?.is_admin"><RouterLink to="/admin/live-connections">Admin: Live Connections</RouterLink></li>
       </ul>
       <div class="sidebar-footer">
-        <span class="username">{{ auth.user?.username }}</span>
-        <button class="logout-btn" @click="handleLogout">Logout</button>
+        <a
+          class="deployed-commit"
+          :href="`https://github.com/luckydonald/tunnel2tunnel/commit/${gitCommitFull}`"
+          target="_blank"
+          rel="noopener noreferrer"
+          :title="`Branch ${gitBranch}, built ${buildTime}`"
+        >{{ gitCommitShort }}</a>
+        <div class="sidebar-footer-row">
+          <span class="username">{{ auth.user?.username }}</span>
+          <button class="logout-btn" @click="handleLogout">Logout</button>
+        </div>
       </div>
     </nav>
     <main class="content">
@@ -125,8 +139,27 @@ async function handleLogout(): Promise<void> {
   padding: 1rem;
   border-top: 1px solid #2d3248;
   display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+
+.sidebar-footer-row {
+  display: flex;
   align-items: center;
   gap: 0.5rem;
+}
+
+.deployed-commit {
+  align-self: flex-start;
+  font-family: monospace;
+  font-size: 0.75rem;
+  color: #4b5563;
+  text-decoration: none;
+
+  &:hover {
+    color: #7dd3fc;
+    text-decoration: underline;
+  }
 }
 
 .username {

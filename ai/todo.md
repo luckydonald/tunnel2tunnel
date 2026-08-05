@@ -35,7 +35,7 @@
 - [x] Add command support in chat, start with `/help` listing the commands, and `/info` showing the aforementioned info summary.
 - [x] A lot of `/app/crates/…/Cargo.toml: \`edition\` is set on binary/test \`…\` which is deprecated` warnings.
       - no longer reproduces: full `cargo build --workspace --tests` rebuild shows zero such warnings; no `[[bin]]`/`[[test]]` table in any crate sets an explicit `edition` (only package-level, which is correct)
-- [ ] Show a link to the deployed commit (coolify env vars) at the bottom of the menu (above user logout)
+- [x] Show a link to the deployed commit (coolify env vars) at the bottom of the menu (above user logout)
 - [ ] The new status displays look good! (`.status-dot.self-idle.ring-offline`, `.status-dot.self-not_forwarded.ring-offline`), however the inner gray fill of `.status-dot.not-live.ring-idle` and green fill of `.status-dot.live.ring-active` is still smaller and hence still looking bad. Also shouldn't those be prefixed with `self-`, too?
 - [ ] On the client's **My subscriptions** table, the port status should be as seen from the client, not a direct copy of the server's own icons. In other words, the client page must show inverted status position (fill `self-*` vs. ring `ring-*`) compared to the server's own page's **My services**.
 - [ ] On the admin's **Live Connections** page/table, remove the _Role_ column, and just add that into the _Entity_ col, after the name. The _Account_ column can be hidden if we filter for one exact account. _Since_ is not working (always _waiting…_), remove it. The port shall be linking to `http://localhost:{port}`, maybe that's helpful.
