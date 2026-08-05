@@ -1,30 +1,25 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { createRouter, createWebHistory } from 'vue-router'
 import DashboardPage from './DashboardPage.vue'
 import { useAuthStore } from '@/stores/auth'
+import { useLiveConnectionsStore } from '@/stores/liveConnections'
 import type { User } from '@/api/auth'
-import type { RemoteStatus } from '@/liveStatus'
+import type { EntityLiveSnapshot } from '@/api/liveConnections'
 
-interface DashboardRow {
-  live: boolean
-  remote_status: RemoteStatus | null
-  entity_id: string
-  entity_name: string | null
-  role: 'server' | 'client'
-  service_name: string
-  port: number
-  connected_since: string | null
+function baseSnapshot(overrides: Partial<EntityLiveSnapshot> = {}): EntityLiveSnapshot {
+  return {
+    entity_id: 'e1',
+    entity_name: 'home-nas',
+    entity_online: true,
+    entity_last_disconnected_at: null,
+    mine: true,
+    services: [],
+    subscriptions: [],
+    ...overrides,
+  }
 }
-
-let latestRows: DashboardRow[] = []
-
-vi.mock('@/composables/useLiveSocket', () => ({
-  useLiveSocket: (_path: string, onMessage: (data: DashboardRow[]) => void) => {
-    onMessage(latestRows)
-  },
-}))
 
 async function mountDashboard() {
   const router = createRouter({
@@ -43,19 +38,32 @@ async function mountDashboard() {
 describe('DashboardPage', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
-    latestRows = []
   })
 
   it('flattens services (role: server) and subscriptions (role: client) from each owned entity', async () => {
-    latestRows = [
-      {
-        live: true, remote_status: null, entity_id: 'e1', entity_name: 'home-nas',
-        role: 'server', service_name: 'VNC', port: 5900, connected_since: '2026-01-01T00:00:00Z',
-      },
-      {
-        live: false, remote_status: 'not_forwarded', entity_id: 'e1', entity_name: 'home-nas',
-        role: 'client', service_name: 'Postgres', port: 5555, connected_since: null,
-      },
+    const store = useLiveConnectionsStore()
+    store.connected = true
+    store.snapshots = [
+      baseSnapshot({
+        services: [
+          {
+            port_config_id: 'p1', service_name: 'VNC', proxy_port: 5900, live: true, remote_status: null,
+            subscribers: [{
+              entity: { id: 'e2', name: null },
+              account: { user_id: 'u2', username: 'friend' },
+              peer_ip: '1.2.3.4',
+              connected_since: '2026-01-01T00:00:00Z',
+            }],
+          },
+        ],
+        subscriptions: [
+          {
+            subscription_id: 's1', port_config_id: 'p2', owner: { id: 'e1', name: 'home-nas' },
+            service_name: 'Postgres', proxy_port: 5555, subscriber_local_port: 5555, enabled: true,
+            live: false, remote_status: 'not_forwarded', peer_ip: null, connected_since: null,
+          },
+        ],
+      }),
     ]
 
     const wrapper = await mountDashboard()
@@ -68,11 +76,18 @@ describe('DashboardPage', () => {
   })
 
   it('renders an independent ring for a subscription row whose remote is connected but hasn\'t forwarded the port yet', async () => {
-    latestRows = [
-      {
-        live: false, remote_status: 'not_forwarded', entity_id: 'e1', entity_name: 'home-nas',
-        role: 'client', service_name: 'Postgres', port: 5555, connected_since: null,
-      },
+    const store = useLiveConnectionsStore()
+    store.connected = true
+    store.snapshots = [
+      baseSnapshot({
+        subscriptions: [
+          {
+            subscription_id: 's1', port_config_id: 'p2', owner: { id: 'e1', name: 'home-nas' },
+            service_name: 'Postgres', proxy_port: 5555, subscriber_local_port: 5555, enabled: true,
+            live: false, remote_status: 'not_forwarded', peer_ip: null, connected_since: null,
+          },
+        ],
+      }),
     ]
 
     const wrapper = await mountDashboard()
@@ -84,14 +99,18 @@ describe('DashboardPage', () => {
   })
 
   it('shows an empty message when the user owns no services/subscriptions', async () => {
-    latestRows = []
+    const store = useLiveConnectionsStore()
+    store.connected = true
+    store.snapshots = []
     const wrapper = await mountDashboard()
     await wrapper.vm.$nextTick()
     expect(wrapper.text()).toContain('No services or subscriptions configured yet.')
   })
 
   it('only shows the "See all" admin link for admin users', async () => {
-    latestRows = []
+    const store = useLiveConnectionsStore()
+    store.connected = true
+    store.snapshots = []
     const wrapper = await mountDashboard()
     await wrapper.vm.$nextTick()
     expect(wrapper.text()).not.toContain('See all')

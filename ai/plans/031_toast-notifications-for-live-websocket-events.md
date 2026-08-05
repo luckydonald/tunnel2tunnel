@@ -142,3 +142,14 @@ Frontend today opens the `me` socket locally inside `DashboardPage.vue`'s `onMou
   - As an admin, open the admin Live Connections page — confirm it shows all users' entities (not just admin's own), and switching away then back to Dashboard stops seeing other users' rows (scope reverted).
   - Confirm no toasts for another user's entities even while an admin's browser tab is in `all` scope.
   - Confirm `/api/entities/{id}/live-connections/ws` and `/api/admin/live-connections/ws` are both actually gone (404/no route) and nothing in the frontend still references them.
+
+## Todos
+
+- [x] Add LiveEvent enum + broadcast channel in tunnel2tunnel-ssh
+- [x] Emit LiveEvent at the 8 SSH mutation sites + Drop cleanup
+- [x] Wire live_event_tx through AppState + main.rs
+- [x] Unify live_connections.rs into EntityLiveSnapshot + build_live_connections
+- [x] Replace 3 live_ws routes with single live_connections_ws
+- [x] Frontend: liveConnections Pinia store + createLiveSocket helper
+- [x] Wire App.vue auth watcher + move ToastContainer
+- [x] Migrate DashboardPage/EntityDetailPage/AdminLiveConnectionsPage to store

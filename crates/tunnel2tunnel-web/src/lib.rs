@@ -14,7 +14,7 @@ use tower::ServiceBuilder;
 use tower_http::services::{ServeDir, ServeFile};
 use tower_sessions::{cookie::time::Duration, Expiry, SessionManagerLayer};
 use tower_sessions_sqlx_store::PostgresStore;
-use tunnel2tunnel_ssh::{ActiveTunnels, LiveUpdateTx, ServerSlots};
+use tunnel2tunnel_ssh::{ActiveTunnels, LiveEventTx, LiveUpdateTx, ServerSlots};
 
 pub use bootstrap::bootstrap_admin;
 pub use error::WebError;
@@ -33,6 +33,11 @@ pub struct AppState {
     /// changes — consumed by `routes::live_ws` to push fresh snapshots to
     /// connected WebSocket clients instead of them having to poll.
     pub live_update_tx: LiveUpdateTx,
+    /// Discrete "this specific thing changed" events, emitted at the SSH-side
+    /// mutation site — consumed by `routes::live_ws`'s unified
+    /// `/api/live-connections/ws` route both as its wake signal and as the
+    /// `reason` field on its envelope (drives frontend toast notifications).
+    pub live_event_tx: LiveEventTx,
 }
 
 pub struct WebConfig {
@@ -50,6 +55,7 @@ pub async fn start(
     server_slots: ServerSlots,
     active_tunnels: ActiveTunnels,
     live_update_tx: LiveUpdateTx,
+    live_event_tx: LiveEventTx,
 ) -> anyhow::Result<()> {
     let state = AppState {
         db: pool.clone(),
@@ -58,6 +64,7 @@ pub async fn start(
         server_slots,
         active_tunnels,
         live_update_tx,
+        live_event_tx,
     };
 
     let session_store = PostgresStore::new(pool.clone());
@@ -146,27 +153,12 @@ pub async fn start(
             "/api/entities/{id}/logs",
             get(routes::entities::list_connection_logs),
         )
-        // live connections dashboard (per-entity + admin)
+        // live connections dashboard — realtime WebSocket push, unified across
+        // entity/mine/admin views (scope switched via a command on the socket
+        // itself — see routes::live_ws)
         .route(
-            "/api/entities/{id}/live-connections",
-            get(routes::live_connections::list_entity_live_connections),
-        )
-        .route(
-            "/api/admin/live-connections",
-            get(routes::live_connections::list_admin_live_connections),
-        )
-        // live connections dashboard — realtime WebSocket push variants
-        .route(
-            "/api/entities/{id}/live-connections/ws",
-            get(routes::live_ws::entity_live_connections_ws),
-        )
-        .route(
-            "/api/me/live-connections/ws",
-            get(routes::live_ws::my_live_connections_ws),
-        )
-        .route(
-            "/api/admin/live-connections/ws",
-            get(routes::live_ws::admin_live_connections_ws),
+            "/api/live-connections/ws",
+            get(routes::live_ws::live_connections_ws),
         )
         // admin
         .route(

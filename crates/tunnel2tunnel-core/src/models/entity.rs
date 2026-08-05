@@ -32,6 +32,17 @@ impl Entity {
         .map_err(CoreError::Sqlx)
     }
 
+    /// Every non-deleted entity system-wide, regardless of owner — used only
+    /// by the admin ("all scope") live-connections view.
+    pub async fn list_all(pool: &PgPool) -> Result<Vec<Self>, CoreError> {
+        sqlx::query_as::<_, Entity>(
+            "SELECT * FROM entities WHERE deleted_at IS NULL ORDER BY created_at DESC",
+        )
+        .fetch_all(pool)
+        .await
+        .map_err(CoreError::Sqlx)
+    }
+
     pub async fn find_by_id_only(pool: &PgPool, id: Uuid) -> Result<Option<Self>, CoreError> {
         sqlx::query_as::<_, Entity>("SELECT * FROM entities WHERE id = $1 AND deleted_at IS NULL")
             .bind(id)

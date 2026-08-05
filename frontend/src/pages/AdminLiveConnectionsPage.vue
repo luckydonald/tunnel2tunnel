@@ -1,20 +1,79 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { storeToRefs } from 'pinia'
 import AppShell from '@/components/AppShell.vue'
 import StatusDot from '@/components/StatusDot.vue'
-import { type LiveConnectionRow } from '@/api/admin'
 import { roleBadgeLabel } from '@/labels'
-import { formatSince } from '@/liveStatus'
-import { useLiveSocket } from '@/composables/useLiveSocket'
+import { formatSince, type RemoteStatus } from '@/liveStatus'
+import { useLiveConnectionsStore } from '@/stores/liveConnections'
 
-const rows = ref<LiveConnectionRow[]>([])
-const loading = ref(true)
+interface AdminRow {
+  live: boolean
+  remote_status: RemoteStatus | null
+  username: string
+  entity_id: string
+  entity_name: string | null
+  role: 'server' | 'client'
+  service_name: string
+  port: number
+  peer_ip: string | null
+  connected_since: string | null
+}
+
+const liveConnections = useLiveConnectionsStore()
+const { snapshots, connected } = storeToRefs(liveConnections)
+
+// This page is the one place the shared connection switches to the
+// unfiltered, admin-only "all" scope — reverted back to "mine" on leaving so
+// toasts/other pages don't keep seeing everyone else's activity.
+onMounted(() => liveConnections.setScope('all'))
+onUnmounted(() => liveConnections.setScope('mine'))
+
+const loading = computed(() => !connected.value)
+
+// Flattened client-side from the shared store's nested-per-entity snapshots
+// — mirrors the former server-flattened `LiveConnectionRow[]`.
+const rows = computed((): AdminRow[] => {
+  const out: AdminRow[] = []
+  for (const snap of snapshots.value) {
+    const username = snap.account?.username ?? '—'
+    for (const service of snap.services) {
+      out.push({
+        live: service.live,
+        remote_status: service.remote_status,
+        username,
+        entity_id: snap.entity_id,
+        entity_name: snap.entity_name,
+        role: 'server',
+        service_name: service.service_name,
+        port: service.proxy_port,
+        peer_ip: null,
+        connected_since: null,
+      })
+    }
+    for (const sub of snap.subscriptions) {
+      out.push({
+        live: sub.live,
+        remote_status: sub.remote_status,
+        username,
+        entity_id: snap.entity_id,
+        entity_name: snap.entity_name,
+        role: 'client',
+        service_name: sub.service_name,
+        port: sub.subscriber_local_port,
+        peer_ip: sub.peer_ip,
+        connected_since: sub.connected_since,
+      })
+    }
+  }
+  return out
+})
 
 const filterUser = ref('')
 const filterRole = ref<'' | 'server' | 'client'>('')
 const filterService = ref('')
 
-const usernames = computed(() => Array.from(new Set(rows.value.map(r => r.account.username))).sort())
+const usernames = computed(() => Array.from(new Set(rows.value.map(r => r.username))).sort())
 const serviceNames = computed(() => Array.from(new Set(rows.value.map(r => r.service_name))).sort())
 
 // The Peer IP column is genuinely useful data (client rows carry a real address) but
@@ -24,16 +83,11 @@ const showPeerIp = computed(() => rows.value.some(r => r.peer_ip))
 
 const filteredRows = computed(() =>
   rows.value.filter(r =>
-    (!filterUser.value || r.account.username === filterUser.value)
+    (!filterUser.value || r.username === filterUser.value)
     && (!filterRole.value || r.role === filterRole.value)
     && (!filterService.value || r.service_name === filterService.value),
   ),
 )
-
-useLiveSocket<LiveConnectionRow[]>('/api/admin/live-connections/ws', data => {
-  rows.value = data
-  loading.value = false
-})
 </script>
 
 <template>
@@ -76,10 +130,10 @@ useLiveSocket<LiveConnectionRow[]>('/api/admin/live-connections/ws', data => {
         <tbody>
           <tr v-for="(row, idx) in filteredRows" :key="idx">
             <td><StatusDot :live="row.live" :remote-status="row.remote_status" /></td>
-            <td>{{ row.account.username }}</td>
+            <td>{{ row.username }}</td>
             <td>
-              <RouterLink :to="{ name: 'entity-detail', params: { id: row.entity.id } }">
-                {{ row.entity.name ?? row.entity.id.slice(0, 13) + '…' }}
+              <RouterLink :to="{ name: 'entity-detail', params: { id: row.entity_id } }">
+                {{ row.entity_name ?? row.entity_id.slice(0, 13) + '…' }}
               </RouterLink>
             </td>
             <td>{{ roleBadgeLabel[row.role] }}</td>

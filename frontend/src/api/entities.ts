@@ -64,57 +64,6 @@ export interface EntityDetail extends Entity {
   ports: PortConfig[]
 }
 
-// ── Live connections (Phase 5 dashboard) ────────────────────────────────────────
-
-export type { RemoteStatus } from '@/liveStatus'
-import type { RemoteStatus } from '@/liveStatus'
-
-export interface LiveAccountRef {
-  user_id: string
-  username: string
-}
-
-export interface LiveEntityRef {
-  id: string
-  name: string | null
-}
-
-export interface LiveSubscriberInfo {
-  entity: LiveEntityRef
-  account: LiveAccountRef
-  peer_ip: string
-  connected_since: string
-}
-
-export interface ServiceLiveStatus {
-  port_config_id: string
-  service_name: string
-  proxy_port: number
-  /** Aggregated over current subscribers — see `live_connections.rs`'s module doc comment. */
-  live: boolean
-  /** This entity's own SSH-session/port state — see `live_connections.rs`'s module doc comment. */
-  remote_status: RemoteStatus | null
-  subscribers: LiveSubscriberInfo[]
-}
-
-export interface SubscriptionLiveStatus {
-  subscription_id: string
-  port_config_id: string
-  owner: LiveEntityRef
-  service_name: string
-  proxy_port: number
-  subscriber_local_port: number
-  enabled: boolean
-  live: boolean
-  remote_status: RemoteStatus | null
-  connected_since: string | null
-}
-
-export interface EntityLiveConnectionsResponse {
-  services: ServiceLiveStatus[]
-  subscriptions: SubscriptionLiveStatus[]
-}
-
 export interface CreateEntityParams {
   name?: string | null
   description?: string | null
@@ -247,7 +196,4 @@ export const entitiesApi = {
 
   deleteSubscription: (entityId: string, subscriptionId: string) =>
     apiFetch<void>(`/api/entities/${entityId}/subscriptions/${subscriptionId}`, { method: 'DELETE' }),
-
-  getLiveConnections: (entityId: string) =>
-    apiFetch<EntityLiveConnectionsResponse>(`/api/entities/${entityId}/live-connections`),
 }

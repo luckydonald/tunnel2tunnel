@@ -19,13 +19,15 @@
 //!       - `idle`          — port is forwarded/routable, but no active bridge.
 //!       - `active`        — an active bridge exists right now (matches `live`).
 //!     A disabled subscription/service is always `live = false, remote_status = offline`.
+//!
+//! All three former routes (per-entity, per-user "me", admin) are unified
+//! into a single [`EntityLiveSnapshot`] shape and a single
+//! [`build_live_connections`] query, parameterized by [`Scope`] — see
+//! `routes::live_ws` for the WebSocket route that serves it and switches
+//! scope on request.
 
 use std::collections::HashSet;
 
-use axum::{
-    extract::{Path, State},
-    Json,
-};
 use serde::Serialize;
 use time::OffsetDateTime;
 use tunnel2tunnel_core::models::{
@@ -34,11 +36,7 @@ use tunnel2tunnel_core::models::{
 };
 use uuid::Uuid;
 
-use crate::{
-    extractors::{AdminUser, AuthUser},
-    routes::entities::require_owner,
-    AppState, WebError,
-};
+use crate::{AppState, WebError};
 
 // ── Shared response fragments ─────────────────────────────────────────────────
 
@@ -99,12 +97,16 @@ pub struct SubscriptionLiveStatus {
     pub enabled: bool,
     pub live: bool,
     pub remote_status: Option<RemoteStatus>,
+    /// The subscriber's own bridge peer address — `None` when there's no
+    /// active bridge right now. Always this viewer's own connection, so
+    /// exposing it isn't scope-gated.
+    pub peer_ip: Option<String>,
     #[serde(with = "time::serde::rfc3339::option")]
     pub connected_since: Option<OffsetDateTime>,
 }
 
 #[derive(Serialize)]
-pub struct EntityLiveConnectionsResponse {
+pub struct EntityLiveConnectionsSnapshot {
     /// This entity's own `port_configs` ("my services"), each with its live
     /// status and currently-bridged subscribers.
     pub services: Vec<ServiceLiveStatus>,
@@ -113,23 +115,14 @@ pub struct EntityLiveConnectionsResponse {
     pub subscriptions: Vec<SubscriptionLiveStatus>,
 }
 
-pub async fn list_entity_live_connections(
-    AuthUser(user): AuthUser,
-    State(state): State<AppState>,
-    Path(entity_id): Path<Uuid>,
-) -> Result<Json<EntityLiveConnectionsResponse>, WebError> {
-    require_owner(&state.db, entity_id, user.id).await?;
-    Ok(Json(build_entity_live_connections(&state, entity_id).await?))
-}
-
-/// Reusable snapshot builder — shared by the HTTP route above and the
-/// `live-connections/ws` WebSocket route (`routes::live_ws`). Callers are
-/// responsible for their own auth check (`require_owner`/`AdminUser`) before
-/// calling this.
+/// Reusable snapshot builder — called once per entity by
+/// [`build_live_connections`]. Callers are responsible for their own auth
+/// check before calling this (either "does the viewer own this entity" for
+/// `Scope::Mine`, or admin-only for `Scope::All`).
 pub async fn build_entity_live_connections(
     state: &AppState,
     entity_id: Uuid,
-) -> Result<EntityLiveConnectionsResponse, WebError> {
+) -> Result<EntityLiveConnectionsSnapshot, WebError> {
     // Snapshot the in-memory maps once up front — cheap (small, short-lived
     // locks) and avoids re-locking per row below.
     let live_slots: HashSet<(Uuid, u32)> = state
@@ -220,22 +213,108 @@ pub async fn build_entity_live_connections(
             enabled: s.subscription.enabled,
             live,
             remote_status: Some(remote_status),
+            peer_ip: bridge.map(|b| b.peer_ip.clone()),
             connected_since: bridge.map(|b| b.since),
         });
     }
 
-    Ok(EntityLiveConnectionsResponse {
+    Ok(EntityLiveConnectionsSnapshot {
         services,
         subscriptions,
     })
 }
 
+// ── Unified snapshot — one route, one shape, scoped by viewer ─────────────────
+
+/// Which entities [`build_live_connections`] should include.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Scope {
+    /// Only entities owned by the requesting user — the default for every
+    /// connection.
+    Mine,
+    /// Every entity system-wide — admin-only, requested via the `set_scope`
+    /// command on the WebSocket connection.
+    All,
+}
+
+#[derive(Serialize)]
+pub struct EntityLiveSnapshot {
+    pub entity_id: Uuid,
+    pub entity_name: Option<String>,
+    pub entity_online: bool,
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub entity_last_disconnected_at: Option<OffsetDateTime>,
+    /// Owned by the viewer making this request — always `true` in
+    /// `Scope::Mine`, computed per-row in `Scope::All` so the frontend (and
+    /// specifically its toast logic) can tell the difference regardless of
+    /// which scope the connection currently has.
+    pub mine: bool,
+    pub services: Vec<ServiceLiveStatus>,
+    pub subscriptions: Vec<SubscriptionLiveStatus>,
+    /// Admin-only: which user owns this entity. `None` unless the query ran
+    /// in `Scope::All` — never sent to a non-admin viewer regardless, since
+    /// only admins can ever request that scope.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account: Option<AccountRef>,
+}
+
+/// The one query backing `/api/live-connections/ws` in every scope. Still
+/// calls [`build_entity_live_connections`] once per entity exactly as the
+/// former per-user/admin builders did — this consolidation is "don't discard
+/// the nested detail before serializing" plus "broaden the entity list in
+/// `Scope::All`," not new query logic.
+pub async fn build_live_connections(
+    state: &AppState,
+    user_id: Uuid,
+    scope: Scope,
+) -> Result<Vec<EntityLiveSnapshot>, WebError> {
+    let entities = match scope {
+        Scope::Mine => Entity::list_for_user(&state.db, user_id).await?,
+        Scope::All => Entity::list_all(&state.db).await?,
+    };
+
+    let owner_usernames: std::collections::HashMap<Uuid, String> = if scope == Scope::All {
+        User::list_all(&state.db)
+            .await
+            .map_err(WebError::Core)?
+            .into_iter()
+            .map(|u| (u.id, u.username))
+            .collect()
+    } else {
+        std::collections::HashMap::new()
+    };
+
+    let mut snapshots = Vec::with_capacity(entities.len());
+    for entity in entities {
+        let snapshot = build_entity_live_connections(state, entity.id).await?;
+        let (entity_online, entity_last_disconnected_at) =
+            build_entity_status(state, entity.id).await?;
+        let mine = entity.user_id == user_id;
+        let account = if scope == Scope::All {
+            owner_usernames.get(&entity.user_id).map(|username| AccountRef {
+                user_id: entity.user_id,
+                username: username.clone(),
+            })
+        } else {
+            None
+        };
+        snapshots.push(EntityLiveSnapshot {
+            entity_id: entity.id,
+            entity_name: entity.name,
+            entity_online,
+            entity_last_disconnected_at,
+            mine,
+            services: snapshot.services,
+            subscriptions: snapshot.subscriptions,
+            account,
+        });
+    }
+    Ok(snapshots)
+}
+
 /// Reusable single-entity online-status lookup — same source
 /// (`ConnectionLog::entity_status`) that `routes::entities::get_entity` uses
-/// for `EntityResponse::online`/`last_disconnected_at`, exposed here so
-/// `live_ws`'s per-entity route can push live updates for those two fields
-/// alongside the live-connections snapshot (today they're only loaded once,
-/// via `GET /api/entities/{id}`).
+/// for `EntityResponse::online`/`last_disconnected_at`.
 pub async fn build_entity_status(
     state: &AppState,
     entity_id: Uuid,
@@ -243,188 +322,6 @@ pub async fn build_entity_status(
     ConnectionLog::entity_status(&state.db, entity_id)
         .await
         .map_err(WebError::Core)
-}
-
-// ── Admin response — one flat row per leg ─────────────────────────────────────
-
-#[derive(Serialize)]
-pub struct LiveConnectionRow {
-    pub live: bool,
-    pub remote_status: Option<RemoteStatus>,
-    pub account: AccountRef,
-    pub entity: EntityRef,
-    pub role: &'static str,
-    pub service_name: String,
-    pub port: i32,
-    pub peer_ip: Option<String>,
-    #[serde(with = "time::serde::rfc3339::option")]
-    pub connected_since: Option<OffsetDateTime>,
-}
-
-pub async fn list_admin_live_connections(
-    AdminUser(_admin): AdminUser,
-    State(state): State<AppState>,
-) -> Result<Json<Vec<LiveConnectionRow>>, WebError> {
-    Ok(Json(build_admin_live_connections(&state).await?))
-}
-
-/// Reusable snapshot builder — shared by the HTTP route above and the
-/// `admin/live-connections/ws` WebSocket route (`routes::live_ws`). Callers
-/// are responsible for their own `AdminUser` check before calling this.
-pub async fn build_admin_live_connections(state: &AppState) -> Result<Vec<LiveConnectionRow>, WebError> {
-    let live_slots: HashSet<(Uuid, u32)> = state
-        .server_slots
-        .lock()
-        .await
-        .keys()
-        .copied()
-        .collect();
-    let active_tunnels: Vec<tunnel2tunnel_ssh::ActiveTunnelInfo> =
-        state.active_tunnels.lock().await.values().cloned().collect();
-
-    let mut rows = Vec::new();
-
-    // Server-role rows: every port_configs row across all entities.
-    let server_pcs = PortConfig::list_all_with_owner(&state.db)
-        .await
-        .map_err(WebError::Core)?;
-    let server_entity_ids: Vec<Uuid> = server_pcs.iter().map(|pc| pc.port_config.entity_id).collect();
-    let server_entity_statuses = ConnectionLog::entity_statuses(&state.db, &server_entity_ids)
-        .await
-        .map_err(WebError::Core)?;
-    for pc in server_pcs {
-        let live = active_tunnels.iter().any(|info| {
-            info.target_entity_id == pc.port_config.entity_id
-                && info.proxy_port == pc.port_config.proxy_port as u32
-        });
-        let entity_online = server_entity_statuses
-            .get(&pc.port_config.entity_id)
-            .map(|(online, _)| *online)
-            .unwrap_or(false);
-        let port_forwarded =
-            live_slots.contains(&(pc.port_config.entity_id, pc.port_config.proxy_port as u32));
-        let remote_status = remote_status_for(pc.port_config.enabled, entity_online, port_forwarded, live);
-        rows.push(LiveConnectionRow {
-            live,
-            remote_status: Some(remote_status),
-            account: AccountRef {
-                user_id: pc.owner_user_id,
-                username: pc.owner_username,
-            },
-            entity: EntityRef {
-                id: pc.port_config.entity_id,
-                name: pc.owner_entity_name,
-            },
-            role: "server",
-            service_name: pc.port_config.name,
-            port: pc.port_config.proxy_port,
-            peer_ip: None,
-            connected_since: None,
-        });
-    }
-
-    // Client-role rows: every port_subscriptions row across all entities.
-    let subs = PortSubscription::list_all_with_context(&state.db)
-        .await
-        .map_err(WebError::Core)?;
-    let owner_ids: Vec<Uuid> = subs.iter().map(|s| s.port_config.entity_id).collect();
-    let owner_statuses = ConnectionLog::entity_statuses(&state.db, &owner_ids)
-        .await
-        .map_err(WebError::Core)?;
-    for s in subs {
-        let bridge = active_tunnels.iter().find(|info| {
-            info.client_entity_id == s.subscription.subscriber_entity_id
-                && info.port_config_id == s.port_config.id
-        });
-        let owner_online = owner_statuses
-            .get(&s.port_config.entity_id)
-            .map(|(online, _)| *online)
-            .unwrap_or(false);
-        let owner_port_live =
-            live_slots.contains(&(s.port_config.entity_id, s.port_config.proxy_port as u32));
-        let live = subscription_live(s.subscription.enabled, bridge.is_some());
-        let remote_status =
-            remote_status_for(s.subscription.enabled, owner_online, owner_port_live, bridge.is_some());
-        rows.push(LiveConnectionRow {
-            live,
-            remote_status: Some(remote_status),
-            account: AccountRef {
-                user_id: s.subscriber_user_id,
-                username: s.subscriber_username,
-            },
-            entity: EntityRef {
-                id: s.subscription.subscriber_entity_id,
-                name: s.subscriber_entity_name,
-            },
-            role: "client",
-            service_name: s.port_config.name,
-            port: s.subscription.subscriber_local_port,
-            peer_ip: bridge.map(|b| b.peer_ip.clone()),
-            connected_since: bridge.map(|b| b.since),
-        });
-    }
-
-    Ok(rows)
-}
-
-// ── Aggregate builder — "my live connections" across all owned entities ───────
-
-/// One flattened row (service or subscription leg) for the dashboard's
-/// "your live connections" table — mirrors `LiveConnectionRow` but scoped to
-/// a single user's own entities rather than every entity in the system, and
-/// without the `account`/`role` breakdown admin needs (every row here is
-/// already known to belong to `user_id`).
-#[derive(Serialize)]
-pub struct DashboardRow {
-    pub live: bool,
-    pub remote_status: Option<RemoteStatus>,
-    pub entity_id: Uuid,
-    pub entity_name: Option<String>,
-    pub role: &'static str,
-    pub service_name: String,
-    pub port: i32,
-    #[serde(with = "time::serde::rfc3339::option")]
-    pub connected_since: Option<OffsetDateTime>,
-}
-
-/// Reusable snapshot builder for `GET /api/me/live-connections/ws`
-/// (`routes::live_ws`) — replaces the frontend's previous N+1 client-side
-/// fetch (one `build_entity_live_connections` HTTP call per owned entity)
-/// with a single server-side loop over the same builder.
-pub async fn build_my_live_connections(
-    state: &AppState,
-    user_id: Uuid,
-) -> Result<Vec<DashboardRow>, WebError> {
-    let entities = Entity::list_for_user(&state.db, user_id).await?;
-    let mut rows = Vec::new();
-    for entity in entities {
-        let snapshot = build_entity_live_connections(state, entity.id).await?;
-        for service in snapshot.services {
-            rows.push(DashboardRow {
-                live: service.live,
-                remote_status: service.remote_status,
-                entity_id: entity.id,
-                entity_name: entity.name.clone(),
-                role: "server",
-                service_name: service.service_name,
-                port: service.proxy_port,
-                connected_since: service.subscribers.first().map(|s| s.connected_since),
-            });
-        }
-        for sub in snapshot.subscriptions {
-            rows.push(DashboardRow {
-                live: sub.live,
-                remote_status: sub.remote_status,
-                entity_id: entity.id,
-                entity_name: entity.name.clone(),
-                role: "client",
-                service_name: sub.service_name,
-                port: sub.subscriber_local_port,
-                connected_since: sub.connected_since,
-            });
-        }
-    }
-    Ok(rows)
 }
 
 // ── Shared status logic ────────────────────────────────────────────────────────

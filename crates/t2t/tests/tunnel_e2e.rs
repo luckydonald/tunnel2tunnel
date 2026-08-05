@@ -52,10 +52,11 @@ use tunnel2tunnel_core::{
     pubkey::parse_authorized_keys_line,
 };
 use tunnel2tunnel_ssh::{
-    new_active_tunnels, new_live_update_tx, new_server_slots, start as start_ssh,
-    ActiveTunnelInfo, ActiveTunnels, LiveUpdateTx, ServerSlots, SshConfig,
+    new_active_tunnels, new_live_event_tx, new_live_update_tx, new_server_slots,
+    start as start_ssh, ActiveTunnelInfo, ActiveTunnels, LiveEventTx, LiveUpdateTx, ServerSlots,
+    SshConfig,
 };
-use tunnel2tunnel_web::{start as start_web, WebConfig};
+use tunnel2tunnel_web::{routes::live_connections::build_entity_live_connections, AppState};
 
 /// The remote-forward routing keys used between the `ssh` legs. Neither is
 /// ever bound as a real OS socket by t2t (see `tcpip_forward` in
@@ -408,93 +409,46 @@ async fn wait_for_live_update(rx: &mut tokio::sync::broadcast::Receiver<()>, tim
         .ok(); // Ok(()) or Err(Lagged) both count as "it fired at least once"
 }
 
-/// Starts the real axum HTTP server (`tunnel2tunnel_web::start`) on a fresh
-/// ephemeral port, sharing the same `pool`/`server_slots`/`active_tunnels`
-/// the SSH server uses — mirrors how `crates/t2t/src/main.rs` wires both
-/// together. Used so these tests exercise the actual
-/// `GET /api/entities/{id}/live-connections` route (real session/login
-/// flow, real JSON response) rather than re-deriving its logic locally.
-async fn spawn_web_server(
+/// Constructs a minimal `AppState` sharing the same in-memory
+/// `server_slots`/`active_tunnels` maps the SSH server writes to — mirrors
+/// how `crates/t2t/src/main.rs` wires both together, minus the HTTP
+/// listener/session layer, which these tests don't need: calling
+/// `build_entity_live_connections` directly still exercises the exact same
+/// snapshot-building logic the real `/api/live-connections/ws` route uses
+/// (that route is a thin WebSocket wrapper around this function — see
+/// `routes::live_ws`), just without round-tripping a login + WebSocket
+/// client for it.
+fn test_app_state(
     pool: sqlx::PgPool,
     server_slots: ServerSlots,
     active_tunnels: ActiveTunnels,
     live_update_tx: LiveUpdateTx,
-) -> u16 {
-    let http_port = free_port();
-    tokio::spawn(async move {
-        start_web(
-            WebConfig {
-                http_port,
-                ssh_port: 0,
-                static_dir: None,
-                ssh_host_key_fingerprint: "test-fingerprint".to_string(),
-            },
-            pool,
-            server_slots,
-            active_tunnels,
-            live_update_tx,
-        )
-        .await
-        .expect("t2t web server failed");
-    });
-    for _ in 0..50 {
-        if TcpStream::connect(("127.0.0.1", http_port)).await.is_ok() {
-            break;
-        }
-        sleep(Duration::from_millis(100)).await;
+    live_event_tx: LiveEventTx,
+) -> AppState {
+    AppState {
+        db: pool,
+        ssh_port: 0,
+        ssh_host_key_fingerprint: "test-fingerprint".to_string(),
+        server_slots,
+        active_tunnels,
+        live_update_tx,
+        live_event_tx,
     }
-    http_port
 }
 
-/// Logs into the given http server as `username`/`password` via the real
-/// `POST /api/auth/login` route, returning a cookie-jar-enabled client that
-/// carries the resulting session cookie on subsequent requests.
-async fn login(http_port: u16, username: &str, password: &str) -> reqwest::Client {
-    let client = reqwest::Client::builder()
-        .cookie_store(true)
-        .build()
-        .expect("build reqwest client");
-    let resp = client
-        .post(format!("http://127.0.0.1:{http_port}/api/auth/login"))
-        .json(&serde_json::json!({ "username": username, "password": password }))
-        .send()
+/// Calls the real `build_entity_live_connections` (the same function
+/// `routes::live_ws`'s WebSocket route calls) and returns its JSON
+/// representation, for assertions to index into exactly as they would a
+/// parsed HTTP/WebSocket response body.
+async fn entity_live_connections_json(state: &AppState, entity_id: Uuid) -> serde_json::Value {
+    let snapshot = build_entity_live_connections(state, entity_id)
         .await
-        .expect("send login request");
-    assert!(
-        resp.status().is_success(),
-        "login failed with status {}: {}",
-        resp.status(),
-        resp.text().await.unwrap_or_default()
-    );
-    client
+        .expect("build_entity_live_connections");
+    serde_json::to_value(&snapshot).expect("serialize live-connections snapshot")
 }
 
-/// Fetches `GET /api/entities/{entity_id}/live-connections` as an already
-/// logged-in `client`, returning the parsed JSON body.
-async fn get_entity_live_connections(
-    client: &reqwest::Client,
-    http_port: u16,
-    entity_id: Uuid,
-) -> serde_json::Value {
-    let resp = client
-        .get(format!(
-            "http://127.0.0.1:{http_port}/api/entities/{entity_id}/live-connections"
-        ))
-        .send()
-        .await
-        .expect("send live-connections request");
-    assert!(
-        resp.status().is_success(),
-        "live-connections request failed with status {}: {}",
-        resp.status(),
-        resp.text().await.unwrap_or_default()
-    );
-    resp.json().await.expect("parse live-connections JSON")
-}
-
-/// Finds the subscription row for `port_config_id` inside a
-/// `GET /api/entities/{id}/live-connections` JSON body's `subscriptions`
-/// array, panicking if it's missing.
+/// Finds the subscription row for `port_config_id` inside a live-connections
+/// JSON body's `subscriptions` array, panicking if it's missing.
 fn find_subscription_row(body: &serde_json::Value, port_config_id: Uuid) -> serde_json::Value {
     body["subscriptions"]
         .as_array()
@@ -654,11 +608,13 @@ async fn two_ssh_connections_tunnel_through_rendezvous() {
     let server_slots = new_server_slots();
     let active_tunnels = new_active_tunnels();
     let live_update_tx = new_live_update_tx();
+    let live_event_tx = new_live_event_tx();
     let mut live_update_rx = live_update_tx.subscribe();
     let test_active_tunnels = active_tunnels.clone();
-    let web_server_slots = server_slots.clone();
-    let web_active_tunnels = active_tunnels.clone();
-    let web_live_update_tx = live_update_tx.clone();
+    let check_server_slots = server_slots.clone();
+    let check_active_tunnels = active_tunnels.clone();
+    let check_live_update_tx = live_update_tx.clone();
+    let check_live_event_tx = live_event_tx.clone();
     tokio::spawn(async move {
         start_ssh(
             SshConfig {
@@ -671,6 +627,7 @@ async fn two_ssh_connections_tunnel_through_rendezvous() {
             server_slots,
             active_tunnels,
             live_update_tx,
+            live_event_tx,
         )
         .await
         .expect("t2t SSH server failed");
@@ -684,14 +641,13 @@ async fn two_ssh_connections_tunnel_through_rendezvous() {
         sleep(Duration::from_millis(100)).await;
     }
 
-    let http_port = spawn_web_server(
+    let check_state = test_app_state(
         pool.clone(),
-        web_server_slots,
-        web_active_tunnels,
-        web_live_update_tx,
-    )
-    .await;
-    let owner_client = login(http_port, &owner.username, owner_password).await;
+        check_server_slots,
+        check_active_tunnels,
+        check_live_update_tx,
+        check_live_event_tx,
+    );
 
     // Connections 1+2: both server entities register their own
     // `-R proxy_port:127.0.0.1:fixture_port` forward, each to its own
@@ -925,7 +881,7 @@ async fn two_ssh_connections_tunnel_through_rendezvous() {
     // — the fixed happy path this bug's not_forwarded/idle distinction is
     // contrasted against below.
     let client_live_connections =
-        get_entity_live_connections(&owner_client, http_port, client_entity.id).await;
+        entity_live_connections_json(&check_state, client_entity.id).await;
     let sub_row_a = find_subscription_row(&client_live_connections, port_config_a.id);
     assert_eq!(sub_row_a["live"], serde_json::json!(true));
     assert_eq!(sub_row_a["remote_status"], serde_json::json!("active"));
@@ -939,7 +895,7 @@ async fn two_ssh_connections_tunnel_through_rendezvous() {
     // just from this entity's own point of view) — `"active"` here as well,
     // since a bridge is up.
     let server_a_live_connections =
-        get_entity_live_connections(&owner_client, http_port, server_entity_a.id).await;
+        entity_live_connections_json(&check_state, server_entity_a.id).await;
     let service_row_a = server_a_live_connections["services"]
         .as_array()
         .expect("services array")
@@ -995,7 +951,7 @@ async fn two_ssh_connections_tunnel_through_rendezvous() {
         // registered, but with no bridge open the ring now reflects "port
         // forwarded/routable but idle" rather than "actively bridged".
         let client_live_connections_after_a_disconnect =
-            get_entity_live_connections(&owner_client, http_port, client_entity.id).await;
+            entity_live_connections_json(&check_state, client_entity.id).await;
         let sub_row_a_after = find_subscription_row(&client_live_connections_after_a_disconnect, port_config_a.id);
         assert_eq!(sub_row_a_after["live"], serde_json::json!(false));
         assert_eq!(sub_row_a_after["remote_status"], serde_json::json!("idle"));
@@ -1201,9 +1157,11 @@ async fn same_connection_online_target_not_blocked_by_offline_target_timeout() {
     let server_slots = new_server_slots();
     let active_tunnels = new_active_tunnels();
     let live_update_tx = new_live_update_tx();
-    let web_server_slots = server_slots.clone();
-    let web_active_tunnels = active_tunnels.clone();
-    let web_live_update_tx = live_update_tx.clone();
+    let live_event_tx = new_live_event_tx();
+    let check_server_slots = server_slots.clone();
+    let check_active_tunnels = active_tunnels.clone();
+    let check_live_update_tx = live_update_tx.clone();
+    let check_live_event_tx = live_event_tx.clone();
     tokio::spawn(async move {
         start_ssh(
             SshConfig {
@@ -1216,6 +1174,7 @@ async fn same_connection_online_target_not_blocked_by_offline_target_timeout() {
             server_slots,
             active_tunnels,
             live_update_tx,
+            live_event_tx,
         )
         .await
         .expect("t2t SSH server failed");
@@ -1228,14 +1187,13 @@ async fn same_connection_online_target_not_blocked_by_offline_target_timeout() {
         sleep(Duration::from_millis(100)).await;
     }
 
-    let http_port = spawn_web_server(
+    let check_state = test_app_state(
         pool.clone(),
-        web_server_slots,
-        web_active_tunnels,
-        web_live_update_tx,
-    )
-    .await;
-    let owner_client = login(http_port, &owner.username, owner_password).await;
+        check_server_slots,
+        check_active_tunnels,
+        check_live_update_tx,
+        check_live_event_tx,
+    );
 
     // Only the online target ever registers a `-R` forward — the offline
     // one deliberately never does, exercising "target server never came
@@ -1406,7 +1364,7 @@ async fn same_connection_online_target_not_blocked_by_offline_target_timeout() {
     // in-process `russh::client::Handle` rather than a real `ssh -L`
     // subprocess.
     let client_live_connections =
-        get_entity_live_connections(&owner_client, http_port, client_entity.id).await;
+        entity_live_connections_json(&check_state, client_entity.id).await;
     let offline_row = find_subscription_row(&client_live_connections, port_config_offline.id);
     assert_eq!(offline_row["live"], serde_json::json!(false));
     assert_eq!(offline_row["remote_status"], serde_json::json!("offline"));
@@ -1541,10 +1499,12 @@ async fn subscriber_sees_not_forwarded_ring_when_owner_online_but_port_not_forwa
     let server_slots = new_server_slots();
     let active_tunnels = new_active_tunnels();
     let live_update_tx = new_live_update_tx();
+    let live_event_tx = new_live_event_tx();
     let test_server_slots = server_slots.clone();
-    let web_server_slots = server_slots.clone();
-    let web_active_tunnels = active_tunnels.clone();
-    let web_live_update_tx = live_update_tx.clone();
+    let check_server_slots = server_slots.clone();
+    let check_active_tunnels = active_tunnels.clone();
+    let check_live_update_tx = live_update_tx.clone();
+    let check_live_event_tx = live_event_tx.clone();
     tokio::spawn(async move {
         start_ssh(
             SshConfig {
@@ -1557,6 +1517,7 @@ async fn subscriber_sees_not_forwarded_ring_when_owner_online_but_port_not_forwa
             server_slots,
             active_tunnels,
             live_update_tx,
+            live_event_tx,
         )
         .await
         .expect("t2t SSH server failed");
@@ -1569,14 +1530,13 @@ async fn subscriber_sees_not_forwarded_ring_when_owner_online_but_port_not_forwa
         sleep(Duration::from_millis(100)).await;
     }
 
-    let http_port = spawn_web_server(
+    let check_state = test_app_state(
         pool.clone(),
-        web_server_slots,
-        web_active_tunnels,
-        web_live_update_tx,
-    )
-    .await;
-    let owner_client = login(http_port, &owner.username, owner_password).await;
+        check_server_slots,
+        check_active_tunnels,
+        check_live_update_tx,
+        check_live_event_tx,
+    );
 
     // The owner authenticates and holds the connection open, but never
     // issues a `-R` forward request for `PROXY_PORT_NOT_FORWARDED` (or any
@@ -1598,7 +1558,7 @@ async fn subscriber_sees_not_forwarded_ring_when_owner_online_but_port_not_forwa
     );
 
     let client_live_connections =
-        get_entity_live_connections(&owner_client, http_port, client_entity.id).await;
+        entity_live_connections_json(&check_state, client_entity.id).await;
     let sub_row = find_subscription_row(&client_live_connections, port_config.id);
     assert_eq!(
         sub_row["live"],

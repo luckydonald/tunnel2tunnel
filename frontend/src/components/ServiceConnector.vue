@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { RouterLink } from 'vue-router'
-import type { SubscribableOwner, SubscribableService, SubscriptionLiveStatus } from '@/api/entities'
+import type { SubscribableOwner, SubscribableService } from '@/api/entities'
+import type { SubscriptionLiveStatus } from '@/api/liveConnections'
 import { roleBadges } from '@/labels'
 import StatusDot from '@/components/StatusDot.vue'
 

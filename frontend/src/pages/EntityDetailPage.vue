@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
 import AppShell from '@/components/AppShell.vue'
 import EntityName from '@/components/EntityName.vue'
@@ -13,9 +14,6 @@ import {
   type EntityDetail,
   type PortConfig,
   type SubscribableOwner,
-  type ServiceLiveStatus,
-  type SubscriptionLiveStatus,
-  type EntityLiveConnectionsResponse,
 } from '@/api/entities'
 import { friendsApi, type AccessRule, type Friendship } from '@/api/friends'
 import { adminApi, type ConnLog } from '@/api/admin'
@@ -24,9 +22,11 @@ import { guessServiceName } from '@/portNames'
 import { formatSince } from '@/liveStatus'
 import { useAuthStore } from '@/stores/auth'
 import { useToast } from '@/composables/useToast'
-import { useLiveSocket } from '@/composables/useLiveSocket'
+import { useLiveConnectionsStore } from '@/stores/liveConnections'
 
 const { show: toast } = useToast()
+const liveConnections = useLiveConnectionsStore()
+const { snapshots } = storeToRefs(liveConnections)
 
 const route = useRoute()
 const router = useRouter()
@@ -39,49 +39,43 @@ const pageError = ref<string | null>(null)
 const subscribableOwners = ref<SubscribableOwner[]>([])
 
 // ── Live connections ─────────────────────────────────────────────────────────
-const serviceLiveStatus = ref<ServiceLiveStatus[]>([])
-const subscriptionLiveStatus = ref<SubscriptionLiveStatus[]>([])
+// Read straight from the shared app-wide store — already synced regardless
+// of which page is open, so this is instant on navigation (no fetch, no
+// loading flash) instead of opening its own WebSocket.
 const expandedServiceId = ref<string | null>(null)
 
+const entitySnapshot = computed(() => snapshots.value.find(s => s.entity_id === entityId))
+const serviceLiveStatus = computed(() => entitySnapshot.value?.services ?? [])
+const subscriptionLiveStatus = computed(() => entitySnapshot.value?.subscriptions ?? [])
+
 const serviceStatusMap = computed(() => {
-  const m = new Map<string, ServiceLiveStatus>()
+  const m = new Map<string, typeof serviceLiveStatus.value[number]>()
   for (const s of serviceLiveStatus.value) m.set(s.port_config_id, s)
   return m
 })
 
 const subscriptionStatusMap = computed(() => {
-  const m = new Map<string, SubscriptionLiveStatus>()
+  const m = new Map<string, typeof subscriptionLiveStatus.value[number]>()
   for (const s of subscriptionLiveStatus.value) m.set(s.subscription_id, s)
   return m
 })
 
-async function loadLiveConnections(): Promise<void> {
-  try {
-    const resp = await entitiesApi.getLiveConnections(entityId)
-    serviceLiveStatus.value = resp.services
-    subscriptionLiveStatus.value = resp.subscriptions
-  } catch {
-    // non-critical; status dots/subscribers just stay empty
-  }
-}
-
-interface EntityLiveMessage extends EntityLiveConnectionsResponse {
-  entity_online: boolean
-  entity_last_disconnected_at: string | null
-}
-
-// Realtime push — replaces the one-shot `loadLiveConnections` fetch above for
-// ongoing updates (still called once after subscribe/unsubscribe below, for
-// an optimistic refresh since those actions aren't wired to the backend's
-// live_update_tx notifier).
-useLiveSocket<EntityLiveMessage>(`/api/entities/${entityId}/live-connections/ws`, data => {
-  serviceLiveStatus.value = data.services
-  subscriptionLiveStatus.value = data.subscriptions
-  if (entity.value) {
-    entity.value.online = data.entity_online
-    entity.value.last_disconnected_at = data.entity_last_disconnected_at
+// Keep the entity header's online badge in sync with the store too — the
+// entity itself is loaded once via HTTP (`load()` below), not from the
+// socket, so it needs an explicit sync point.
+watch(entitySnapshot, snap => {
+  if (entity.value && snap) {
+    entity.value.online = snap.entity_online
+    entity.value.last_disconnected_at = snap.entity_last_disconnected_at
   }
 })
+
+// Subscribe/unsubscribe go through the HTTP API, which the SSH-side event
+// stream doesn't cover (see `live_ws.rs`'s fallback-interval rationale) —
+// force an immediate resync afterwards instead of waiting out the fallback.
+function refreshLiveConnections(): void {
+  liveConnections.setScope(liveConnections.scope)
+}
 
 function toggleServiceExpanded(portId: string): void {
   expandedServiceId.value = expandedServiceId.value === portId ? null : portId
@@ -260,7 +254,7 @@ async function handleSubscribe(portConfigId: string, localPort: number): Promise
   try {
     await entitiesApi.createSubscription(entityId, { port_config_id: portConfigId, subscriber_local_port: localPort })
     await loadSubscribableServices()
-    await loadLiveConnections()
+    refreshLiveConnections()
     if (entity.value) entity.value.is_client = true
   } catch (e) {
     toast(e instanceof Error ? e.message : 'Failed to subscribe')
@@ -271,7 +265,7 @@ async function handleUnsubscribe(subscriptionId: string): Promise<void> {
   try {
     await entitiesApi.deleteSubscription(entityId, subscriptionId)
     await loadSubscribableServices()
-    await loadLiveConnections()
+    refreshLiveConnections()
   } catch (e) {
     toast(e instanceof Error ? e.message : 'Failed to unsubscribe')
   }

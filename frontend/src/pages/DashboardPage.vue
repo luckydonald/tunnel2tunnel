@@ -1,15 +1,18 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed } from 'vue'
+import { storeToRefs } from 'pinia'
 import AppShell from '@/components/AppShell.vue'
 import StatusDot from '@/components/StatusDot.vue'
 import { roleBadgeLabel } from '@/labels'
 import { formatSince, type RemoteStatus } from '@/liveStatus'
 import { useAuthStore } from '@/stores/auth'
-import { useLiveSocket } from '@/composables/useLiveSocket'
+import { useLiveConnectionsStore } from '@/stores/liveConnections'
 
 const auth = useAuthStore()
+const liveConnections = useLiveConnectionsStore()
+const { snapshots, connected } = storeToRefs(liveConnections)
 
-export interface DashboardRow {
+interface DashboardRow {
   live: boolean
   remote_status: RemoteStatus | null
   entity_id: string
@@ -20,15 +23,41 @@ export interface DashboardRow {
   connected_since: string | null
 }
 
-const rows = ref<DashboardRow[]>([])
-const loading = ref(true)
+const loading = computed(() => !connected.value)
 
-// Server-side aggregate over all of this user's own entities — replaces the
-// previous N+1 client-side fetch (one `getLiveConnections` call per entity)
-// with a single realtime WebSocket push.
-useLiveSocket<DashboardRow[]>('/api/me/live-connections/ws', data => {
-  rows.value = data
-  loading.value = false
+// Flattened client-side from the shared store's nested-per-entity snapshots
+// (already synced regardless of which page is open) — mirrors the former
+// server-flattened `DashboardRow[]`.
+const rows = computed((): DashboardRow[] => {
+  const out: DashboardRow[] = []
+  for (const snap of snapshots.value) {
+    if (!snap.mine) continue
+    for (const service of snap.services) {
+      out.push({
+        live: service.live,
+        remote_status: service.remote_status,
+        entity_id: snap.entity_id,
+        entity_name: snap.entity_name,
+        role: 'server',
+        service_name: service.service_name,
+        port: service.proxy_port,
+        connected_since: service.subscribers[0]?.connected_since ?? null,
+      })
+    }
+    for (const sub of snap.subscriptions) {
+      out.push({
+        live: sub.live,
+        remote_status: sub.remote_status,
+        entity_id: snap.entity_id,
+        entity_name: snap.entity_name,
+        role: 'client',
+        service_name: sub.service_name,
+        port: sub.subscriber_local_port,
+        connected_since: sub.connected_since,
+      })
+    }
+  }
+  return out
 })
 </script>
 

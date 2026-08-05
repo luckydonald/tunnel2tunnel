@@ -4,8 +4,8 @@ use anyhow::{Context, Result};
 use tracing_subscriber::EnvFilter;
 use tunnel2tunnel_core::{db, models::connection_log::ConnectionLog};
 use tunnel2tunnel_ssh::{
-    host_key_fingerprint, new_active_tunnels, new_live_update_tx, new_server_slots,
-    start as start_ssh, SshConfig,
+    host_key_fingerprint, new_active_tunnels, new_live_event_tx, new_live_update_tx,
+    new_server_slots, start as start_ssh, SshConfig,
 };
 use tunnel2tunnel_web::{bootstrap_admin, start as start_http, WebConfig};
 
@@ -87,9 +87,11 @@ async fn run() -> Result<()> {
     let server_slots = new_server_slots();
     let active_tunnels = new_active_tunnels();
     let live_update_tx = new_live_update_tx();
+    let live_event_tx = new_live_event_tx();
     let http_server_slots = server_slots.clone();
     let http_active_tunnels = active_tunnels.clone();
     let http_live_update_tx = live_update_tx.clone();
+    let http_live_event_tx = live_event_tx.clone();
 
     let http = tokio::spawn(async move {
         start_http(
@@ -103,6 +105,7 @@ async fn run() -> Result<()> {
             http_server_slots,
             http_active_tunnels,
             http_live_update_tx,
+            http_live_event_tx,
         )
         .await
         .expect("HTTP server failed")
@@ -120,6 +123,7 @@ async fn run() -> Result<()> {
             server_slots,
             active_tunnels,
             live_update_tx,
+            live_event_tx,
         )
         .await
         .expect("SSH server failed")

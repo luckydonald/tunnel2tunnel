@@ -12,6 +12,7 @@ use russh::keys::{Algorithm, PrivateKey};
 use russh::server::{Auth, Config, Handle, Handler, Msg, Server, Session};
 use russh::{Channel, ChannelId, ChannelMsg, Preferred, Pty};
 use russh::{MethodKind, MethodSet};
+use serde::Serialize;
 use sqlx::PgPool;
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, Mutex};
@@ -74,6 +75,78 @@ pub type LiveUpdateTx = broadcast::Sender<()>;
 /// pattern (one instance handed to both the SSH server and the web `AppState`).
 pub fn new_live_update_tx() -> LiveUpdateTx {
     broadcast::channel(16).0
+}
+
+/// A discrete "this specific thing changed" notification, emitted right at
+/// the SSH-side mutation site where old/new state is already known — see
+/// each call site of `LiveEventTx::send` below for exactly which transition
+/// it represents. Consumed by `tunnel2tunnel-web`'s unified
+/// `/api/live-connections/ws` route to drive both resync timing and
+/// frontend toast notifications (the `reason` field on that route's
+/// envelope). Deliberately minimal payloads (ids + port only, no names) —
+/// consumers already have entity/service names from the snapshot on the
+/// same connection and enrich from a local lookup instead of this hot path
+/// doing extra DB work.
+#[derive(Clone, Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum LiveEvent {
+    EntityOnline {
+        entity_id: Uuid,
+    },
+    EntityOffline {
+        entity_id: Uuid,
+    },
+    PortForwardingStarted {
+        entity_id: Uuid,
+        proxy_port: u32,
+    },
+    PortForwardingStopped {
+        entity_id: Uuid,
+        proxy_port: u32,
+    },
+    BridgeStarted {
+        client_entity_id: Uuid,
+        target_entity_id: Uuid,
+        proxy_port: u32,
+    },
+    BridgeStopped {
+        client_entity_id: Uuid,
+        target_entity_id: Uuid,
+        proxy_port: u32,
+    },
+}
+
+impl LiveEvent {
+    /// Every entity id this event concerns — used by the web layer to decide
+    /// whether a given connection (scoped to one user's own entities) should
+    /// see this event at all.
+    pub fn entity_ids(&self) -> Vec<Uuid> {
+        match self {
+            LiveEvent::EntityOnline { entity_id } | LiveEvent::EntityOffline { entity_id } => {
+                vec![*entity_id]
+            }
+            LiveEvent::PortForwardingStarted { entity_id, .. }
+            | LiveEvent::PortForwardingStopped { entity_id, .. } => vec![*entity_id],
+            LiveEvent::BridgeStarted {
+                client_entity_id,
+                target_entity_id,
+                ..
+            }
+            | LiveEvent::BridgeStopped {
+                client_entity_id,
+                target_entity_id,
+                ..
+            } => vec![*client_entity_id, *target_entity_id],
+        }
+    }
+}
+
+pub type LiveEventTx = broadcast::Sender<LiveEvent>;
+
+/// Constructs a fresh `LiveEventTx` — see `new_live_update_tx` for the
+/// sharing pattern.
+pub fn new_live_event_tx() -> LiveEventTx {
+    broadcast::channel(64).0
 }
 
 /// Client-side bridge channel -> (paired server handle, paired server-side
@@ -147,6 +220,7 @@ pub async fn start(
     server_slots: ServerSlots,
     active_tunnels: ActiveTunnels,
     live_update_tx: LiveUpdateTx,
+    live_event_tx: LiveEventTx,
 ) -> Result<()> {
     let key =
         load_or_generate_host_key(&config.host_key_path, config.host_key_password.as_deref())?;
@@ -177,6 +251,7 @@ pub async fn start(
         server_slots,
         active_tunnels,
         live_update_tx,
+        live_event_tx,
         session_registry,
         fail2ban,
         tarpit: tarpit_state,
@@ -260,6 +335,7 @@ struct T2tServer {
     server_slots: ServerSlots,
     active_tunnels: ActiveTunnels,
     live_update_tx: LiveUpdateTx,
+    live_event_tx: LiveEventTx,
     session_registry: SessionRegistry,
     fail2ban: Option<Arc<String>>,
     tarpit: TarpitState,
@@ -280,6 +356,7 @@ impl Server for T2tServer {
             server_slots: self.server_slots.clone(),
             active_tunnels: self.active_tunnels.clone(),
             live_update_tx: self.live_update_tx.clone(),
+            live_event_tx: self.live_event_tx.clone(),
             session_registry: self.session_registry.clone(),
             fail2ban: self.fail2ban.clone(),
             tarpit: self.tarpit.clone(),
@@ -311,6 +388,7 @@ struct T2tHandler {
     server_slots: ServerSlots,
     active_tunnels: ActiveTunnels,
     live_update_tx: LiveUpdateTx,
+    live_event_tx: LiveEventTx,
     session_registry: SessionRegistry,
     fail2ban: Option<Arc<String>>,
     tarpit: TarpitState,
@@ -458,6 +536,9 @@ impl T2tHandler {
 
         tarpit::record_auth_success(&self.tarpit, &self.peer_ip, Some(entity.user_id)).await;
         let _ = self.live_update_tx.send(());
+        let _ = self.live_event_tx.send(LiveEvent::EntityOnline {
+            entity_id: entity.id,
+        });
 
         if let Some(path) = &self.fail2ban {
             let line = format!(
@@ -1051,6 +1132,10 @@ impl Handler for T2tHandler {
             .await
             .insert((entity_id, *port), (session.handle(), address.to_string()));
         let _ = self.live_update_tx.send(());
+        let _ = self.live_event_tx.send(LiveEvent::PortForwardingStarted {
+            entity_id,
+            proxy_port: *port,
+        });
 
         // Notify all other sessions
         let msg = format!(
@@ -1077,11 +1162,13 @@ impl Handler for T2tHandler {
             .as_deref()
             .unwrap_or("(unnamed)")
             .to_string();
-        self.server_slots
-            .lock()
-            .await
-            .remove(&(authed.entity.id, port));
+        let entity_id = authed.entity.id;
+        self.server_slots.lock().await.remove(&(entity_id, port));
         let _ = self.live_update_tx.send(());
+        let _ = self.live_event_tx.send(LiveEvent::PortForwardingStopped {
+            entity_id,
+            proxy_port: port,
+        });
 
         // Notify all other sessions
         let msg = format!(
@@ -1305,6 +1392,11 @@ impl Handler for T2tHandler {
             );
             self.bridge_ids.lock().await.insert(client_ch_id, bridge_id);
             let _ = self.live_update_tx.send(());
+            let _ = self.live_event_tx.send(LiveEvent::BridgeStarted {
+                client_entity_id: client_entity.id,
+                target_entity_id,
+                proxy_port: port_to_connect,
+            });
 
             let client_handle = session.handle();
             tokio::spawn(forward_channel(server_ch, client_handle, client_ch_id));
@@ -1346,6 +1438,7 @@ impl Handler for T2tHandler {
         let bridge_ids = self.bridge_ids.clone();
         let active_tunnels = self.active_tunnels.clone();
         let live_update_tx = self.live_update_tx.clone();
+        let live_event_tx = self.live_event_tx.clone();
         let peer_ip = self.peer_ip.clone();
         let host_to_connect = host_to_connect.to_string();
 
@@ -1428,6 +1521,11 @@ impl Handler for T2tHandler {
             );
             bridge_ids.lock().await.insert(client_ch_id, bridge_id);
             let _ = live_update_tx.send(());
+            let _ = live_event_tx.send(LiveEvent::BridgeStarted {
+                client_entity_id: client_entity.id,
+                target_entity_id,
+                proxy_port: port_to_connect,
+            });
 
             // Spawn task: copy server channel → client session
             tokio::spawn(forward_channel(server_ch, handle.clone(), client_ch_id));
@@ -1506,8 +1604,15 @@ impl Handler for T2tHandler {
             let _ = handle.close(ch).await;
         }
         if let Some(bridge_id) = self.bridge_ids.lock().await.remove(&channel) {
-            self.active_tunnels.lock().await.remove(&bridge_id);
+            let removed = self.active_tunnels.lock().await.remove(&bridge_id);
             let _ = self.live_update_tx.send(());
+            if let Some(info) = removed {
+                let _ = self.live_event_tx.send(LiveEvent::BridgeStopped {
+                    client_entity_id: info.client_entity_id,
+                    target_entity_id: info.target_entity_id,
+                    proxy_port: info.proxy_port,
+                });
+            }
         }
         Ok(())
     }
@@ -1550,11 +1655,26 @@ impl Drop for T2tHandler {
         // Clean up server slots when a server entity disconnects
         if let Some(ref authed) = self.entity {
             let entity_id = authed.entity.id;
+            let _ = self.live_event_tx.send(LiveEvent::EntityOffline { entity_id });
             let slots = self.server_slots.clone();
             let live_update_tx = self.live_update_tx.clone();
+            let live_event_tx = self.live_event_tx.clone();
             tokio::spawn(async move {
-                slots.lock().await.retain(|(eid, _), _| *eid != entity_id);
+                let mut map = slots.lock().await;
+                let removed_ports: Vec<u32> = map
+                    .keys()
+                    .filter(|(eid, _)| *eid == entity_id)
+                    .map(|(_, port)| *port)
+                    .collect();
+                map.retain(|(eid, _), _| *eid != entity_id);
+                drop(map);
                 let _ = live_update_tx.send(());
+                for proxy_port in removed_ports {
+                    let _ = live_event_tx.send(LiveEvent::PortForwardingStopped {
+                        entity_id,
+                        proxy_port,
+                    });
+                }
             });
         }
 
@@ -1569,15 +1689,22 @@ impl Drop for T2tHandler {
             let active_tunnels = self.active_tunnels.clone();
             let bridge_ids = self.bridge_ids.clone();
             let live_update_tx = self.live_update_tx.clone();
+            let live_event_tx = self.live_event_tx.clone();
             tokio::spawn(async move {
                 let ids: Vec<Uuid> = bridge_ids.lock().await.values().copied().collect();
                 if !ids.is_empty() {
                     let mut map = active_tunnels.lock().await;
-                    for id in ids {
-                        map.remove(&id);
-                    }
+                    let removed_infos: Vec<ActiveTunnelInfo> =
+                        ids.iter().filter_map(|id| map.remove(id)).collect();
                     drop(map);
                     let _ = live_update_tx.send(());
+                    for info in removed_infos {
+                        let _ = live_event_tx.send(LiveEvent::BridgeStopped {
+                            client_entity_id: info.client_entity_id,
+                            target_entity_id: info.target_entity_id,
+                            proxy_port: info.proxy_port,
+                        });
+                    }
                 }
             });
         }
