@@ -31,6 +31,7 @@
 - [ ] Add a function generating a periodic info summary for the client to send via ssh text channel. It shall list user's servers, in a tree-like structure, with the configured ports beneath it, and colorized status icons in ascii art, too. Then the same for the clients, highlighting the current entity.
 - [ ] Add this info summary after the welcome banner (twilight sparkle) and the periodic keepalive (derpy)
 - [ ] Add command support in chat, start with `/help` listing the commands, and `/info` showing the aforementioned info summary.
-- [ ] A lot of `/app/crates/…/Cargo.toml: \`edition\` is set on binary/test \`…\` which is deprecated` warnings.
+- [x] A lot of `/app/crates/…/Cargo.toml: \`edition\` is set on binary/test \`…\` which is deprecated` warnings.
+      - no longer reproduces: full `cargo build --workspace --tests` rebuild shows zero such warnings; no `[[bin]]`/`[[test]]` table in any crate sets an explicit `edition` (only package-level, which is correct)
 
 
