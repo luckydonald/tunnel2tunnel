@@ -554,6 +554,7 @@ onMounted(loadOwnEntityIds)
                     v-if="serviceStatusMap.get(port.id)"
                     :live="serviceStatusMap.get(port.id)!.live"
                     :remote-status="serviceStatusMap.get(port.id)!.remote_status"
+                    :connection-count="serviceStatusMap.get(port.id)!.subscribers.length"
                   />
                 </td>
                 <td>
