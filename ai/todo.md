@@ -1,19 +1,30 @@
-- [ ] write a welcome message to the new ssh connection
+- [x] write a welcome message to the new ssh connection
       - something nerdy and MLP:FiM related.
-- [ ] Regularly send a ping-like message
+- [x] Regularly send a ping-like message
       - derpy mail mare themed
-- [ ] Send message to all connected ends if another client/server/port etc.
+- [x] Send message to all connected ends if another client/server/port etc.
       - client/server connects
       - port becomes available/unavailable
 - [ ] have a cheap chat for the same clients:
-      - A message typed into one session will be relayed to all others
-      - Submit on enter
-      - Prefixed with the friendly client/server name + uuid.
-      - Something like `${sender.name} (${sender.uuid}): ${message}`.
-- [ ] Clicking the green `-L <port>:<uuid>:<port>` command brings you to the port section of that server.
-- [ ] Display the reversed access rules in the entities viewer as a secondary table.
-- [ ] The _Access Rules_ table stays empty on initial page load.
+      - [ ] A message typed into one session will be relayed to all others
+      - [ ] Submit on enter
+      - [x] Prefixed with the friendly client/server name + uuid.
+      - [x] Something like `${sender.name} (${sender.uuid}): ${message}`.
+- [x] Clicking the green `-L <port>:<uuid>:<port>` command brings you to the port section of that server.
+      - [ ] For the name etc. fields hidden in the summary, it should expand the summary to show it
+- [x] Display the reversed access rules in the entities viewer as a secondary table.
+      - discontinued
+- [x] The _Access Rules_ table stays empty on initial page load.
 - [x] The `user` column in the admin connection log UI shall show the username attempted in the ssh connection, and make it a link if it is actually resolving to a registered user (instead of only showing the uuid7 of the user and nothing if it doesn't match.
 - [x] Update the ban rules to allow the following two actions: Trap and Ban. Basically Ban means to instantly block the connection, while Trap means our fun Tarpit approach. This way you can basically have a "you're actually even to spammy for our traps" rules or something. Also upgrade the logs to include that decision; there will be a third state, "Admin Ban", which is what happens if an admin clicks the "Ban" button. The admin user shall be stored along with it, or the offending time window rule.
 - [x] Introduce softdelete for time window rules.
-- [ ] In that event log, if the windows do not allow another login (it's wrong) the state shall be "Deter", basically our soft ban. There will also the state "Ban", which means an admin 
+- [x] In that event log, if the windows do not allow another login (it's wrong) the state shall be "Deter", basically our soft ban. There will also the state "Ban", which means an admin 
+- [ ] Fix that it is not possible to create a rule which immediatly traps/bans you after a failed login attempt (including e.g. while you try to enter a password, even though we're passwordless)
+- [ ] The circles about those status indecators are oval shaped (more wide than high)
+- [ ] The badge for server-side ports shall show connected ports (real connections, not the configured ssh ports), like as if the status indicator is a notification counter badge.
+- [ ] We are not really using the "remote" (i.e. t2t side) of the SSH port forward host for anything, really, right? Currently it's hardcoded to be `localhost`? This would then be perfect for defining the service name already. I.e. a lowercase or camel_cased version of the name field.
+- [ ] The "chat" messages, and the derpi keepalive shall have timestamps.
+- [ ] Typing in the "chat" only sends the first letter, and then the rest if you press enter. Also no display of the current input so far.
+- [ ] "Show" (send) the notification toasts in the text channel of the ssh sessions of that user, too.
+
+
