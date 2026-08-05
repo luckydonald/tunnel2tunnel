@@ -1,13 +1,20 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useRouter, useRoute, RouterLink } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { useEntitiesStore } from '@/stores/entities'
 
 const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
+const entities = useEntitiesStore()
+const { unassignedCount } = storeToRefs(entities)
 
 const sidebarOpen = ref(false)
+
+entities.fetchUnassignedCount()
+watch(() => route.fullPath, () => entities.fetchUnassignedCount())
 
 const gitCommitFull = __GIT_COMMIT_FULL__
 const gitCommitShort = gitCommitFull.slice(0, 7)
@@ -48,6 +55,16 @@ async function handleLogout(): Promise<void> {
         <li class="nav-group-label">Entities</li>
         <li><RouterLink to="/servers">Servers</RouterLink></li>
         <li><RouterLink to="/clients">Clients</RouterLink></li>
+        <li>
+          <RouterLink to="/unassigned">
+            Unassigned
+            <span
+              v-if="unassignedCount !== null"
+              class="count-badge"
+              :class="unassignedCount > 0 ? 'count-badge-positive' : 'count-badge-zero'"
+            >{{ unassignedCount }}</span>
+          </RouterLink>
+        </li>
         <li class="nav-group-label">Social</li>
         <li><RouterLink to="/friends">Friends</RouterLink></li>
         <li class="nav-group-label">Account</li>
@@ -125,6 +142,19 @@ async function handleLogout(): Promise<void> {
     }
   }
 }
+
+.count-badge {
+  display: inline-block;
+  margin-left: 0.375rem;
+  padding: 0.05em 0.5em;
+  border-radius: 999px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  vertical-align: middle;
+}
+
+.count-badge-positive { background: rgba(52, 211, 153, .2); color: #6ee7b7; }
+.count-badge-zero { background: rgba(100, 116, 139, .2); color: #64748b; }
 
 .nav-group-label {
   padding: 0.875rem 1rem 0.25rem;

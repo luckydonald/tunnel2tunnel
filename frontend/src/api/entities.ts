@@ -132,7 +132,7 @@ async function apiFetch<T>(url: string, options?: RequestInit): Promise<T> {
 }
 
 export const entitiesApi = {
-  list: (role?: 'server' | 'client') => {
+  list: (role?: 'server' | 'client' | 'unassigned') => {
     const q = role ? `?role=${role}` : ''
     return apiFetch<Entity[]>(`/api/entities${q}`)
   },

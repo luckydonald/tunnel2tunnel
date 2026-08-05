@@ -274,6 +274,7 @@ pub async fn list_entities(
         result.retain(|e| match role {
             "server" => e.is_server,
             "client" => e.is_client,
+            "unassigned" => !e.is_server && !e.is_client,
             _ => true,
         });
     }

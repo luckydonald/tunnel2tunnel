@@ -10,21 +10,22 @@ import { useToast } from '@/composables/useToast'
 const { show: toast } = useToast()
 
 const props = defineProps<{
-  role?: 'server' | 'client'
+  role?: 'server' | 'client' | 'unassigned'
 }>()
 
 const router = useRouter()
 const store = useEntitiesStore()
 
-// Filter chips — pre-set from the route's `role` prop (e.g. /servers, /clients) but still
-// switchable in-page, so /servers isn't a dead end if you want to see everything.
-type RoleFilter = 'all' | 'server' | 'client'
+// Filter chips — pre-set from the route's `role` prop (e.g. /servers, /clients, /unassigned) but
+// still switchable in-page, so /servers isn't a dead end if you want to see everything.
+type RoleFilter = 'all' | 'server' | 'client' | 'unassigned'
 const roleFilter = ref<RoleFilter>(props.role ?? 'all')
 watch(() => props.role, r => { roleFilter.value = r ?? 'all' })
 
 const title = computed(() =>
   roleFilter.value === 'server' ? 'Servers'
   : roleFilter.value === 'client' ? 'Clients'
+  : roleFilter.value === 'unassigned' ? 'Unassigned'
   : 'Entities',
 )
 
@@ -94,6 +95,7 @@ watch(roleFilter, fetchForFilter)
         <button class="filter-btn" :class="{ active: roleFilter === 'all' }" @click="roleFilter = 'all'">All</button>
         <button class="filter-btn" :class="{ active: roleFilter === 'server' }" @click="roleFilter = 'server'">Server</button>
         <button class="filter-btn" :class="{ active: roleFilter === 'client' }" @click="roleFilter = 'client'">Client</button>
+        <button class="filter-btn" :class="{ active: roleFilter === 'unassigned' }" @click="roleFilter = 'unassigned'">Unassigned</button>
       </div>
       <input v-model="search" type="text" class="search-input" placeholder="🔍 search…" />
     </div>

@@ -38,6 +38,13 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true },
   },
   {
+    path: '/unassigned',
+    name: 'unassigned',
+    component: EntitiesPage,
+    props: { role: 'unassigned' },
+    meta: { requiresAuth: true },
+  },
+  {
     path: '/entities',
     name: 'entities',
     component: EntitiesPage,
