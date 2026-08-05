@@ -1835,3 +1835,10 @@ Generally:
 > - [Answer (`3002` chars, `2.93 KB`)](output/agents/056.bqd3deki4/result.md)
 > - [Raw log (`4053` chars, `3.96 KB`)](/tmp/claude-1000/-home-user-git-luckydonald-tunnel2tunnel/025a5e5a-c553-4097-90bd-84e750d82186/tasks/bqd3deki4.output)
 
+- [`/compact` possible prompt](./output/compacted/001.md)
+❯ Conversation compacted <kbd>manual</kbd>:
+> - [Result (`15941` chars, `15.6 KB`)](output/compact/008.b8d65089-1cc7-406f-aa17-4d93574e41cc/result.md)
+
+❯ Conversation compacted <kbd>manual</kbd>:
+> - [Result (`24091` chars, `23.6 KB`)](output/compact/009.b8d65089-1cc7-406f-aa17-4d93574e41cc/result.md)
+
