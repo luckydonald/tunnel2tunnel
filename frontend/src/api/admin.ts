@@ -154,6 +154,7 @@ export const adminApi = {
       Array<{
         id: string
         entity_id: string
+        entity_name: string | null
         algorithm: string
         fingerprint: string
         name: string | null
@@ -172,8 +173,14 @@ export const adminApi = {
       Array<{
         id: string
         owner_entity_id: string
+        owner_entity_name: string | null
         subject_type: string
+        subject_entity_id: string | null
+        subject_entity_name: string | null
+        subject_user_id: string | null
         hostname: string | null
+        port_config_id: string | null
+        port_config_name: string | null
       }>
     >('/api/me/access-rules'),
 

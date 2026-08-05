@@ -6,6 +6,7 @@ import { adminApi } from '@/api/admin'
 interface KeyRow {
   id: string
   entity_id: string
+  entity_name: string | null
   algorithm: string
   fingerprint: string
   name: string | null
@@ -78,6 +79,7 @@ async function handlePurge(): Promise<void> {
           <thead>
             <tr>
               <th class="th-check"></th>
+              <th>Entity</th>
               <th>Algorithm</th>
               <th>Fingerprint</th>
               <th>Name</th>
@@ -87,8 +89,13 @@ async function handlePurge(): Promise<void> {
           <tbody>
             <tr v-for="k in keys" :key="k.id" :class="{ 'row-selected': k.selected }">
               <td><input type="checkbox" v-model="k.selected" /></td>
-              <td><code>{{ k.algorithm }}</code></td>
-              <td><code class="fp">{{ k.fingerprint }}</code></td>
+              <td>
+                <RouterLink :to="{ name: 'entity-detail', params: { id: k.entity_id } }">
+                  {{ k.entity_name ?? k.entity_id.slice(0, 13) + '…' }}
+                </RouterLink>
+              </td>
+              <td><code class="algo">{{ k.algorithm }}</code></td>
+              <td><code class="fp" :title="k.fingerprint">{{ k.fingerprint }}</code></td>
               <td>{{ k.name ?? '—' }}</td>
               <td class="td-sec">{{ k.comment ?? '—' }}</td>
             </tr>
@@ -147,8 +154,13 @@ async function handlePurge(): Promise<void> {
   }
   td { padding: 0.5rem 0.75rem; border-bottom: 1px solid #1e2235; color: #e2e8f0; }
   code { background: #0f1117; padding: 0.1em 0.35em; border-radius: 3px; }
-  .fp { font-size: 0.75rem; word-break: break-all; }
+  .algo { font-size: 0.75rem; }
+  .fp {
+    display: inline-block; max-width: 220px; font-size: 0.75rem;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom;
+  }
   .row-selected td { background: rgba(239,68,68,.05); }
+  a { color: #7dd3fc; text-decoration: none; &:hover { text-decoration: underline; } }
 }
 
 .td-sec { color: #64748b; }

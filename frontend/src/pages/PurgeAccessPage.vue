@@ -8,8 +8,14 @@ import type { AccessRule } from '@/api/friends'
 interface RuleRow {
   id: string
   owner_entity_id: string
+  owner_entity_name: string | null
   subject_type: AccessRule['subject_type']
+  subject_entity_id: string | null
+  subject_entity_name: string | null
+  subject_user_id: string | null
   hostname: string | null
+  port_config_id: string | null
+  port_config_name: string | null
   selected: boolean
 }
 
@@ -79,16 +85,29 @@ async function handlePurge(): Promise<void> {
             <tr>
               <th class="th-check"></th>
               <th>Owner entity</th>
-              <th>Subject type</th>
-              <th>Hostname alias</th>
+              <th>Subject</th>
+              <th>Scope</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="r in rules" :key="r.id" :class="{ 'row-selected': r.selected }">
               <td><input type="checkbox" v-model="r.selected" /></td>
-              <td><code class="uuid">{{ r.owner_entity_id }}</code></td>
-              <td>{{ subjectTypeLabel[r.subject_type] }}</td>
-              <td>{{ r.hostname ?? '—' }}</td>
+              <td>
+                <RouterLink :to="{ name: 'entity-detail', params: { id: r.owner_entity_id } }">
+                  {{ r.owner_entity_name ?? r.owner_entity_id.slice(0, 13) + '…' }}
+                </RouterLink>
+              </td>
+              <td>
+                {{ subjectTypeLabel[r.subject_type] }}
+                <RouterLink
+                  v-if="r.subject_entity_id"
+                  :to="{ name: 'entity-detail', params: { id: r.subject_entity_id } }"
+                  class="subject-detail"
+                >{{ r.subject_entity_name ?? r.subject_entity_id.slice(0, 13) + '…' }}</RouterLink>
+                <code v-else-if="r.subject_user_id" class="subject-detail uuid">{{ r.subject_user_id.slice(0, 13) }}…</code>
+                <span v-if="r.hostname" class="hostname-hint">as “{{ r.hostname }}”</span>
+              </td>
+              <td>{{ r.port_config_id ? `Port: ${r.port_config_name ?? r.port_config_id.slice(0, 8) + '…'}` : 'Whole entity' }}</td>
             </tr>
           </tbody>
         </table>
@@ -142,7 +161,11 @@ async function handlePurge(): Promise<void> {
   code { background: #0f1117; padding: 0.1em 0.35em; border-radius: 3px; font-size: 0.875em; }
   .uuid { font-size: 0.75rem; word-break: break-all; }
   .row-selected td { background: rgba(239,68,68,.05); }
+  a { color: #7dd3fc; text-decoration: none; &:hover { text-decoration: underline; } }
 }
+
+.subject-detail { margin-left: 0.375rem; font-size: 0.8125rem; }
+.hostname-hint { margin-left: 0.375rem; font-size: 0.75rem; color: #64748b; }
 
 .action-bar { margin-top: 1rem; }
 

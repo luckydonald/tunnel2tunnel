@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use tunnel2tunnel_core::{
     auth::verify_password,
-    models::{entity_access::EntityAccess, ssh_key::SshKey},
+    models::{entity::Entity, entity_access::EntityAccess, port_config::PortConfig, ssh_key::SshKey},
 };
 
 use crate::{error::WebError, extractors::AuthUser, AppState};
@@ -45,6 +45,7 @@ pub async fn change_password(
 pub struct KeySummary {
     pub id: Uuid,
     pub entity_id: Uuid,
+    pub entity_name: Option<String>,
     pub algorithm: String,
     pub fingerprint: String,
     pub name: Option<String>,
@@ -58,9 +59,15 @@ pub async fn list_my_keys(
     let keys = SshKey::list_for_user(&state.db, user.id)
         .await
         .map_err(WebError::Core)?;
+    let entities = Entity::list_for_user(&state.db, user.id)
+        .await
+        .map_err(WebError::Core)?;
+    let entity_names: std::collections::HashMap<Uuid, Option<String>> =
+        entities.into_iter().map(|e| (e.id, e.name)).collect();
     Ok(Json(
         keys.into_iter()
             .map(|k| KeySummary {
+                entity_name: entity_names.get(&k.entity_id).cloned().flatten(),
                 id: k.id,
                 entity_id: k.entity_id,
                 algorithm: k.algorithm,
@@ -109,10 +116,14 @@ pub async fn purge_keys(
 pub struct AccessSummary {
     pub id: Uuid,
     pub owner_entity_id: Uuid,
+    pub owner_entity_name: Option<String>,
     pub subject_type: String,
     pub subject_entity_id: Option<Uuid>,
+    pub subject_entity_name: Option<String>,
     pub subject_user_id: Option<Uuid>,
     pub hostname: Option<String>,
+    pub port_config_id: Option<Uuid>,
+    pub port_config_name: Option<String>,
 }
 
 pub async fn list_my_access(
@@ -122,16 +133,59 @@ pub async fn list_my_access(
     let rules = EntityAccess::list_for_user(&state.db, user.id)
         .await
         .map_err(WebError::Core)?;
+
+    let owned_entities = Entity::list_for_user(&state.db, user.id)
+        .await
+        .map_err(WebError::Core)?;
+    let owner_names: std::collections::HashMap<Uuid, Option<String>> =
+        owned_entities.into_iter().map(|e| (e.id, e.name)).collect();
+
+    // `subject_entity_id` can point at a friend's entity (not in `owned_entities`) —
+    // resolved one at a time since there's no batch-by-ids lookup and rule counts
+    // on this admin-facing page are small.
+    let mut subject_entity_names: std::collections::HashMap<Uuid, Option<String>> =
+        std::collections::HashMap::new();
+    let mut port_names: std::collections::HashMap<Uuid, Option<String>> =
+        std::collections::HashMap::new();
+    for r in &rules {
+        if let Some(sid) = r.subject_entity_id {
+            if !subject_entity_names.contains_key(&sid) {
+                let name = Entity::find_by_id_only(&state.db, sid)
+                    .await
+                    .map_err(WebError::Core)?
+                    .and_then(|e| e.name);
+                subject_entity_names.insert(sid, name);
+            }
+        }
+        if let Some(pid) = r.port_config_id {
+            if !port_names.contains_key(&pid) {
+                let name = PortConfig::find_by_id(&state.db, pid)
+                    .await
+                    .map_err(WebError::Core)?
+                    .map(|p| p.name);
+                port_names.insert(pid, name);
+            }
+        }
+    }
+
     Ok(Json(
         rules
             .into_iter()
             .map(|r| AccessSummary {
+                owner_entity_name: owner_names.get(&r.owner_entity_id).cloned().flatten(),
+                subject_entity_name: r
+                    .subject_entity_id
+                    .and_then(|sid| subject_entity_names.get(&sid).cloned().flatten()),
+                port_config_name: r
+                    .port_config_id
+                    .and_then(|pid| port_names.get(&pid).cloned().flatten()),
                 id: r.id,
                 owner_entity_id: r.owner_entity_id,
                 subject_type: r.subject_type,
                 subject_entity_id: r.subject_entity_id,
                 subject_user_id: r.subject_user_id,
                 hostname: r.hostname,
+                port_config_id: r.port_config_id,
             })
             .collect(),
     ))

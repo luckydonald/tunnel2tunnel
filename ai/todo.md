@@ -44,7 +44,8 @@
 - [x] For the **Entities** routes, add a **Unassigned** one after **Servers** and **Clients** in the routing, as well as for the filters. The Unassigned menu shall have a counter badge, green if positive, gray if 0.
 - [x] There is no edit for **Entities** (Name, description; see creation).
 - [x] There is no edit for **SSH Keys** of an entity (see creation).
-- [ ] The **Settings** > **Purge SSH Keys** should also list the entity it's used on, which shall be a link displaying that's entity's name. Put an css `…` overflow on the fingerprint, with the fingerprint also being duplicated in the `title=""` for readability. Smaller font for the _Algoritm_ column's `<code>`.
-- [ ] The **Settings** > **Purge Access Rules** is not very helpful, to figure out which access role that even is. Better columns? Links? Name instead of id? Idk. Make it easy to understand. The _hostname alias_ is not helping, that's for sure.
+- [x] The **Settings** > **Purge SSH Keys** should also list the entity it's used on, which shall be a link displaying that's entity's name. Put an css `…` overflow on the fingerprint, with the fingerprint also being duplicated in the `title=""` for readability. Smaller font for the _Algoritm_ column's `<code>`.
+- [x] The **Settings** > **Purge Access Rules** is not very helpful, to figure out which access role that even is. Better columns? Links? Name instead of id? Idk. Make it easy to understand. The _hostname alias_ is not helping, that's for sure.
+      - reworked into Owner entity (link) / Subject (type + resolved entity link or shortened user id, hostname alias folded in as a small inline hint) / Scope ("Whole entity" or "Port: {name}") — backend's `AccessSummary`/`KeySummary` now resolve entity/port names server-side (one-off `find_by_id_only`/`find_by_id` lookups per unique id, acceptable on this small admin-facing page) instead of the frontend showing raw UUIDs.
 
 
