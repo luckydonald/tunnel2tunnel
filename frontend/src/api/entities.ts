@@ -86,6 +86,11 @@ export interface AddKeyParams {
   valid_until?: string | null
 }
 
+export interface UpdateKeyParams {
+  name?: string | null
+  comment?: string | null
+}
+
 export interface CreatePortParams {
   enabled?: boolean
   local_port: number
@@ -158,6 +163,12 @@ export const entitiesApi = {
   addKey: (entityId: string, params: AddKeyParams) =>
     apiFetch<SshKey>(`/api/entities/${entityId}/keys`, {
       method: 'POST',
+      body: JSON.stringify(params),
+    }),
+
+  updateKey: (entityId: string, keyId: string, params: UpdateKeyParams) =>
+    apiFetch<SshKey>(`/api/entities/${entityId}/keys/${keyId}`, {
+      method: 'PUT',
       body: JSON.stringify(params),
     }),
 

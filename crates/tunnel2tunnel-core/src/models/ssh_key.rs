@@ -88,6 +88,27 @@ impl SshKey {
         .map_err(CoreError::Sqlx)
     }
 
+    pub async fn update(
+        pool: &PgPool,
+        id: Uuid,
+        entity_id: Uuid,
+        name: Option<&str>,
+        comment: Option<&str>,
+    ) -> Result<Option<Self>, CoreError> {
+        sqlx::query_as::<_, SshKey>(
+            "UPDATE ssh_keys SET name = $3, comment = $4 \
+             WHERE id = $1 AND entity_id = $2 AND deleted_at IS NULL \
+             RETURNING *",
+        )
+        .bind(id)
+        .bind(entity_id)
+        .bind(name)
+        .bind(comment)
+        .fetch_optional(pool)
+        .await
+        .map_err(CoreError::Sqlx)
+    }
+
     pub async fn soft_delete(pool: &PgPool, id: Uuid, entity_id: Uuid) -> Result<bool, CoreError> {
         let r = sqlx::query(
             "UPDATE ssh_keys SET deleted_at = NOW() \

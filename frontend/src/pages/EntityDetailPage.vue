@@ -188,6 +188,17 @@ async function handleAddKey(): Promise<void> {
   }
 }
 
+async function handleUpdateKey(keyId: string, params: { name: string | null; comment: string | null }): Promise<void> {
+  if (!entity.value) return
+  try {
+    const updated = await entitiesApi.updateKey(entityId, keyId, params)
+    const idx = entity.value.ssh_keys.findIndex(k => k.id === keyId)
+    if (idx >= 0) entity.value.ssh_keys[idx] = updated
+  } catch (e) {
+    toast(e instanceof Error ? e.message : 'Failed to update key')
+  }
+}
+
 async function handleDeleteKey(keyId: string): Promise<void> {
   if (!confirm('Delete this key?')) return
   try {
@@ -454,6 +465,40 @@ async function loadConnLogs(): Promise<void> {
   }
 }
 
+// Edit entity (name/description)
+const showEditEntity = ref(false)
+const editName = ref('')
+const editDescription = ref('')
+const editingEntity = ref(false)
+const editEntityError = ref<string | null>(null)
+
+function openEditEntity(): void {
+  if (!entity.value) return
+  editName.value = entity.value.name ?? ''
+  editDescription.value = entity.value.description ?? ''
+  editEntityError.value = null
+  showEditEntity.value = true
+}
+
+async function handleUpdateEntity(): Promise<void> {
+  if (!entity.value) return
+  editingEntity.value = true
+  editEntityError.value = null
+  try {
+    const updated = await entitiesApi.update(entityId, {
+      name: editName.value || null,
+      description: editDescription.value || null,
+    })
+    entity.value.name = updated.name
+    entity.value.description = updated.description
+    showEditEntity.value = false
+  } catch (e) {
+    editEntityError.value = e instanceof Error ? e.message : 'Failed to update entity'
+  } finally {
+    editingEntity.value = false
+  }
+}
+
 async function handleDeleteEntity(): Promise<void> {
   if (!confirm('Delete this entity? All SSH keys and services will also be removed.')) return
   try {
@@ -518,10 +563,35 @@ onMounted(loadOwnEntityIds)
           <p v-if="entity.description" class="subtitle">{{ entity.description }}</p>
         </div>
         <div class="header-actions">
+          <button class="btn-secondary" @click="openEditEntity">Edit</button>
           <button class="btn-kbd" title="Copy all known state about this entity as JSON" @click="handleCopyDebugData">
             Copy debug data
           </button>
           <button class="btn-del" @click="handleDeleteEntity">Delete entity</button>
+        </div>
+      </div>
+
+      <!-- Edit entity modal -->
+      <div v-if="showEditEntity" class="modal-overlay" @click.self="showEditEntity = false">
+        <div class="modal">
+          <h2>Edit entity</h2>
+          <form @submit.prevent="handleUpdateEntity">
+            <div class="field">
+              <label>Name <span class="optional">(optional)</span></label>
+              <input v-model="editName" type="text" placeholder="My entity" />
+            </div>
+            <div class="field">
+              <label>Description <span class="optional">(optional)</span></label>
+              <input v-model="editDescription" type="text" />
+            </div>
+            <p v-if="editEntityError" class="error-msg">{{ editEntityError }}</p>
+            <div class="modal-actions">
+              <button type="button" class="btn-secondary" @click="showEditEntity = false">Cancel</button>
+              <button type="submit" class="btn-primary" :disabled="editingEntity">
+                {{ editingEntity ? 'Saving…' : 'Save' }}
+              </button>
+            </div>
+          </form>
         </div>
       </div>
 
@@ -740,8 +810,18 @@ onMounted(loadOwnEntityIds)
             <tr v-for="key in entity.ssh_keys" :key="key.id">
               <td><code>{{ key.algorithm }}</code></td>
               <td><code class="fp">{{ key.fingerprint }}</code></td>
-              <td>{{ key.name ?? '—' }}</td>
-              <td class="td-desc">{{ key.comment ?? '—' }}</td>
+              <td>
+                <input
+                  type="text" class="port-name" :value="key.name ?? ''" placeholder="—"
+                  @blur="handleUpdateKey(key.id, { name: ($event.target as HTMLInputElement).value || null, comment: key.comment })"
+                />
+              </td>
+              <td>
+                <input
+                  type="text" class="port-name" :value="key.comment ?? ''" placeholder="—"
+                  @blur="handleUpdateKey(key.id, { name: key.name, comment: ($event.target as HTMLInputElement).value || null })"
+                />
+              </td>
               <td><button class="btn-del-sm" @click="handleDeleteKey(key.id)">×</button></td>
             </tr>
           </tbody>
@@ -1115,4 +1195,31 @@ onMounted(loadOwnEntityIds)
 .section-note { font-size: 0.8125rem; color: #64748b; margin: -0.5rem 0 0.75rem; }
 
 .entity-link { color: #818cf8; text-decoration: none; &:hover { text-decoration: underline; } }
+
+.modal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.6);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 100;
+}
+
+.modal {
+  background: #1a1d27; border: 1px solid #2d3248; border-radius: 8px;
+  padding: 2rem; width: 100%; max-width: 440px;
+  h2 { margin: 0 0 1.5rem; font-size: 1.125rem; }
+}
+
+.field {
+  margin-bottom: 1rem;
+  label { display: block; margin-bottom: .375rem; font-size: .875rem; color: #94a3b8; }
+  .optional { color: #64748b; }
+  input {
+    width: 100%; padding: .5rem .75rem; background: #0f1117;
+    border: 1px solid #2d3248; border-radius: 4px; color: #e2e8f0;
+    font-size: .9375rem; box-sizing: border-box;
+    &:focus { outline: none; border-color: #4f6ef7; }
+  }
+}
+
+.modal-actions { display: flex; gap: .75rem; justify-content: flex-end; margin-top: 1.5rem; }
 </style>

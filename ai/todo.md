@@ -42,8 +42,8 @@
       - already correct: `ServiceConnector.vue`'s subscription row fills with the boolean `live` (this viewer's own bridge, 2-state) and rings with `remote_status` (the owner's real 4-state, per the backend doc comment in `live_connections.rs`) — the inverse pairing of the server's own **My services** row (4-state self fill, 2-state subscriber-count ring). No code change needed, just verified.
 - [x] On the admin's **Live Connections** page/table, remove the _Role_ column, and just add that into the _Entity_ col, after the name. The _Account_ column can be hidden if we filter for one exact account. _Since_ is not working (always _waiting…_), remove it. The port shall be linking to `http://localhost:{port}`, maybe that's helpful.
 - [x] For the **Entities** routes, add a **Unassigned** one after **Servers** and **Clients** in the routing, as well as for the filters. The Unassigned menu shall have a counter badge, green if positive, gray if 0.
-- [ ] There is no edit for **Entities** (Name, description; see creation).
-- [ ] There is no edit for **SSH Keys** of an entity (see creation).
+- [x] There is no edit for **Entities** (Name, description; see creation).
+- [x] There is no edit for **SSH Keys** of an entity (see creation).
 - [ ] The **Settings** > **Purge SSH Keys** should also list the entity it's used on, which shall be a link displaying that's entity's name. Put an css `…` overflow on the fingerprint, with the fingerprint also being duplicated in the `title=""` for readability. Smaller font for the _Algoritm_ column's `<code>`.
 - [ ] The **Settings** > **Purge Access Rules** is not very helpful, to figure out which access role that even is. Better columns? Links? Name instead of id? Idk. Make it easy to understand. The _hostname alias_ is not helping, that's for sure.
 

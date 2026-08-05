@@ -375,6 +375,25 @@ pub async fn add_key(
     Ok((StatusCode::CREATED, Json(SshKeyResponse::from(key))))
 }
 
+#[derive(Deserialize)]
+pub struct UpdateKeyBody {
+    pub name: Option<String>,
+    pub comment: Option<String>,
+}
+
+pub async fn update_key(
+    AuthUser(user): AuthUser,
+    State(state): State<AppState>,
+    Path((entity_id, key_id)): Path<(Uuid, Uuid)>,
+    Json(b): Json<UpdateKeyBody>,
+) -> Result<Json<SshKeyResponse>, WebError> {
+    require_owner(&state.db, entity_id, user.id).await?;
+    let key = SshKey::update(&state.db, key_id, entity_id, b.name.as_deref(), b.comment.as_deref())
+        .await?
+        .ok_or(WebError::NotFound)?;
+    Ok(Json(SshKeyResponse::from(key)))
+}
+
 pub async fn delete_key(
     AuthUser(user): AuthUser,
     State(state): State<AppState>,

@@ -97,7 +97,7 @@ pub async fn start(
         )
         .route(
             "/api/entities/{entity_id}/keys/{key_id}",
-            delete(routes::entities::delete_key),
+            put(routes::entities::update_key).delete(routes::entities::delete_key),
         )
         // ports
         .route(
