@@ -26,5 +26,11 @@
 - [x] The "chat" messages, and the derpi keepalive shall have timestamps.
 - [x] Typing in the "chat" only sends the first letter, and then the rest if you press enter. Also no display of the current input so far.
 - [x] "Show" (send) the notification toasts in the text channel of the ssh sessions of that user, too.
+- [ ] <kbd>Ctrl</kbd>+<kbd>C</kbd> aka. `^C` in the "chat" shall gracefully disconnect the session.
+- [ ] As of commit `37abb2a`: Fix the status dots now never filling the inner part for their own status, and somehow being the same for both sender and client. Again, inside = self, ring = other. Currently it seems to only use the ring? I mean it makes sense for blue, in a way, I guess, where both sides can say "ports connected, no data flowing". (even then the inside should also be the same blue then). But for orange ring, "remote is connected, but does not forward that port" I would not expect both sides to be gray dot and orange circle. One of them should be inverted, with the dot orange and the circle gray? Green dot + green circle seems to work properly though.
+- [ ] Add a function generating a periodic info summary for the client to send via ssh text channel. It shall list user's servers, in a tree-like structure, with the configured ports beneath it, and colorized status icons in ascii art, too. Then the same for the clients, highlighting the current entity.
+- [ ] Add this info summary after the welcome banner (twilight sparkle) and the periodic keepalive (derpy)
+- [ ] Add command support in chat, start with `/help` listing the commands, and `/info` showing the aforementioned info summary.
+- [ ] A lot of `/app/crates/…/Cargo.toml: \`edition\` is set on binary/test \`…\` which is deprecated` warnings.
 
 
