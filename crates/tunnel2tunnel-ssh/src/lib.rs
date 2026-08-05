@@ -379,6 +379,7 @@ impl Server for T2tServer {
             connection_log_ids: Vec::new(),
             tarpit_outcome: None,
             fake_shell: false,
+            chat_input: Vec::new(),
         }
     }
 }
@@ -425,6 +426,14 @@ struct T2tHandler {
     /// Set when this connection was waved through `Auth::Accept` as a
     /// fake-shell trap rather than a real login — `entity` stays `None`.
     fake_shell: bool,
+    /// Line-in-progress for the chat text channel. No real pty is allocated
+    /// (see `pty_request`'s doc comment), so the client's terminal sends raw,
+    /// unbuffered bytes rather than one full line per `data()` call — this
+    /// buffer accumulates keystrokes until Enter, and every byte is echoed
+    /// back to the sender so they can see what they've typed so far. Kept as
+    /// raw bytes (not `String`) since a multi-byte UTF-8 character can arrive
+    /// split across separate `data()` calls.
+    chat_input: Vec<u8>,
 }
 
 impl T2tHandler {
@@ -1017,8 +1026,11 @@ impl Handler for T2tHandler {
                         }
                     }
                     _ = interval.tick() => {
-                        let ping = "\r\n\x1b[33m✉ Derpy Hooves stopped by to make sure your tunnel is still up! 🧁\x1b[0m\r\n\r\n";
-                        if ping_handle.data(ch_id, ping.as_bytes().to_vec()).await.is_err() {
+                        let ping = format!(
+                            "\r\n\x1b[33m[{}] ✉ Derpy Hooves stopped by to make sure your tunnel is still up! 🧁\x1b[0m\r\n\r\n",
+                            hms_timestamp(),
+                        );
+                        if ping_handle.data(ch_id, ping.into_bytes()).await.is_err() {
                             break;
                         }
                     }
@@ -1427,6 +1439,14 @@ impl Handler for T2tHandler {
                 target_entity_id,
                 proxy_port: port_to_connect,
             });
+            let chat_msg = format!(
+                "\r\n\x1b[32m[{}] 🔗 {} connected to {} on {}.\x1b[0m\r\n\r\n",
+                hms_timestamp(),
+                client_entity.name.as_deref().unwrap_or("(unnamed)"),
+                port_config.name,
+                target_entity.name.as_deref().unwrap_or("(unnamed)"),
+            );
+            broadcast(&self.session_registry, &chat_msg, Some(self.conn_id)).await;
 
             let client_handle = session.handle();
             tokio::spawn(forward_channel(server_ch, client_handle, client_ch_id));
@@ -1469,6 +1489,8 @@ impl Handler for T2tHandler {
         let active_tunnels = self.active_tunnels.clone();
         let live_update_tx = self.live_update_tx.clone();
         let live_event_tx = self.live_event_tx.clone();
+        let session_registry = self.session_registry.clone();
+        let conn_id = self.conn_id;
         let peer_ip = self.peer_ip.clone();
         let host_to_connect = host_to_connect.to_string();
 
@@ -1556,6 +1578,14 @@ impl Handler for T2tHandler {
                 target_entity_id,
                 proxy_port: port_to_connect,
             });
+            let chat_msg = format!(
+                "\r\n\x1b[32m[{}] 🔗 {} connected to {} on {}.\x1b[0m\r\n\r\n",
+                hms_timestamp(),
+                client_entity.name.as_deref().unwrap_or("(unnamed)"),
+                port_config.name,
+                target_entity.name.as_deref().unwrap_or("(unnamed)"),
+            );
+            broadcast(&session_registry, &chat_msg, Some(conn_id)).await;
 
             // Spawn task: copy server channel → client session
             tokio::spawn(forward_channel(server_ch, handle.clone(), client_ch_id));
@@ -1579,7 +1609,7 @@ impl Handler for T2tHandler {
         &mut self,
         channel: ChannelId,
         data: &[u8],
-        _session: &mut Session,
+        session: &mut Session,
     ) -> Result<(), Self::Error> {
         // Bridge: forward data to the paired channel
         let state = self.bridges.lock().await.get(&channel).cloned();
@@ -1588,25 +1618,54 @@ impl Handler for T2tHandler {
             return Ok(());
         }
 
-        // Session channel: relay as chat to all other connected entities
+        // Session channel: buffer raw keystrokes until Enter, echoing each
+        // byte straight back so the sender sees what they've typed — no real
+        // pty is allocated (see `pty_request`'s doc comment), so nothing
+        // echoes locally on its own.
         let session_channel = self
             .session_registry
             .lock()
             .await
             .get(&self.conn_id)
             .and_then(|e| e.session_channel_id);
-        if session_channel == Some(channel) {
-            if let Some(ref authed) = self.entity {
-                let text = String::from_utf8_lossy(data);
-                let text = text.trim_end_matches(['\r', '\n']);
-                if !text.is_empty() {
+        if session_channel != Some(channel) || self.entity.is_none() {
+            return Ok(());
+        }
+
+        for &byte in data {
+            match byte {
+                b'\r' | b'\n' => {
+                    let _ = session.data(channel, b"\r\n".to_vec());
+                    if self.chat_input.is_empty() {
+                        continue;
+                    }
+                    let text = String::from_utf8_lossy(&self.chat_input).into_owned();
+                    self.chat_input.clear();
+                    let Some(ref authed) = self.entity else {
+                        continue;
+                    };
                     let entity_name = authed.entity.name.as_deref().unwrap_or("(unnamed)");
                     let short_id = &authed.entity.id.to_string()[..8];
                     let msg = format!(
-                        "\r\n\x1b[36m{} ({}): {}\x1b[0m\r\n\r\n",
-                        entity_name, short_id, text
+                        "\r\n\x1b[36m[{}] {} ({}): {}\x1b[0m\r\n\r\n",
+                        hms_timestamp(),
+                        entity_name,
+                        short_id,
+                        text
                     );
                     broadcast(&self.session_registry, &msg, Some(self.conn_id)).await;
+                }
+                0x7f | 0x08 => {
+                    if self.chat_input.pop().is_some() {
+                        let _ = session.data(channel, b"\x08 \x08".to_vec());
+                    }
+                }
+                0x00..=0x1f => {
+                    // Ignore other control bytes (Ctrl-C, escape sequences, ...).
+                }
+                _ => {
+                    self.chat_input.push(byte);
+                    let _ = session.data(channel, vec![byte]);
                 }
             }
         }
@@ -1642,6 +1701,14 @@ impl Handler for T2tHandler {
                     target_entity_id: info.target_entity_id,
                     proxy_port: info.proxy_port,
                 });
+                let chat_msg = format!(
+                    "\r\n\x1b[31m[{}] 🔌 {} disconnected from {} on {}.\x1b[0m\r\n\r\n",
+                    hms_timestamp(),
+                    entity_display_name(&self.pool, info.client_entity_id).await,
+                    port_config_display_name(&self.pool, info.port_config_id).await,
+                    entity_display_name(&self.pool, info.target_entity_id).await,
+                );
+                broadcast(&self.session_registry, &chat_msg, None).await;
             }
         }
         Ok(())
@@ -1720,6 +1787,8 @@ impl Drop for T2tHandler {
             let bridge_ids = self.bridge_ids.clone();
             let live_update_tx = self.live_update_tx.clone();
             let live_event_tx = self.live_event_tx.clone();
+            let session_registry = self.session_registry.clone();
+            let pool = self.pool.clone();
             tokio::spawn(async move {
                 let ids: Vec<Uuid> = bridge_ids.lock().await.values().copied().collect();
                 if !ids.is_empty() {
@@ -1734,6 +1803,14 @@ impl Drop for T2tHandler {
                             target_entity_id: info.target_entity_id,
                             proxy_port: info.proxy_port,
                         });
+                        let chat_msg = format!(
+                            "\r\n\x1b[31m[{}] 🔌 {} disconnected from {} on {}.\x1b[0m\r\n\r\n",
+                            hms_timestamp(),
+                            entity_display_name(&pool, info.client_entity_id).await,
+                            port_config_display_name(&pool, info.port_config_id).await,
+                            entity_display_name(&pool, info.target_entity_id).await,
+                        );
+                        broadcast(&session_registry, &chat_msg, None).await;
                     }
                 }
             });
@@ -1759,6 +1836,28 @@ impl Drop for T2tHandler {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+/// Best-effort entity display name for a chat/toast message — falls back to
+/// a shortened id if the entity is unnamed or the lookup fails.
+async fn entity_display_name(pool: &PgPool, entity_id: Uuid) -> String {
+    Entity::find_by_id_only(pool, entity_id)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|e| e.name)
+        .unwrap_or_else(|| entity_id.to_string()[..8].to_string())
+}
+
+/// Best-effort service name for a chat/toast message — falls back to a
+/// shortened id if the port_config was deleted or the lookup fails.
+async fn port_config_display_name(pool: &PgPool, port_config_id: Uuid) -> String {
+    PortConfig::find_by_id(pool, port_config_id)
+        .await
+        .ok()
+        .flatten()
+        .map(|pc| pc.name)
+        .unwrap_or_else(|| port_config_id.to_string()[..8].to_string())
+}
 
 async fn resolve_target_entity(pool: &PgPool, hostname: &str) -> Option<Uuid> {
     // Try UUID first
@@ -1854,6 +1953,14 @@ fn load_or_generate_host_key(path: &str, password: Option<&str>) -> Result<Priva
 
 fn publickey_only() -> MethodSet {
     MethodSet::from(&[MethodKind::PublicKey][..])
+}
+
+/// Short `HH:MM:SS` (UTC) timestamp for chat/keepalive messages shown in the
+/// SSH text channel — distinct from `chrono_like_timestamp`'s fail2ban-log
+/// format.
+fn hms_timestamp() -> String {
+    let now = time::OffsetDateTime::now_utc();
+    format!("{:02}:{:02}:{:02}", now.hour(), now.minute(), now.second())
 }
 
 fn chrono_like_timestamp() -> String {
