@@ -22,7 +22,9 @@ use tunnel2tunnel_core::{
     ip_whitelist,
     models::{
         connection_log::ConnectionLog, entity::Entity, entity_access::EntityAccess,
-        port_config::PortConfig, port_subscription::PortSubscription, ssh_key::SshKey,
+        port_config::PortConfig,
+        port_subscription::{PortSubscription, PortSubscriptionWithContext},
+        ssh_key::SshKey,
     },
     port_names::{guess_service_name, slugify_host},
 };
@@ -582,6 +584,36 @@ impl T2tHandler {
             }
         }
     }
+
+    /// Handles a `/`-prefixed chat command (the leading `/` already
+    /// stripped), returning the private reply text to echo back to the
+    /// sender only — never broadcast to other sessions.
+    async fn handle_chat_command(&self, cmd: &str) -> String {
+        let name = cmd.split_whitespace().next().unwrap_or("");
+        match name {
+            "help" => "\r\n\x1b[36mAvailable commands:\r\n\
+                       \x20 /help - show this list\r\n\
+                       \x20 /info - show a summary of your servers and clients\x1b[0m\r\n\r\n"
+                .to_string(),
+            "info" => {
+                let Some(ref authed) = self.entity else {
+                    return "\r\n\x1b[31mNo entity context.\x1b[0m\r\n\r\n".to_string();
+                };
+                build_info_summary(
+                    &self.pool,
+                    &self.server_slots,
+                    &self.active_tunnels,
+                    authed.user_id,
+                    authed.entity.id,
+                )
+                .await
+            }
+            "" => "\r\n\x1b[31mEmpty command. Try /help.\x1b[0m\r\n\r\n".to_string(),
+            other => format!(
+                "\r\n\x1b[31mUnknown command: /{other}. Try /help.\x1b[0m\r\n\r\n"
+            ),
+        }
+    }
 }
 
 impl Handler for T2tHandler {
@@ -1011,8 +1043,17 @@ impl Handler for T2tHandler {
         );
         let _ = handle.data(ch_id, welcome.into_bytes()).await;
 
-        // Keep the channel alive and send periodic Derpy pings
+        let user_id = authed.user_id;
+        let entity_id = authed.entity.id;
+        let summary = build_info_summary(&self.pool, &self.server_slots, &self.active_tunnels, user_id, entity_id).await;
+        let _ = handle.data(ch_id, summary.into_bytes()).await;
+
+        // Keep the channel alive and send periodic Derpy pings, each
+        // followed by a refreshed info summary (see `build_info_summary`).
         let ping_handle = handle.clone();
+        let pool = self.pool.clone();
+        let server_slots = self.server_slots.clone();
+        let active_tunnels = self.active_tunnels.clone();
         tokio::spawn(async move {
             let mut ch = channel;
             let mut interval = tokio::time::interval(Duration::from_secs(5 * 60));
@@ -1031,6 +1072,10 @@ impl Handler for T2tHandler {
                             hms_timestamp(),
                         );
                         if ping_handle.data(ch_id, ping.into_bytes()).await.is_err() {
+                            break;
+                        }
+                        let summary = build_info_summary(&pool, &server_slots, &active_tunnels, user_id, entity_id).await;
+                        if ping_handle.data(ch_id, summary.into_bytes()).await.is_err() {
                             break;
                         }
                     }
@@ -1641,6 +1686,11 @@ impl Handler for T2tHandler {
                     }
                     let text = String::from_utf8_lossy(&self.chat_input).into_owned();
                     self.chat_input.clear();
+                    if let Some(cmd) = text.strip_prefix('/') {
+                        let reply = self.handle_chat_command(cmd).await;
+                        let _ = session.data(channel, reply.into_bytes());
+                        continue;
+                    }
                     let Some(ref authed) = self.entity else {
                         continue;
                     };
@@ -1862,6 +1912,144 @@ async fn port_config_display_name(pool: &PgPool, port_config_id: Uuid) -> String
         .flatten()
         .map(|pc| pc.name)
         .unwrap_or_else(|| port_config_id.to_string()[..8].to_string())
+}
+
+/// Icon + label for the shared 4-state status logic, mirrored from
+/// `tunnel2tunnel-web`'s `live_connections.rs::remote_status_for` — kept as
+/// its own small copy here rather than a shared dependency since the ssh
+/// crate has no reason to depend on the web crate.
+fn status_icon_label(enabled: bool, online: bool, forwarded: bool, active: bool) -> (&'static str, &'static str) {
+    if !enabled || !online {
+        ("⚪", "offline")
+    } else if active {
+        ("🟢", "active")
+    } else if forwarded {
+        ("🔵", "idle")
+    } else {
+        ("🟠", "not forwarded")
+    }
+}
+
+/// Colorized ASCII tree of this user's entities — their servers (owned
+/// `port_configs`) and clients (`port_subscriptions`) — with live status
+/// icons, highlighting `current_entity_id`. Used both by the periodic
+/// post-keepalive push in `channel_open_session` and the `/info` chat
+/// command.
+async fn build_info_summary(
+    pool: &PgPool,
+    server_slots: &ServerSlots,
+    active_tunnels: &ActiveTunnels,
+    user_id: Uuid,
+    current_entity_id: Uuid,
+) -> String {
+    let entities = Entity::list_for_user(pool, user_id).await.unwrap_or_default();
+    let entity_ids: Vec<Uuid> = entities.iter().map(|e| e.id).collect();
+    let statuses = ConnectionLog::entity_statuses(pool, &entity_ids)
+        .await
+        .unwrap_or_default();
+
+    let mut out = String::new();
+    out.push_str("\r\n\x1b[35m📋 Your tunnel2tunnel overview:\x1b[0m\r\n");
+
+    out.push_str("\x1b[36m🖥  Your servers:\x1b[0m\r\n");
+    let mut any_server = false;
+    for e in &entities {
+        let ports = PortConfig::list_for_entity(pool, e.id).await.unwrap_or_default();
+        if ports.is_empty() {
+            continue;
+        }
+        any_server = true;
+        let online = statuses.get(&e.id).map(|(o, _)| *o).unwrap_or(false);
+        let marker = if e.id == current_entity_id {
+            " \x1b[1m(this connection)\x1b[0m"
+        } else {
+            ""
+        };
+        out.push_str(&format!(
+            "  ▸ {}{}\r\n",
+            e.name.as_deref().unwrap_or("(unnamed)"),
+            marker
+        ));
+        for pc in &ports {
+            let forwarded = server_slots
+                .lock()
+                .await
+                .contains_key(&(e.id, pc.proxy_port as u32));
+            let active = active_tunnels
+                .lock()
+                .await
+                .values()
+                .any(|t| t.target_entity_id == e.id && t.port_config_id == pc.id);
+            let (icon, label) = status_icon_label(pc.enabled, online, forwarded, active);
+            out.push_str(&format!(
+                "      {} {} :{} ({})\r\n",
+                icon, pc.name, pc.proxy_port, label
+            ));
+        }
+    }
+    if !any_server {
+        out.push_str("      (none)\r\n");
+    }
+
+    out.push_str("\x1b[36m📡 Your clients:\x1b[0m\r\n");
+    let mut subs_by_entity: Vec<(Uuid, Vec<PortSubscriptionWithContext>)> = Vec::new();
+    for e in &entities {
+        let subs = PortSubscription::list_for_subscriber_with_context(pool, e.id)
+            .await
+            .unwrap_or_default();
+        if !subs.is_empty() {
+            subs_by_entity.push((e.id, subs));
+        }
+    }
+    let owner_ids: Vec<Uuid> = subs_by_entity
+        .iter()
+        .flat_map(|(_, subs)| subs.iter().map(|s| s.port_config.entity_id))
+        .collect();
+    let owner_statuses = ConnectionLog::entity_statuses(pool, &owner_ids)
+        .await
+        .unwrap_or_default();
+
+    if subs_by_entity.is_empty() {
+        out.push_str("      (none)\r\n");
+    }
+    for (entity_id, subs) in &subs_by_entity {
+        let name = entities
+            .iter()
+            .find(|e| &e.id == entity_id)
+            .and_then(|e| e.name.as_deref())
+            .unwrap_or("(unnamed)");
+        let marker = if *entity_id == current_entity_id {
+            " \x1b[1m(this connection)\x1b[0m"
+        } else {
+            ""
+        };
+        out.push_str(&format!("  ▸ {}{}\r\n", name, marker));
+        for s in subs {
+            let owner_id = s.port_config.entity_id;
+            let owner_online = owner_statuses.get(&owner_id).map(|(o, _)| *o).unwrap_or(false);
+            let forwarded = server_slots
+                .lock()
+                .await
+                .contains_key(&(owner_id, s.port_config.proxy_port as u32));
+            let active = active_tunnels
+                .lock()
+                .await
+                .values()
+                .any(|t| t.client_entity_id == *entity_id && t.port_config_id == s.port_config.id);
+            let (icon, label) =
+                status_icon_label(s.subscription.enabled, owner_online, forwarded, active);
+            out.push_str(&format!(
+                "      {} {} ({}) :{} ({})\r\n",
+                icon,
+                s.port_config.name,
+                s.owner_entity_name.as_deref().unwrap_or("(unnamed)"),
+                s.subscription.subscriber_local_port,
+                label
+            ));
+        }
+    }
+
+    out
 }
 
 async fn resolve_target_entity(pool: &PgPool, hostname: &str) -> Option<Uuid> {
