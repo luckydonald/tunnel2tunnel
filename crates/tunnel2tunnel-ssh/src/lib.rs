@@ -1660,8 +1660,13 @@ impl Handler for T2tHandler {
                         let _ = session.data(channel, b"\x08 \x08".to_vec());
                     }
                 }
+                0x03 => {
+                    // Ctrl-C: graceful disconnect from the chat session.
+                    let _ = session.data(channel, b"\r\n^C\r\n".to_vec());
+                    let _ = session.close(channel);
+                }
                 0x00..=0x1f => {
-                    // Ignore other control bytes (Ctrl-C, escape sequences, ...).
+                    // Ignore other control bytes (escape sequences, ...).
                 }
                 _ => {
                     self.chat_input.push(byte);
