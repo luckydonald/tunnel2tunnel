@@ -56,3 +56,31 @@ pub fn guess_service_name(port: i32) -> Option<&'static str> {
         _ => None,
     }
 }
+
+/// Slugify a service name into a lowercase, hostname-safe string (e.g.
+/// `"Home Assistant"` -> `"home_assistant"`, `"HTTP (alt)"` -> `"http_alt"`).
+/// Used as the default `host` for an auto-created `port_configs` row — the
+/// `host` field isn't consulted anywhere in the live bridging path (the real
+/// peer address comes from the SSH client's own `-R` bind address), so this
+/// only affects what's displayed, not what's dialed.
+pub fn slugify_host(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    let mut last_was_sep = true;
+    for ch in name.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+            last_was_sep = false;
+        } else if !last_was_sep {
+            out.push('_');
+            last_was_sep = true;
+        }
+    }
+    while out.ends_with('_') {
+        out.pop();
+    }
+    if out.is_empty() {
+        "localhost".to_string()
+    } else {
+        out
+    }
+}

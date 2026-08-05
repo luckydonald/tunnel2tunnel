@@ -24,7 +24,7 @@ use tunnel2tunnel_core::{
         connection_log::ConnectionLog, entity::Entity, entity_access::EntityAccess,
         port_config::PortConfig, port_subscription::PortSubscription, ssh_key::SshKey,
     },
-    port_names::guess_service_name,
+    port_names::{guess_service_name, slugify_host},
 };
 
 mod tarpit;
@@ -1101,6 +1101,7 @@ impl Handler for T2tHandler {
             Ok(Some(_)) => {}
             Ok(None) => {
                 let name = guess_service_name(*port as i32).unwrap_or("Unnamed Service");
+                let host = slugify_host(name);
                 match PortConfig::create(
                     &self.pool,
                     entity_id,
@@ -1110,7 +1111,7 @@ impl Handler for T2tHandler {
                     name,
                     None,
                     0,
-                    "localhost",
+                    &host,
                 )
                 .await
                 {
