@@ -1749,3 +1749,9 @@ Generally:
 
 ❯ So to sumarize, all 3 "routes" now use the same data format: 1 and 2 (me & specific service) are merged into "mine", and the toasts are shown, while the view for a service benefits from the already existitng data without any changes to the subscription. With that there's the admin version, not filtereing by the user's events, however probably providing a bool for it anyways so the UI knows which need a post, and which are "just" table updates (i.e. not mine). So probably the same websocket, and some command on the socket enabling/disabling the admin (= all events) mode once I navigate there in my vue app?
 
+❯ Just `/api/live-connections/ws`, without `/me` is better. Why can't we use `useSocket` any more?
+
+❯ But onMount would work for the root `<App>` regardless, right?
+
+❯ Yeah, I guess you're right, go ahead. However i'm not sure if you're aware, it also needs to reconnect on already-logged-in page reloads.
+
