@@ -94,7 +94,7 @@ describe('DashboardPage', () => {
     await wrapper.vm.$nextTick()
 
     const dot = wrapper.find('.status-dot')
-    expect(dot.classes()).toContain('not-live')
+    expect(dot.classes()).toContain('self-offline')
     expect(dot.classes()).toContain('ring-not_forwarded')
   })
 

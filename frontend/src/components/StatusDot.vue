@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { dotEmoji, dotLabel, ringLabel, selfLabel, type RemoteStatus } from '@/liveStatus'
+import { dotLabel, ringLabel, selfLabel, type RemoteStatus } from '@/liveStatus'
 
 const props = defineProps<{
   live: boolean
@@ -15,14 +15,13 @@ const props = defineProps<{
   connectionCount?: number
 }>()
 
-const emoji = computed(() => (props.selfStatus ? null : dotEmoji(props.live)))
 const label = computed(() => {
   const parts = [props.selfStatus ? selfLabel[props.selfStatus] : dotLabel(props.live)]
   if (props.remoteStatus) parts.push(ringLabel[props.remoteStatus])
   if (props.connectionCount) parts.push(`${props.connectionCount} connected`)
   return parts.join(' · ')
 })
-const selfClass = computed(() => (props.selfStatus ? `self-${props.selfStatus}` : (props.live ? 'live' : 'not-live')))
+const selfClass = computed(() => `self-${props.selfStatus ?? (props.live ? 'live' : 'offline')}`)
 const ringClass = computed(() => (props.remoteStatus ? `ring-${props.remoteStatus}` : null))
 const badgeText = computed(() => (props.connectionCount && props.connectionCount > 0
   ? (props.connectionCount > 9 ? '9+' : String(props.connectionCount))
@@ -36,7 +35,7 @@ const badgeText = computed(() => (props.connectionCount && props.connectionCount
     :title="label"
     role="img"
     :aria-label="label"
-    >{{ emoji }}<span v-if="badgeText" class="status-badge">{{ badgeText }}</span></span
+    ><span v-if="badgeText" class="status-badge">{{ badgeText }}</span></span
   >
 </template>
 
@@ -81,7 +80,8 @@ const badgeText = computed(() => (props.connectionCount && props.connectionCount
     background: #2196f3;
   }
 
-  &.self-active {
+  &.self-active,
+  &.self-live {
     background: #4caf50;
   }
 }
