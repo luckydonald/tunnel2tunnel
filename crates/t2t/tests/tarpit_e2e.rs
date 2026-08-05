@@ -340,8 +340,11 @@ async fn repeated_bad_key_attempts_trigger_slow_auth_delay() {
     let port = spawn_server(pool.clone()).await;
 
     // Default threshold is 5 failed attempts within the window (seeded by
-    // migrations/008_tarpit.sql). The 6th attempt should observe the ban
-    // that the 5th attempt just triggered.
+    // migrations/008_tarpit.sql). The tally is now recorded *before* the
+    // trap/ban decision is made for that same attempt (see
+    // `T2tHandler::resolve_tarpit_outcome`), so the 5th attempt — the one
+    // whose own failure crosses the threshold — is itself already
+    // slow-auth-delayed, not just the 6th one after it.
     let mut last_elapsed = Duration::ZERO;
     for i in 0..6 {
         let (_, unknown_algo, unknown_key_data) = generate_keypair();
@@ -358,7 +361,7 @@ async fn repeated_bad_key_attempts_trigger_slow_auth_delay() {
         assert!(!result.success(), "unregistered key must never be accepted");
         last_elapsed = started.elapsed();
 
-        if i < 5 {
+        if i < 4 {
             assert!(
                 last_elapsed < Duration::from_secs(2),
                 "attempt {i} should not yet be tarpitted, took {last_elapsed:?}"
@@ -368,7 +371,7 @@ async fn repeated_bad_key_attempts_trigger_slow_auth_delay() {
 
     assert!(
         last_elapsed >= Duration::from_secs(2),
-        "6th attempt should have been slow-auth-delayed after crossing the ban threshold, took {last_elapsed:?}"
+        "6th attempt should still observe the ban triggered by the 5th, took {last_elapsed:?}"
     );
 
     // The 6th attempt's `handle` (scoped to the loop body above) already

@@ -313,7 +313,17 @@ pub async fn start(
         }
 
         let mut handler = server.new_client(Some(addr));
-        handler.tarpit_outcome = Some(pre_auth_outcome);
+        // Only cache a *positive* accept-time decision (this peer_ip is
+        // already banned from prior connections) — reused for every auth
+        // attempt on this connection, same as before. If it's `None` (not
+        // yet banned), leave `tarpit_outcome` unset so the connection's own
+        // first auth failure still gets a fresh, up-to-the-moment decision
+        // in `resolve_tarpit_outcome` (see its doc comment): with the tally
+        // now recorded there *before* deciding, a `fail_count = 1` rule can
+        // trip on this very first attempt instead of only the next connection.
+        if !matches!(pre_auth_outcome, tarpit::TarpitOutcome::None) {
+            handler.tarpit_outcome = Some(pre_auth_outcome);
+        }
         let cfg = russh_config.clone();
         tokio::spawn(async move {
             match russh::server::run_stream(cfg, socket, handler).await {
@@ -439,6 +449,19 @@ impl T2tHandler {
             .unwrap_or(tarpit::TarpitOutcome::None)
     }
 
+    /// Records this failed attempt's tally. Always called — regardless of
+    /// whether `tarpit_outcome` is already cached for this connection — so
+    /// tallies (and round-robin trigger-count escalation across repeated
+    /// bans) keep advancing even once a connection is already known-banned.
+    /// Must run *before* `resolve_tarpit_outcome` at every call site: for a
+    /// connection whose ban status isn't cached yet (see accept loop in
+    /// `start()`), that's what lets a `fail_count = 1` rule trip on this very
+    /// attempt instead of only the next connection.
+    async fn record_this_failure(&self, user_id: Option<Uuid>) {
+        let thresholds = self.thresholds.lock().await.clone();
+        tarpit::record_auth_failure(&self.tarpit, &self.peer_ip, user_id, &thresholds).await;
+    }
+
     #[allow(clippy::too_many_arguments)]
     async fn log_auth_failure(
         &mut self,
@@ -448,7 +471,10 @@ impl T2tHandler {
         attempted_username: &str,
         reason: &str,
         outcome: &tarpit::TarpitOutcome,
-        counts_toward_ban: bool,
+        // The tally is now recorded inside `resolve_tarpit_outcome` (called by
+        // every caller before `log_auth_failure`), so it can factor into the
+        // same attempt's trap/ban decision. Kept for call-site clarity only.
+        _counts_toward_ban: bool,
     ) {
         let (tarpit_method, tarpit_action, source) = match outcome {
             tarpit::TarpitOutcome::Trap { method, source } => {
@@ -484,11 +510,6 @@ impl T2tHandler {
         {
             Ok(log) => self.connection_log_ids.push(log.id),
             Err(e) => tracing::warn!(err = %e, "failed to write auth failure log"),
-        }
-
-        if counts_toward_ban {
-            let thresholds = self.thresholds.lock().await.clone();
-            tarpit::record_auth_failure(&self.tarpit, &self.peer_ip, user_id, &thresholds).await;
         }
 
         if let Some(path) = &self.fail2ban {
@@ -578,6 +599,7 @@ impl Handler for T2tHandler {
             available = "publickey",
             "SSH: auth attempt (password) — rejected (password auth not supported)"
         );
+        self.record_this_failure(None).await;
         let outcome = self.resolve_tarpit_outcome(None).await;
         self.log_auth_failure(
             None,
@@ -618,6 +640,7 @@ impl Handler for T2tHandler {
             available = "publickey",
             "SSH: auth attempt (keyboard-interactive) — rejected"
         );
+        self.record_this_failure(None).await;
         let outcome = self.resolve_tarpit_outcome(None).await;
         self.log_auth_failure(
             None,
@@ -676,6 +699,7 @@ impl Handler for T2tHandler {
             Ok(Some(k)) => k,
             Ok(None) => {
                 tracing::info!(%fp, peer_ip = %self.peer_ip, "SSH: auth rejected — unknown key");
+                self.record_this_failure(None).await;
                 let outcome = self.resolve_tarpit_outcome(None).await;
                 self.log_auth_failure(None, Some(&fp), None, user, "unknown key", &outcome, true)
                     .await;
@@ -711,6 +735,7 @@ impl Handler for T2tHandler {
             Ok(Some(e)) => e,
             Ok(None) => {
                 tracing::info!(%fp, entity_id = %ssh_key.entity_id, "SSH: auth rejected — entity not found");
+                self.record_this_failure(None).await;
                 let outcome = self.resolve_tarpit_outcome(None).await;
                 self.log_auth_failure(
                     None,
@@ -754,6 +779,7 @@ impl Handler for T2tHandler {
         if let Some(valid_until) = ssh_key.ts.soft_delete.deleted_at {
             if valid_until < time::OffsetDateTime::now_utc() {
                 tracing::info!(%fp, key_id = %ssh_key.id, "SSH: auth rejected — key expired (deleted_at)");
+                self.record_this_failure(Some(user_id)).await;
                 let outcome = self.resolve_tarpit_outcome(Some(user_id)).await;
                 self.log_auth_failure(
                     Some(user_id),
@@ -782,6 +808,7 @@ impl Handler for T2tHandler {
         if let Some(valid_until) = ssh_key.valid_until {
             if valid_until < time::OffsetDateTime::now_utc() {
                 tracing::info!(%fp, key_id = %ssh_key.id, "SSH: auth rejected — key expired (valid_until)");
+                self.record_this_failure(Some(user_id)).await;
                 let outcome = self.resolve_tarpit_outcome(Some(user_id)).await;
                 self.log_auth_failure(
                     Some(user_id),
@@ -811,6 +838,7 @@ impl Handler for T2tHandler {
         if let Some(valid_until) = entity.valid_until {
             if valid_until < time::OffsetDateTime::now_utc() {
                 tracing::info!(entity_id = %entity.id, entity_name = entity.name.as_deref().unwrap_or("(unnamed)"), "SSH: auth rejected — entity expired");
+                self.record_this_failure(Some(user_id)).await;
                 let outcome = self.resolve_tarpit_outcome(Some(user_id)).await;
                 self.log_auth_failure(
                     Some(user_id),
@@ -845,6 +873,7 @@ impl Handler for T2tHandler {
                     peer_ip = %self.peer_ip,
                     "SSH: auth rejected — IP blocked by whitelist"
                 );
+                self.record_this_failure(Some(user_id)).await;
                 let outcome = self.resolve_tarpit_outcome(Some(user_id)).await;
                 self.log_auth_failure(
                     Some(user_id),
