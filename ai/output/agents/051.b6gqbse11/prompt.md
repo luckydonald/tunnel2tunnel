@@ -1,0 +1,1 @@
+Background command "cd /home/user/git/luckydonald/tunnel2tunnel && DATABASE_URL=postgres://t2t:t2t_secret@localhost:5433/tunnel2tunnel cargo test --workspace 2>&1 | tail -200" completed (exit code 0)
