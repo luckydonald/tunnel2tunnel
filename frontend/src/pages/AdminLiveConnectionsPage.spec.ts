@@ -124,4 +124,29 @@ describe('AdminLiveConnectionsPage', () => {
     const wrapper = await mountPage()
     expect(wrapper.text()).toContain('No live connections match.')
   })
+
+  it('hides the Account column once filtered down to one exact account', async () => {
+    const store = useLiveConnectionsStore()
+    store.connected = true
+    store.snapshots = [
+      makeSnapshot({ role: 'server', service_name: 'VNC', username: 'alice' }),
+      makeSnapshot({ role: 'client', service_name: 'Postgres', username: 'bob', entity_id: 'e2' }),
+    ]
+    const wrapper = await mountPage()
+    expect(wrapper.find('table').text()).toContain('Account')
+
+    const userSelect = wrapper.findAll('select')[0]
+    await userSelect.setValue('alice')
+    expect(wrapper.find('table').text()).not.toContain('Account')
+    expect(wrapper.find('tbody').text()).not.toContain('bob')
+  })
+
+  it('links the port to localhost', async () => {
+    const store = useLiveConnectionsStore()
+    store.connected = true
+    store.snapshots = [makeSnapshot({ role: 'server', service_name: 'VNC', port: 5900 })]
+    const wrapper = await mountPage()
+    const link = wrapper.find('a.port-link')
+    expect(link.attributes('href')).toBe('http://localhost:5900')
+  })
 })

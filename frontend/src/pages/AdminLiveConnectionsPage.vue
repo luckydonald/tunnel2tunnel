@@ -4,7 +4,7 @@ import { storeToRefs } from 'pinia'
 import AppShell from '@/components/AppShell.vue'
 import StatusDot from '@/components/StatusDot.vue'
 import { roleBadgeLabel } from '@/labels'
-import { formatSince, type RemoteStatus } from '@/liveStatus'
+import type { RemoteStatus } from '@/liveStatus'
 import { useLiveConnectionsStore } from '@/stores/liveConnections'
 
 interface AdminRow {
@@ -18,7 +18,6 @@ interface AdminRow {
   service_name: string
   port: number
   peer_ip: string | null
-  connected_since: string | null
 }
 
 const liveConnections = useLiveConnectionsStore()
@@ -50,7 +49,6 @@ const rows = computed((): AdminRow[] => {
         service_name: service.service_name,
         port: service.proxy_port,
         peer_ip: null,
-        connected_since: null,
       })
     }
     for (const sub of snap.subscriptions) {
@@ -65,7 +63,6 @@ const rows = computed((): AdminRow[] => {
         service_name: sub.service_name,
         port: sub.subscriber_local_port,
         peer_ip: sub.peer_ip,
-        connected_since: sub.connected_since,
       })
     }
   }
@@ -83,6 +80,10 @@ const serviceNames = computed(() => Array.from(new Set(rows.value.map(r => r.ser
 // server-role rows never have one — if literally no row in the current fetch has a
 // peer IP, drop the whole column rather than render an all-"—" column.
 const showPeerIp = computed(() => rows.value.some(r => r.peer_ip))
+
+// Once filtered down to one exact account, the Account column is redundant —
+// every visible row already shares it.
+const showAccount = computed(() => !filterUser.value)
 
 const filteredRows = computed(() =>
   rows.value.filter(r =>
@@ -121,29 +122,26 @@ const filteredRows = computed(() =>
         <thead>
           <tr>
             <th></th>
-            <th>Account</th>
+            <th v-if="showAccount">Account</th>
             <th>Entity</th>
-            <th>Role</th>
             <th>Service</th>
             <th>Port</th>
             <th v-if="showPeerIp">Peer IP</th>
-            <th>Since</th>
           </tr>
         </thead>
         <tbody>
           <tr v-for="(row, idx) in filteredRows" :key="idx">
             <td><StatusDot :live="row.live" :self-status="row.self_status" :remote-status="row.remote_status" /></td>
-            <td>{{ row.username }}</td>
+            <td v-if="showAccount">{{ row.username }}</td>
             <td>
               <RouterLink :to="{ name: 'entity-detail', params: { id: row.entity_id } }">
                 {{ row.entity_name ?? row.entity_id.slice(0, 13) + '…' }}
               </RouterLink>
+              <span class="role-tag">{{ roleBadgeLabel[row.role] }}</span>
             </td>
-            <td>{{ roleBadgeLabel[row.role] }}</td>
             <td>{{ row.service_name }}</td>
-            <td>{{ row.port }}</td>
+            <td><a :href="`http://localhost:${row.port}`" class="port-link">{{ row.port }}</a></td>
             <td v-if="showPeerIp">{{ row.peer_ip ?? '—' }}</td>
-            <td>{{ formatSince(row.connected_since) }}</td>
           </tr>
         </tbody>
       </table>
@@ -175,6 +173,16 @@ const filteredRows = computed(() =>
   td { padding: 0.625rem 0.75rem; border-bottom: 1px solid #1e2235; color: #e2e8f0; }
   a { color: #7dd3fc; text-decoration: none; &:hover { text-decoration: underline; } }
 }
+
+.role-tag {
+  margin-left: 0.5rem;
+  font-size: 0.75rem;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.port-link { font-family: monospace; }
 
 .empty { color: #64748b; }
 .loading { color: #94a3b8; }
