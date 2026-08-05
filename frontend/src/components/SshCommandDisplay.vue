@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, nextTick } from 'vue'
 import type { Entity, PortConfig, PortSubscription } from '@/api/entities'
 
 export interface OwnSubscriptionRow {
@@ -71,6 +71,20 @@ function isHovered(rowId: string): boolean {
   return hoveredPortId.value === rowId
 }
 
+// Clicking a -L/-R chip expands the manual-config summary and scrolls/highlights its row.
+const detailsRef = ref<HTMLDetailsElement | null>(null)
+const rowRefs = new Map<string, HTMLElement>()
+function setRowRef(rowId: string, el: Element | null): void {
+  if (el) rowRefs.set(rowId, el as HTMLElement)
+  else rowRefs.delete(rowId)
+}
+async function expandToRow(rowId: string): Promise<void> {
+  if (detailsRef.value) detailsRef.value.open = true
+  hoveredPortId.value = rowId
+  await nextTick()
+  rowRefs.get(rowId)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+}
+
 // Copy-to-clipboard for the manual-config code chips
 const copiedField = ref<string | null>(null)
 async function copyValue(field: string, value: string): Promise<void> {
@@ -96,10 +110,12 @@ async function copyValue(field: string, value: string): Promise<void> {
       <pre class="cmd-text">ssh <template v-if="nonInteractive">-N \
   </template>-i <span class="cmd-flag" :class="{ 'is-hovered': isFieldHovered('key') }" @mouseenter="hoveredField = 'key'" @mouseleave="hoveredField = null">~/.ssh/{{ filename }}</span><template v-for="row in allRows" :key="row.id"> \
   <span
-    class="cmd-flag"
+    class="cmd-flag cmd-flag-clickable"
     :class="{ 'is-hovered': isHovered(row.id) }"
     @mouseenter="hoveredPortId = row.id"
     @mouseleave="hoveredPortId = null"
+    @click="expandToRow(row.id)"
+    :title="`Show ${row.name} in manual configuration`"
   >{{ row.flag }}</span></template> \
   <span class="cmd-flag" :class="{ 'is-hovered': isFieldHovered('user') }" @mouseenter="hoveredField = 'user'" @mouseleave="hoveredField = null">{{ entity.id }}</span>@<span class="cmd-flag" :class="{ 'is-hovered': isFieldHovered('host') }" @mouseenter="hoveredField = 'host'" @mouseleave="hoveredField = null">{{ t2tHost }}</span> \
   -p <RouterLink to="/settings" class="port-link" :class="{ 'is-hovered': isFieldHovered('port') }" @mouseenter="hoveredField = 'port'" @mouseleave="hoveredField = null">{{ t2tSshPort }}</RouterLink></pre>
@@ -215,6 +231,7 @@ async function copyValue(field: string, value: string): Promise<void> {
               <tr
                 v-for="row in allRows"
                 :key="row.id"
+                :ref="el => setRowRef(row.id, el as Element | null)"
                 :class="{ 'is-hovered': isHovered(row.id) }"
                 @mouseenter="hoveredPortId = row.id"
                 @mouseleave="hoveredPortId = null"
